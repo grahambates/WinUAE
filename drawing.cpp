@@ -274,7 +274,7 @@ static bool ecs_genlock_features_active;
 static uae_u8 ecs_genlock_features_mask;
 static bool ecs_genlock_features_colorkey;
 static int hsync_shift_hack;
-static bool sprite_smaller_than_64;
+static bool sprite_smaller_than_64, sprite_smaller_than_64_inuse;
 
 uae_sem_t gui_sem;
 
@@ -1299,7 +1299,7 @@ static uae_u8 render_sprites (int pos, int dualpf, uae_u8 apixel, int aga)
 	// If 64 pixel wide sprite and FMODE gets lowered when sprite's
 	// first 32 pixels are being drawn: matching pixel(s) in second
 	// 32 pixel part gets blanked.
-	if (aga && spb->stfmdata && sprite_smaller_than_64) {
+	if (aga && spb->stfmdata && sprite_smaller_than_64_inuse && sprite_smaller_than_64) {
 		spb[32 << currprefs.gfx_resolution].data &= ~spb->stfmdata;
 	}
 
@@ -2328,14 +2328,28 @@ static void clear_bitplane_border_aga (void)
 	if (shift < 0) {
 		shift = -shift;
 		len = (real_playfield_start - playfield_start) << shift;
-		memset (pixdata.apixels + pixels_offset + (playfield_start << shift), v, len);
+		int offset = playfield_start << shift;
+		memset (pixdata.apixels + pixels_offset + offset, v, len);
+		if (bplham)
+			memset(ham_linebuf + pixels_offset + offset, v, len * sizeof(uae_u32));
+
 		len = (playfield_end - real_playfield_end) << shift;
-		memset (pixdata.apixels + pixels_offset + (real_playfield_end << shift), v, len);
+		offset = real_playfield_end << shift;
+		memset (pixdata.apixels + pixels_offset + offset, v, len);
+		if (bplham)
+			memset(ham_linebuf + pixels_offset + offset, v, len * sizeof(uae_u32));
 	} else {
 		len = (real_playfield_start - playfield_start) >> shift;
-		memset (pixdata.apixels + pixels_offset + (playfield_start >> shift), v, len);
+		int offset = playfield_start >> shift;
+		memset (pixdata.apixels + pixels_offset + offset, v, len);
+		if (bplham)
+			memset(ham_linebuf + pixels_offset + offset, v, len * sizeof(uae_u32));
+
 		len = (playfield_end - real_playfield_end) >> shift;
-		memset (pixdata.apixels + pixels_offset + (real_playfield_end >> shift), v, len);
+		offset = real_playfield_end >> shift;
+		memset (pixdata.apixels + pixels_offset + offset, v, len);
+		if (bplham)
+			memset(ham_linebuf + pixels_offset + offset, v, len * sizeof(uae_u32));
 	}
 }
 #endif
@@ -2620,7 +2634,7 @@ void init_row_map(void)
 	struct vidbuf_description *vidinfo = &adisplays[0].gfxvidinfo;
 	static uae_u8 *oldbufmem;
 	static int oldheight, oldpitch;
-	static bool oldgenlock;
+	static bool oldgenlock, oldburst;
 	int i, j;
 
 	if (vidinfo->drawbuffer.height_allocated > max_uae_height) {
@@ -2635,7 +2649,8 @@ void init_row_map(void)
 	if (oldbufmem && oldbufmem == vidinfo->drawbuffer.bufmem &&
 		oldheight == vidinfo->drawbuffer.height_allocated &&
 		oldpitch == vidinfo->drawbuffer.rowbytes &&
-		oldgenlock == init_genlock_data)
+		oldgenlock == init_genlock_data &&
+		oldburst == (row_map_color_burst_buffer ? 1 : 0))
 		return;
 	xfree(row_map_genlock_buffer);
 	row_map_genlock_buffer = NULL;
@@ -2664,6 +2679,7 @@ void init_row_map(void)
 	oldheight = vidinfo->drawbuffer.height_allocated;
 	oldpitch = vidinfo->drawbuffer.rowbytes;
 	oldgenlock = init_genlock_data;
+	oldburst = row_map_color_burst_buffer ? 1 : 0;
 }
 
 static void init_aspect_maps(void)
@@ -2799,6 +2815,8 @@ static void pfield_expand_dp_bplcon (void)
 		bpldelay_sh = sh;
 		pfield_mode_changed = true;
 	}
+	if (sprite_smaller_than_64 && (dp_for_drawing->fmode & 0x0c) == 0x0c)
+		sprite_smaller_than_64_inuse = true;
 	sprite_smaller_than_64 = (dp_for_drawing->fmode & 0x0c) != 0x0c;
 #endif
 	ecs_genlock_features_active = (currprefs.chipset_mask & CSMASK_ECS_DENISE) && ((dp_for_drawing->bplcon2 & 0x0c00) || ce_is_borderntrans(colors_for_drawing.extra)) ? 1 : 0;
@@ -3138,6 +3156,7 @@ static void pfield_draw_line (struct vidbuffer *vb, int lineno, int gfx_ypos, in
 	}
 
 	have_color_changes = is_color_changes(dip_for_drawing);
+	sprite_smaller_than_64_inuse = false;
 
 	dh = dh_line;
 	xlinebuffer = vidinfo->drawbuffer.linemem;
@@ -4059,6 +4078,7 @@ static void finish_drawing_frame(bool drawlines)
 
 	draw_frame_extras(vb, -1, -1);
 
+	// video port adapters
 	if (currprefs.monitoremu) {
 		struct vidbuf_description *outvi = &adisplays[currprefs.monitoremu_mon].gfxvidinfo;
 		struct vidbuffer *out = &outvi->drawbuffer;
@@ -4105,20 +4125,13 @@ static void finish_drawing_frame(bool drawlines)
 		}
 	}
 
-	if (!currprefs.monitoremu && vidinfo->tempbuffer.bufmem_allocated && ((!bplcolorburst_field && currprefs.cs_color_burst) || (currprefs.gfx_grayscale))) {
-		setspecialmonitorpos(&vidinfo->tempbuffer);
-		emulate_grayscale(vb, &vidinfo->tempbuffer);
-		vb = vidinfo->outbuffer = &vidinfo->tempbuffer;
-		if (vb->nativepositioning)
-			setnativeposition(vb);
-		vidinfo->drawbuffer.tempbufferinuse = true;
-	}
-
-	if (currprefs.genlock_image && !currprefs.monitoremu && !currprefs.cs_color_burst && vidinfo->tempbuffer.bufmem_allocated && currprefs.genlock) {
+	// genlock
+	if (currprefs.genlock_image && currprefs.genlock && !currprefs.monitoremu && vidinfo->tempbuffer.bufmem_allocated) {
 		setspecialmonitorpos(&vidinfo->tempbuffer);
 		if (init_genlock_data != specialmonitor_need_genlock()) {
 			need_genlock_data = init_genlock_data = specialmonitor_need_genlock();
 			init_row_map();
+			pfield_set_linetoscr();
 		}
 		emulate_genlock(vb, &vidinfo->tempbuffer);
 		vb = vidinfo->outbuffer = &vidinfo->tempbuffer;
@@ -4127,6 +4140,7 @@ static void finish_drawing_frame(bool drawlines)
 		vidinfo->drawbuffer.tempbufferinuse = true;
 	}
 
+	// cd32 fmv
 	if (!currprefs.monitoremu && vidinfo->tempbuffer.bufmem_allocated && currprefs.cs_cd32fmv) {
 		if (cd32_fmv_active) {
 			cd32_fmv_genlock(vb, &vidinfo->tempbuffer);
@@ -4136,6 +4150,17 @@ static void finish_drawing_frame(bool drawlines)
 		} else {
 			vidinfo->drawbuffer.tempbufferinuse = false;
 		}
+	}
+
+	// grayscale
+	if (!currprefs.monitoremu && vidinfo->tempbuffer.bufmem_allocated &&
+		((!currprefs.genlock && (!bplcolorburst_field && currprefs.cs_color_burst)) || currprefs.gfx_grayscale)) {
+		setspecialmonitorpos(&vidinfo->tempbuffer);
+		emulate_grayscale(vb, &vidinfo->tempbuffer);
+		vb = vidinfo->outbuffer = &vidinfo->tempbuffer;
+		if (vb->nativepositioning)
+			setnativeposition(vb);
+		vidinfo->drawbuffer.tempbufferinuse = true;
 	}
 
 	unlockscr(vb, -1, -1);

@@ -1,5 +1,50 @@
 
 
+Beta 5:
+
+- Picasso IV Flifi I2C bus responses are now faked. Removes P4Info "I2C Bus disabled" message. Very useless.
+- Picasso IV driver polls GD5446 CR3F bit 7 (VREF state) when changing modes, probably to wait until native mode is completely redrawn, bit now toggles quickly to reduce delays when switching modes.
+- Disassembler CHK2/CMP2 support was incomplete. Another 68020+ instruction with "non-standard" encoding.
+- Added 68030 MMU instruction disassembler support.
+- 68030 MMU instructions that have FC field: 11xxx FC field is invalid and generates F-line exception. (Was missed in previous invalid bit update few versions ago)
+- Added support for shader (.fx) embedded config entries. Format: "string winuae_config : WINUAE_CONFIG = <uae-configuration compatible string>";. String can be split, for example like this: "param1 value1" <linefeed> " param2 value";. Config data is parsed and enabled when config file is loaded (with shaders selected) or when shader is changed using GUI.
+- Added Tandem IDE HD/Mitsumi CD controller emulation. Only IDE is supported (which is identical to AlfaPower IDE controllers), Mitsumi drives are not emulated.
+
+Beta 4:
+
+- Enabled color burst bit emulation always made display grayscale except if BPLCON0 was not modified during frame.
+- Adjusted color burst emulation: if genlock is connected, color burst state is ignored. Grayscale due disabled colorburst when using genlock is impossible because it is connected to RGB port and color burst only affects composite video out.
+- 410b7 sprite FMODE=3 to lower FMODE value mid scan line update affected (parts of sprite disappeared) non-FMODE=3 sprites in certain situations.
+- UAE RDB hardfile mounting didn't stop partition enumeration if number of partitions in single HDF exceeded max amount UAE HDF/directory partitions.
+- Magic mouse change (b2) reverted and correctly fixed now. Only reactive WinUAE when mouse is moved back over WinUAE window with focus still active.
+- 68020/030 cycle-exact: CPU to AGA chipset bus write waited full chipset cycle to finish which is not correct. Written data is latched by chipset buffers allowing CPU to continue executing after 68020/030 CPU memory cycle finishes (which is shorter than chipset cycle). This update slightly increases write speed to chipram/custom registers. (and probably fixes some demos and breaks others as usual)
+- D3D11 shader viewport coordinate fixes. (pre and post shaders)
+- Added Prelude (Zorro II) and Prelude 1200 (clock port) sound card emulation. (Hardware info from Oliver Gantert)
+
+Prelude emulation notes:
+- Prelude is similar to Toccata. PIO data transfers, FIFO memory and CS4231a audio codec chip. Toccata uses AD1848, CS4231a is fully compatible with AD1848 and also has some extra features.
+- Prelude 1200 driver only initializes if card.resource exists: HW config must be A1200 with A1200 KS ROM. (=hardware with clock port)
+- There may be something wrong with AHI (version specific?), test sound plays at 8000Hz instead of 44100Hz.
+- I am not sure which AHI version is required. First I tried some 5.x AHI and device was detected but test button did nothing (also no HW accesses whatsoever when button was pressed). Replaced with 6.0 and test sound worked.
+
+-> don't immediately assume problem is in emulation!
+
+Beta 3:
+
+- If win32.guikey is set to zero, disable F12 special handling. Normally if win32.guikey equals valid keycode, F12 can't open GUI, even if F12 in Input panel is configured to open GUI. (Another historic reason..)
+- Genlock mode didn't always enable fully (was emulated but transparency was not visible).
+- HAM + border sprites visible in border areas: in some situations bitplane data was incorrectly visible in borders.
+- Filter border "blanking" was not working (b1).
+- Selected filter panel mask/overlay was not updated when filter position (-4..0..4) was modified. (410b4)
+- Many video port adapters (which includes grayscale mode and genlock) didn't support all doubling modes.
+- Genlock and CD32FMV output was in color even if grayscale mode was enabled.
+- 68030 MMU emulation now also creates short bus error frames. They are created when bus error is caused by write and write was instruction's last memory access. For some reason documentation mentions that some instruction prefetch faults also generate short frame but it seems to be incorrect.
+- 68020/030 MOVES in instruction pipeline emulation (prefetch/more compatible) mode had wrong instruction length.
+- 68020 full format extension disassembler fix, some addressing modes didn't print address register ([] instead of [an])
+- Added IVS Trumpcard (non-Pro) v4.9 ROM.
+- uaedbg ELF executable support. Not much different compared to HUNK support except ELF SHF_WRITE and SHF_EXECINSTR section flags are used to detect invalid writes or instruction fetches from non-code sections. uaedbg changed, old version is not compatible anymore. Separate debug files used in AROS are not yet parsed. 
+- do not try to validate or canonicalize UNC network paths to reduce unnecessary delays at startup.
+
 Beta 2:
 
 - Adjusted CDTV CD drive read/play startup delays. Fixes Town without no name speech audiotrack play stopping too early.

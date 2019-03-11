@@ -150,7 +150,6 @@ static bool graphicsbuffer_retry;
 static int scanlinecount;
 static int cia_hsync;
 static bool toscr_scanline_complex_bplcon1;
-static bool spr_width_64_seen;
 
 #define LOF_TOGGLES_NEEDED 3
 //#define NLACE_CNT_NEEDED 50
@@ -4029,7 +4028,6 @@ static void record_sprite (int line, int num, int sprxp, uae_u16 *data, uae_u16 
 			stbfm[7] |= state;
 			stbfm += 8;
 		}
-		spr_width_64_seen = true;
 	}
 }
 
@@ -5998,7 +5996,8 @@ static void BPLCON0_Denise (int hpos, uae_u16 v, bool immediate)
 		v &= ~0x00F1;
 	else if (! (currprefs.chipset_mask & CSMASK_AGA))
 		v &= ~0x00B0;
-	v &= ~(0x0200 | 0x0100 | 0x0080 | 0x0020);
+
+	v &= ~((currprefs.cs_color_burst ? 0x0000 : 0x0200) | 0x0100 | 0x0080 | 0x0020);
 #if SPRBORDER
 	v |= 1;
 #endif
@@ -7858,11 +7857,10 @@ void init_hardware_for_drawing_frame (void)
 	if (prev_sprite_entries) {
 		int first_pixel = prev_sprite_entries[0].first_pixel;
 		int npixels = prev_sprite_entries[prev_next_sprite_entry].first_pixel - first_pixel;
-		memset (spixels + first_pixel, 0, npixels * sizeof *spixels);
+		memset(spixels + first_pixel, 0, npixels * sizeof *spixels);
 		memset(spixstate.stb + first_pixel, 0, npixels * sizeof *spixstate.stb);
-		if (spr_width_64_seen) {
+		if (currprefs.chipset_mask & CSMASK_AGA) {
 			memset(spixstate.stbfm + first_pixel, 0, npixels * sizeof *spixstate.stbfm);
-			spr_width_64_seen = false;
 		}
 	}
 	prev_next_sprite_entry = next_sprite_entry;
@@ -11657,7 +11655,9 @@ void wait_cpu_cycle_write_ce020 (uaecptr addr, int mode, uae_u32 v)
 	else if (mode == 0)
 		put_byte (addr, v);
 
-	x_do_cycles_post (CYCLE_UNIT, v);
+	// chipset buffer latches the write, CPU does
+	// not need to wait for the chipset cycle to finish.
+	x_do_cycles_post (cpucycleunit + cpucycleunit / 2, v);
 
 	regs.chipset_latch_rw = regs.chipset_latch_write = v;
 	SETIFCHIP

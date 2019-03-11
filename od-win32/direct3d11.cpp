@@ -107,8 +107,9 @@ static const int ledtypes[] = {
 #define SHADERTYPE_BEFORE 1
 #define SHADERTYPE_AFTER 2
 #define SHADERTYPE_MIDDLE 3
-#define SHADERTYPE_MASK_BEFORE 3
-#define SHADERTYPE_MASK_AFTER 4
+#define SHADERTYPE_MASK_BEFORE 4
+#define SHADERTYPE_MASK_AFTER 5
+#define SHADERTYPE_MASK_MIDDLE 6
 #define SHADERTYPE_POST 10
 
 struct shadertex
@@ -116,6 +117,7 @@ struct shadertex
 	ID3D11Texture2D *tex;
 	ID3D11ShaderResourceView *rv;
 	ID3D11RenderTargetView *rt;
+	D3D11_VIEWPORT *vp;
 };
 
 #define MAX_TECHNIQUE_LAYOUTS 8
@@ -685,7 +687,7 @@ static bool allocfxdata(struct d3d11struct *d3d, struct shaderdata11 *s)
 
 	static const uae_u16 indexes[INDEXCOUNT * 2] = {
 		2, 1, 0, 2, 3, 1,
-		6, 5, 5, 6, 7, 5
+		6, 5, 4, 6, 7, 5
 	};
 	// Load the index array with data.
 	for (int i = 0; i < INDEXCOUNT * 2; i++)
@@ -698,7 +700,7 @@ static bool allocfxdata(struct d3d11struct *d3d, struct shaderdata11 *s)
 
 	// Set up the description of the static index buffer.
 	indexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
-	indexBufferDesc.ByteWidth = d3d->index_buffer_bytes * INDEXCOUNT;
+	indexBufferDesc.ByteWidth = d3d->index_buffer_bytes * INDEXCOUNT * 2;
 	indexBufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
 	indexBufferDesc.CPUAccessFlags = 0;
 	indexBufferDesc.MiscFlags = 0;
@@ -1078,8 +1080,13 @@ static bool psEffect_LoadEffect(struct d3d11struct *d3d, const TCHAR *shaderfile
 	allocfxdata(d3d, s);
 	createfxvertices(d3d, s);
 
-	s->viewport.Width = (float)d3d->m_screenWidth * d3d->dmultxh;
-	s->viewport.Height = (float)d3d->m_screenHeight * d3d->dmultxv;
+	if (s->type == SHADERTYPE_BEFORE) {
+		s->viewport.Width = (float)d3d->m_bitmapWidth * d3d->dmultxh;
+		s->viewport.Height = (float)d3d->m_bitmapHeight * d3d->dmultxv;
+	} else {
+		s->viewport.Width = (float)d3d->m_screenWidth * d3d->dmultxh;
+		s->viewport.Height = (float)d3d->m_screenHeight * d3d->dmultxv;
+	}
 	s->viewport.MinDepth = 0.0f;
 	s->viewport.MaxDepth = 1.0f;
 	s->viewport.TopLeftX = 0.0f;
@@ -1173,13 +1180,13 @@ static void settransform2(struct d3d11struct *d3d, struct shaderdata11 *s)
 	// Projection is (0,0,0) -> (1,1,1)
 	xD3DXMatrixOrthoOffCenterLH(&d3d->m_matPreProj, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f);
 	// Align texels with pixels
-	xD3DXMatrixTranslation(&d3d->m_matPreView, -0.5f / d3d->m_bitmapWidth, 0.5f / d3d->m_bitmapHeight, 0.0f);
+	xD3DXMatrixTranslation(&d3d->m_matPreView, -0.5f / d3d->m_screenWidth, 0.5f / d3d->m_screenHeight, 0.0f);
 	// Identity for world
 	xD3DXMatrixIdentity(&d3d->m_matPreWorld);
 
 	xD3DXMatrixOrthoOffCenterLH(&d3d->m_matProj2, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f);
 
-	xD3DXMatrixTranslation(&d3d->m_matView2, 0.5f - 0.5f / d3d->m_bitmapWidth, 0.5f + 0.5f / d3d->m_bitmapHeight, 0.0f);
+	xD3DXMatrixTranslation(&d3d->m_matView2, 0.5f - 0.5f / d3d->m_screenWidth, 0.5f + 0.5f / d3d->m_screenHeight, 0.0f);
 	xD3DXMatrixIdentity(&d3d->m_matWorld2);
 }
 
@@ -1317,7 +1324,7 @@ static bool processshader(struct d3d11struct *d3d, struct shadertex *st, struct 
 	ID3D11RenderTargetView *lpNewRenderTarget;
 	struct shadertex *lpWorkTexture;
 
-	d3d->m_deviceContext->RSSetViewports(1, &s->viewport);
+	d3d->m_deviceContext->RSSetViewports(1, st->vp);
 
 	TurnOffAlphaBlending(d3d);
 	
@@ -1504,6 +1511,7 @@ static void setupscenecoords(struct d3d11struct *d3d, bool normalrender)
 			d3d->m_screenWidth, d3d->m_screenHeight,
 			d3d->m_bitmapWidth, d3d->m_bitmapHeight);
 	}
+
 	d3d->sr2 = sr;
 	d3d->dr2 = dr;
 	d3d->zr2 = zr;
@@ -3994,7 +4002,7 @@ static void TextureShaderClass_RenderShader(struct d3d11struct *d3d)
 	d3d->m_deviceContext->VSSetShader(d3d->m_vertexShader, NULL, 0);
 	bool mask = false;
 	for (int i = 0; i < MAX_SHADERS; i++) {
-		if (d3d->shaders[i].type == SHADERTYPE_MASK_AFTER && d3d->shaders[i].masktexturerv) {
+		if (d3d->shaders[i].type == SHADERTYPE_MASK_MIDDLE && d3d->shaders[i].masktexturerv) {
 			mask = true;
 		}
 	}
@@ -4197,6 +4205,7 @@ static bool renderframe(struct d3d11struct *d3d)
 		}
 		if (s->type == SHADERTYPE_BEFORE || s->type == SHADERTYPE_MIDDLE) {
 			settransform(d3d, s);
+			st.vp = &s->viewport;
 			if (!processshader(d3d, &st, s, true))
 				return false;
 		}
@@ -4214,7 +4223,7 @@ static bool renderframe(struct d3d11struct *d3d)
 	int after = -1;
 	for (int i = 0; i < MAX_SHADERS; i++) {
 		struct shaderdata11 *s = &d3d->shaders[i];
-		if (s->type == SHADERTYPE_MASK_AFTER && s->masktexturerv) {
+		if (s->type == SHADERTYPE_MASK_MIDDLE && s->masktexturerv) {
 			d3d->m_deviceContext->PSSetShaderResources(1, 1, &s->masktexturerv);
 			mask = true;
 		}
@@ -4259,6 +4268,10 @@ static bool renderframe(struct d3d11struct *d3d)
 			struct shaderdata11 *s = &d3d->shaders[i];
 			if (s->type == SHADERTYPE_AFTER) {
 				settransform2(d3d, s);
+				if (i == after)
+					st.vp = &d3d->viewport;
+				else
+					st.vp = &s->viewport;
 				if (!processshader(d3d, &st, s, i != after))
 					return false;
 			}
@@ -4381,7 +4394,7 @@ static bool restore(struct d3d11struct *d3d)
 		}
 	}
 	if (d3d->filterd3d->gfx_filtermask[2 * MAX_FILTERSHADERS][0]) {
-		struct shaderdata11 *s = allocshaderslot(d3d, SHADERTYPE_MASK_AFTER);
+		struct shaderdata11 *s = allocshaderslot(d3d, SHADERTYPE_MASK_MIDDLE);
 		if (!createmasktexture(d3d, d3d->filterd3d->gfx_filtermask[2 * MAX_FILTERSHADERS], s)) {
 			freeshaderdata(s);
 		}

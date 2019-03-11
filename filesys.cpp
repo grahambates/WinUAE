@@ -8747,13 +8747,17 @@ static int dofakefilesys (TrapContext *ctx, UnitInfo *uip, uaecptr parmpacket, s
 /* Fill in per-unit fields of a parampacket */
 static uae_u32 REGPARAM2 filesys_dev_storeinfo (TrapContext *ctx)
 {
-	UnitInfo *uip = mountinfo.ui;
 	int no = trap_get_dreg(ctx, 6) & 0x7fffffff;
 	int unit_no = no & 65535;
 	int sub_no = no >> 16;
-	int iscd = (trap_get_dreg(ctx, 6) & 0x80000000) != 0 || uip[unit_no].unit_type == UNIT_CDFS;
 	int type;
+
+	if (unit_no >= MAX_FILESYSTEM_UNITS)
+		return -2;
+
+	UnitInfo *uip = mountinfo.ui;
 	uaecptr parmpacket = trap_get_areg(ctx, 0);
+	int iscd = (trap_get_dreg(ctx, 6) & 0x80000000) != 0 || uip[unit_no].unit_type == UNIT_CDFS;
 	struct uaedev_config_info *ci = &uip[unit_no].hf.ci;
 
 	uip[unit_no].parmpacket = parmpacket;
@@ -8956,9 +8960,17 @@ static uae_u32 REGPARAM2 mousehack_done (TrapContext *ctx)
 		trap_put_long(ctx, trap_get_areg(ctx, 7) + 4 * 4, ret);
 	} else if (mode == 200) {
 		uae_u32 v;
-		// a0 = data, d0 = length, a1 = task, d2 = stack size (in), stack ptr (out)
-		uae_u32 stack = trap_get_dreg(ctx, 2);
-		v = debugmem_reloc(trap_get_areg(ctx, 0), trap_get_dreg(ctx, 0), trap_get_areg(ctx, 1), &stack);
+		// a0 = data, d0 = length, a1 = task, d3 = stack size (in), stack ptr (out)
+		// a2 = debugdata, d2 = debuglength
+		// d4 = flags
+		if ((trap_get_dreg(ctx, 4) & 3) != 1) {
+			write_log(_T("unsupported uaedbg version\n"));
+			return 0;
+		}
+		uae_u32 stack = trap_get_dreg(ctx, 3);
+		v = debugmem_reloc(trap_get_areg(ctx, 0), trap_get_dreg(ctx, 0),
+			trap_get_areg(ctx, 2), trap_get_dreg(ctx, 2),
+			trap_get_areg(ctx, 1), &stack);
 		trap_set_dreg(ctx, 2, stack);
 		return v;
 	} else if (mode == 201) {
