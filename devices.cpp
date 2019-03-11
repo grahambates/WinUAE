@@ -66,6 +66,7 @@
 #ifdef RETROPLATFORM
 #include "rp.h"
 #endif
+#include "barto_gdbserver.h"
 
 void device_check_config(void)
 {
@@ -149,6 +150,7 @@ void devices_vsync_pre(void)
 #ifdef WITH_X86
 	x86_bridge_vsync();
 #endif
+	barto_gdbserver::vsync();
 }
 
 void devices_vsync_post(void)
@@ -340,6 +342,7 @@ void do_leave_program (void)
 	DISK_free ();
 	close_sound ();
 	dump_counts ();
+	barto_gdbserver::close();
 #ifdef SERIAL_PORT
 	serial_exit ();
 #endif
@@ -454,6 +457,7 @@ void virtualdevice_init (void)
 #ifdef CDTV
 	cdtvcr_reset();
 #endif
+	barto_gdbserver::init();
 }
 
 void devices_restore_start(void)

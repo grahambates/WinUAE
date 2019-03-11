@@ -244,7 +244,7 @@ static const TCHAR *lacer[] = { _T("off"), _T("i"), _T("p"), 0 };
 static const TCHAR *cycleexact[] = { _T("false"), _T("memory"), _T("true"), 0  };
 static const TCHAR *unmapped[] = { _T("floating"), _T("zero"), _T("one"), 0 };
 static const TCHAR *ciatype[] = { _T("default"), _T("391078-01"), 0 };
-static const TCHAR *debugfeatures[] = { _T("segtracker"), _T("fsdebug"), 0 };
+static const TCHAR *debugfeatures[] = { _T("segtracker"), _T("fsdebug"), _T("gdbserver") /*BARTO*/, 0 };
 
 struct hdcontrollerconfig
 {

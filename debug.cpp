@@ -49,6 +49,7 @@
 #include "blitter.h"
 #include "ini.h"
 #include "readcpu.h"
+#include "barto_gdbserver.h"
 
 #define TRACE_SKIP_INS 1
 #define TRACE_MATCH_PC 2
@@ -56,11 +57,13 @@
 #define TRACE_RANGE_PC 4
 #define TRACE_SKIP_LINE 5
 #define TRACE_RAM_PC 6
+#define TRACE_NRANGE_PC 7 //BARTO
 #define TRACE_CHECKONLY 10
 
-static int trace_mode;
-static uae_u32 trace_param1;
-static uae_u32 trace_param2;
+// BARTO
+/*static*/ int trace_mode;
+/*static*/ uae_u32 trace_param1;
+/*static*/ uae_u32 trace_param2;
 
 int debugger_active;
 static int debug_rewind;
@@ -85,8 +88,9 @@ static int last_vpos1, last_vpos2;
 static int last_frame = -1;
 static uae_u32 last_cycles1, last_cycles2;
 
-static uaecptr processptr;
-static uae_char *processname;
+//BARTO
+/*static*/ uaecptr processptr;
+/*static*/ uae_char *processname;
 
 static uaecptr debug_copper_pc;
 
@@ -6199,7 +6203,7 @@ void debug (void)
 							seglist = BPTR2APTR(get_long_debug (activetask + 128));
 							seglist = BPTR2APTR(get_long_debug (seglist + 12));
 						}
-						if (activetask == processptr || (processname && (!stricmp (name, processname) || (command && command[0] && !strnicmp (command + 1, processname, command[0]) && processname[command[0]] == 0)))) {
+						if (activetask == processptr || (processname && (!stricmp (name, processname) || (command && command[0] && !strnicmp (command + 1, processname, ((uae_u8*)command)[0]) && processname[command[0]] == 0)))) {
 							while (seglist) {
 								uae_u32 size = get_long_debug (seglist - 4) - 4;
 								if (pc >= (seglist + 4) && pc < (seglist + size)) {
@@ -6229,6 +6233,9 @@ void debug (void)
 #endif
 				} else if (trace_mode == TRACE_RANGE_PC) {
 					if (pc >= trace_param1 && pc < trace_param2)
+						bp = -1;
+				} else if(trace_mode == TRACE_NRANGE_PC) { // BARTO
+					if(pc < trace_param1 || pc >= trace_param2)
 						bp = -1;
 				} else if (trace_mode == TRACE_SKIP_LINE) {
 					if (trace_param1 != 0)
@@ -6284,7 +6291,8 @@ void debug (void)
 	}
 	trace_cycles = 0;
 
-	debug_1 ();
+	if(!barto_gdbserver::debug())
+		debug_1 ();
 	debugmem_enable();
 	if (!debug_rewind && !currprefs.cachesize
 #ifdef FILESYS

@@ -629,7 +629,15 @@ void write_log (const TCHAR *format, ...)
 	TCHAR *bufp;
 	va_list parms;
 
-	if (!SHOW_CONSOLE && !console_logging && !debugfile)
+// BARTO
+#if 1
+	static int is_debugger_present = -1;
+	if(is_debugger_present == -1) {
+		is_debugger_present = IsDebuggerPresent();
+	}
+#endif
+
+	if (!SHOW_CONSOLE && !console_logging && !debugfile && !is_debugger_present)
 		return;
 
 	if (!cs_init)
@@ -671,11 +679,8 @@ void write_log (const TCHAR *format, ...)
 		_ftprintf (debugfile, _T("%s"), bufp);
 	}
 
-#if 0
-	static int is_debugger_present = -1;
-	if (is_debugger_present == -1) {
-		is_debugger_present = IsDebuggerPresent();
-	}
+	// BARTO
+#if 1
 	if (is_debugger_present) {
 		OutputDebugString(bufp);
 	}

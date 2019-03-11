@@ -76,3 +76,4 @@ packages.config
 *.sqlite
 *.db-shm
 *.db-wal
+*.ipch
