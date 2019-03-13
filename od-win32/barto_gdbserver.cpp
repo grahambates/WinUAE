@@ -90,7 +90,7 @@ namespace barto_gdbserver {
 			if(select(1, &fd, nullptr, nullptr, &tv)) {
 				gdbconn = accept(gdbsocket, (struct sockaddr*)socketaddr, &sa_len);
 				if(gdbconn != INVALID_SOCKET)
-					write_log(_T("GDBSERVER: connection accepted\n"));
+					write_log("GDBSERVER: connection accepted\n");
 			}
 		}
 		return gdbconn != INVALID_SOCKET;
@@ -234,6 +234,15 @@ namespace barto_gdbserver {
 			return ret;
 		};
 		return mem2hex(registers, sizeof(registers));
+	}
+
+	void print_breakpoints() {
+		write_log("GDBSERVER: Breakpoints:\n");
+		for(auto& bpn : bpnodes) {
+			if(bpn.enabled) {
+				write_log("GDBSERVER: - %d, 0x%x, 0x%x\n", bpn.type, bpn.value1, bpn.value2);
+			}
+		}
 	}
 
 	void send_ack(const std::string& ack) {
@@ -434,6 +443,11 @@ namespace barto_gdbserver {
 											trace_param1 = 0;
 											trace_param2 = 0xF80000;
 											response += "OK";
+										} else if(adr == 0xeeeeeeee) {
+											// step out of interrupt (until RTE)
+											trace_mode = TRACE_MATCH_INS;
+											trace_param1 = 0x4e73; // rte
+											response += "OK";
 										} else {
 											for(auto& bpn : bpnodes) {
 												if(bpn.enabled)
@@ -443,6 +457,7 @@ namespace barto_gdbserver {
 												bpn.oper = BREAKPOINT_CMP_EQUAL;
 												bpn.enabled = 1;
 												trace_mode = 0;
+												print_breakpoints();
 												response += "OK";
 												break;
 											}
@@ -461,6 +476,7 @@ namespace barto_gdbserver {
 												if(bpn.enabled && bpn.value1 == adr) {
 													bpn.enabled = 0;
 													trace_mode = 0;
+													print_breakpoints();
 													response += "OK";
 													break;
 												}
@@ -547,6 +563,7 @@ namespace barto_gdbserver {
 				bpn.type = BREAKPOINT_REG_PC;
 				bpn.oper = BREAKPOINT_CMP_EQUAL;
 				bpn.enabled = 1;
+				write_log("GDBSERVER: Breakpoint for KPutCharX at 0x%x installed\n", KPutCharX);
 				break;
 			}
 
@@ -556,7 +573,9 @@ namespace barto_gdbserver {
 			xfree(processname);
 			processname = nullptr;
 			listen();
+			write_log("GDBSERVER: Listening...\n");
 			while(!is_connected()) {
+				write_log("...\n");
 				Sleep(100);
 			}
 			useAck = true;
@@ -588,8 +607,10 @@ namespace barto_gdbserver {
 		}
 
 		// debugger active
-		while(debugger_state == state::debugging)
+		while(debugger_state == state::debugging) {
 			handle_packet();
+			Sleep(1);
+		}
 
 		return true;
 	}
