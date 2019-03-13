@@ -575,9 +575,10 @@ namespace barto_gdbserver {
 			listen();
 			write_log("GDBSERVER: Listening...\n");
 			while(!is_connected()) {
-				write_log("...\n");
+				write_log(".");
 				Sleep(100);
 			}
+			write_log("\n");
 			useAck = true;
 			debugger_state = state::debugging;
 			debugmem_enable_stackframe(true);
