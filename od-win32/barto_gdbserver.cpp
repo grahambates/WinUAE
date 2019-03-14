@@ -115,28 +115,9 @@ namespace barto_gdbserver {
 		return false;
 	}
 
-	bool init() {
-		if(currprefs.debugging_features & (1 << 2)) { // "gdbserver"
-			warpmode(1);
-
-			// disable console
-			static TCHAR empty[2] = { 0 };
-			setconsolemode(empty, 1);
-
-			activate_debugger();
-			// from debug.cpp@process_breakpoint()
-			processptr = 0;
-			xfree(processname);
-			processname = nullptr;
-			constexpr TCHAR name[]{ _T("runme.exe") };
-			processname = ua(name);
-			trace_mode = TRACE_CHECKONLY;
-		}
-
-		return true;
-	}
-
 	bool listen() {
+		write_log("GDBSERVER: listen()\n");
+
 		assert(debugger_state == state::inited);
 
 		WSADATA wsaData = { 0 };
@@ -180,6 +161,30 @@ namespace barto_gdbserver {
 		if(err < 0) {
 			write_log(_T("GDBSERVER: setsockopt(SO_REUSEADDR) failed, %s:%s: %d\n"), name, port, WSAGetLastError());
 			return false;
+		}
+
+		return true;
+	}
+
+	bool init() {
+		if(currprefs.debugging_features & (1 << 2)) { // "gdbserver"
+			warpmode(1);
+
+			// disable console
+			static TCHAR empty[2] = { 0 };
+			setconsolemode(empty, 1);
+
+			activate_debugger();
+			// from debug.cpp@process_breakpoint()
+			processptr = 0;
+			xfree(processname);
+			processname = nullptr;
+			constexpr TCHAR name[]{ _T("runme.exe") };
+			processname = ua(name);
+			trace_mode = TRACE_CHECKONLY;
+
+			// call as early as possible to avoid delays with GDB having to retry to connect...
+			listen();
 		}
 
 		return true;
@@ -572,8 +577,7 @@ namespace barto_gdbserver {
 			processptr = 0;
 			xfree(processname);
 			processname = nullptr;
-			listen();
-			write_log("GDBSERVER: Listening...\n");
+			write_log("GDBSERVER: Waiting for connection...\n");
 			while(!is_connected()) {
 				write_log(".");
 				Sleep(100);
@@ -610,6 +614,12 @@ namespace barto_gdbserver {
 		// debugger active
 		while(debugger_state == state::debugging) {
 			handle_packet();
+
+			MSG msg{};
+			while(PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
+				TranslateMessage(&msg);
+				DispatchMessage(&msg);
+			}
 			Sleep(1);
 		}
 
