@@ -550,6 +550,7 @@ namespace barto_gdbserver {
 	}
 
 	uaecptr KPutCharX{};
+	std::string KPutCharOutput;
 
 	// returns true if gdbserver handles debugging
 	bool debug() {
@@ -593,8 +594,16 @@ namespace barto_gdbserver {
 		if(debugger_state == state::connected) {
 			auto pc = munge24(m68k_getpc());
 			if (pc == KPutCharX) {
+				// if this is too slow, hook uaelib trap#86
 				auto ascii = static_cast<uint8_t>(m68k_dreg(regs, 0));
-				send_response("$O" + hex8(ascii));
+				KPutCharOutput += ascii;
+				if(ascii == '\0') {
+					std::string response = "$O";
+					for(const auto& ch : KPutCharOutput)
+						response += hex8(ch);
+					send_response(response);
+					KPutCharOutput.clear();
+				}
 				deactivate_debugger();
 				return true;
 			}
