@@ -11,9 +11,11 @@
 #include "inputdevice.h"
 #include "uae.h"
 #include "debugmem.h"
+#include "dxwrap.h" // AmigaMonitor
 
 // from main.cpp
 extern struct uae_prefs currprefs;
+
 
 // from debug.cpp
 extern uae_u8 *get_real_address_debug(uaecptr addr);
@@ -179,7 +181,7 @@ namespace barto_gdbserver {
 			processptr = 0;
 			xfree(processname);
 			processname = nullptr;
-			constexpr TCHAR name[]{ _T("runme.exe") };
+			constexpr TCHAR name[]{ _T(":runme.exe") };
 			processname = ua(name);
 			trace_mode = TRACE_CHECKONLY;
 
@@ -397,6 +399,11 @@ namespace barto_gdbserver {
 										} else if(action == "c") { // continue
 											debugger_state = state::connected;
 											deactivate_debugger();
+											// none work...
+											//SetWindowPos(AMonitors[0].hAmigaWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE); // bring window to top
+											//BringWindowToTop(AMonitors[0].hAmigaWnd);
+											//SetForegroundWindow(AMonitors[0].hAmigaWnd);
+											//setmouseactive(0, 2);
 											send_ack(ack);
 											return;
 										} else if(action[0] == 'r') { // keep stepping in range
@@ -551,6 +558,15 @@ namespace barto_gdbserver {
 
 	uaecptr KPutCharX{};
 	std::string KPutCharOutput;
+
+	void output(const char* string) {
+		if(debugger_state == state::connected) {
+			std::string response = "$O";
+			while(*string)
+				response += hex8(*string++);
+			send_response(response);
+		}
+	}
 
 	// returns true if gdbserver handles debugging
 	bool debug() {
