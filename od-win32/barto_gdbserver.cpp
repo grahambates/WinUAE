@@ -35,7 +35,8 @@ extern uae_u8 *get_real_address_debug(uaecptr addr);
 
 #include "barto_gdbserver.h"
 
-// -s use_gui=no -s quickstart=a500 -s filesystem=rw,dh0:c:\cygwin64\home\Chuck\amiga_test
+// -s input.config=1 -s input.1.keyboard.0.button.41.GRAVE=SPC_SINGLESTEP.0    -s use_gui=no -s quickstart=a500,1 -s debugging_features=gdbserver -s filesystem=rw,dh0:c:\Users\bwodok\Documents\Visual_Studio_Code\amiga-debug\bin\dh0
+// c:\Users\bwodok\Documents\Visual_Studio_Code\amiga-debug\bin\opt\bin> m68k-amiga-elf-gdb.exe -ex "set debug remote 1" -ex "target remote :2345" -ex "monitor profile xxx" ..\..\..\template\a.mingw.elf
 
 // /opt/amiga/8.2.0/bin/m68k-amiga-elf-gdb -ex 'set debug remote 1' -ex 'target remote :2345' test.elf
 // /opt/amiga/8.2.0/bin/m68k-amiga-elf-gdb -ex 'set debug remote 1' -ex 'set remotetimeout 100' -ex 'target remote :2345' test.elf
@@ -62,6 +63,37 @@ namespace barto_gdbserver {
 		return ret;
 	}
 
+	static std::string from_hex(const std::string& s) {
+		std::string ret;
+		for(size_t i = 0, len = s.length() & ~1; i < len; i += 2) {
+			uint8_t v{};
+			if(s[i] >= '0' && s[i] <= '9')
+				v |= (s[i] - '0') << 4;
+			else if(s[i] >= 'a' && s[i] <= 'f')
+				v |= (s[i] - 'a' + 10) << 4;
+			else if(s[i] >= 'A' && s[i] <= 'F')
+				v |= (s[i] - 'A' + 10) << 4;
+			if(s[i + 1] >= '0' && s[i + 1] <= '9')
+				v |= (s[i + 1] - '0');
+			else if(s[i + 1] >= 'a' && s[i + 1] <= 'f')
+				v |= (s[i + 1] - 'a' + 10);
+			else if(s[i + 1] >= 'A' && s[i + 1] <= 'F')
+				v |= (s[i + 1] - 'A' + 10);
+			ret += (char)v;
+		}
+		return ret;
+	}
+
+	static std::string to_hex(const std::string& s) {
+		std::string ret;
+		for(size_t i = 0, len = s.length(); i < len; i++) {
+			uint8_t v = s[i];
+			ret += hex[v >> 4];
+			ret += hex[v & 0xf];
+		}
+		return ret;
+	}
+
 	std::thread connect_thread;
 	PADDRINFOW socketinfo;
 	SOCKET gdbsocket{ INVALID_SOCKET };
@@ -69,11 +101,15 @@ namespace barto_gdbserver {
 	char socketaddr[sizeof SOCKADDR_INET];
 	bool useAck{ true };
 	uint32_t baseText{}, baseData{}, baseBss{};
+	uint32_t sizeText{}, sizeData{}, sizeBss{};
+	std::string profile_filename;
 
 	enum class state {
 		inited,
 		connected,
 		debugging,
+		profile,
+		profiling,
 	};
 
 	state debugger_state{ state::inited };
@@ -353,9 +389,9 @@ namespace barto_gdbserver {
 											auto size = get_long_debug(segList - 4) - 4;
 											auto base = segList + 4;
 											switch(i) {
-											case 0: baseText = base; break;
-											case 1: baseData = base; break;
-											case 2: baseBss = base; break;
+											case 0: baseText = base; sizeText = size; break;
+											case 1: baseData = base; sizeData = size; break;
+											case 2: baseBss  = base; sizeBss  = size; break;
 											}
 											write_log("GDBSERVER:   base=%x; size=%x\n", base, size);
 											segList = BADDR(get_long_debug(segList));
@@ -365,6 +401,18 @@ namespace barto_gdbserver {
 										//                          #1 HUNK_DATA: 0x050 bytes; segList says 0x054 bytes
 										//                          #2 HUNK_BSS:  0x044 bytes; segList says 0x048 bytes
 									}
+								} else if(request.substr(0, strlen("qRcmd,")) == "qRcmd,") {
+									// "monitor" command. used for profiling
+									auto cmd = from_hex(request.substr(strlen("qRcmd,")));
+									write_log("GDBSERVER:   monitor %s\n", cmd.c_str());
+									if(cmd.substr(0, strlen("profile")) == "profile") {
+										profile_filename = cmd.substr(strlen("profile "));
+										send_ack(ack);
+										debugger_state = state::profile;
+										deactivate_debugger();
+										return; // response is sent when profile is finished (vsync)
+									}
+									response += "E01";
 								} else if(request.substr(0, strlen("vCont?")) == "vCont?") {
 									response += "vCont;c;C;s;S;t;r";
 								} else if(request.substr(0, strlen("vCont;")) == "vCont;") {
@@ -551,6 +599,35 @@ namespace barto_gdbserver {
 		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
 			return;
 
+		static uae_u32* profile_buffer{};
+		static uae_u32 profile_start_cycles{};
+
+		if(debugger_state == state::profile) {
+			// start profiling
+			profile_buffer = new uae_u32[sizeText >> 1]{};
+			start_cpu_profiler(baseText, sizeText, profile_buffer);
+			profile_start_cycles = get_cycles() / (CYCLE_UNIT / 2);
+			write_log("GDBSERVER: Start CPU Profiler @ %u cycles\n", get_cycles() / (CYCLE_UNIT / 2));
+			debugger_state = state::profiling;
+		} else if(debugger_state == state::profiling) {
+			// end profiling
+			stop_cpu_profiler();
+			uae_u32 profile_end_cycles = get_cycles() / (CYCLE_UNIT / 2);
+			write_log("GDBSERVER: Stop CPU Profiler @ %u cycles => %u cycles\n", profile_end_cycles, profile_end_cycles - profile_start_cycles);
+
+			if(auto f = fopen(profile_filename.c_str(), "wb")) {
+				fwrite(profile_buffer, sizeof(uae_u32), sizeText >> 1, f);
+				fclose(f);
+				send_response("$OK");
+			} else {
+				send_response("$E01");
+			}
+			delete[] profile_buffer;
+
+			debugger_state = state::debugging;
+			activate_debugger();
+		}
+
 		if(debugger_state == state::connected && data_available()) {
 			handle_packet();
 		}
@@ -624,7 +701,7 @@ namespace barto_gdbserver {
 				return true;
 			}
 
-			std::string response{"S05"};
+			std::string response{ "S05" };
 			for(const auto& bpn : bpnodes) {
 				if(bpn.enabled && bpn.type == BREAKPOINT_REG_PC && bpn.value1 == pc) {
 					response = "T05swbreak:;";

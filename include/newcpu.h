@@ -790,6 +790,10 @@ extern bool is_cpu_tracer (void);
 extern bool set_cpu_tracer (bool force);
 extern bool can_cpu_tracer (void);
 
+// BARTO
+extern void start_cpu_profiler(uae_u32 start_addr, uae_u32 size, uae_u32* buffer);
+extern void stop_cpu_profiler();
+
 #define CPU_HALT_PPC_ONLY -1
 #define CPU_HALT_BUS_ERROR_DOUBLE_FAULT 1
 #define CPU_HALT_DOUBLE_FAULT 2

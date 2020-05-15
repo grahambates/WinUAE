@@ -95,6 +95,27 @@ static int cpu_prefs_changed_flag;
 int cpucycleunit;
 int cpu_tracer;
 
+// BARTO
+uae_u32 cpu_profiler_start_addr = 0;
+uae_u32 cpu_profiler_size = 0;
+uae_u32* cpu_profiler_buffer = nullptr;
+//uae_u32 cpu_profiler_cycles = 0;
+
+void start_cpu_profiler(uae_u32 start_addr, uae_u32 size, uae_u32* buffer)
+{
+	cpu_profiler_start_addr = start_addr;
+	cpu_profiler_size = size;
+	cpu_profiler_buffer = buffer;
+}
+
+void stop_cpu_profiler()
+{
+	cpu_profiler_start_addr = 0;
+	cpu_profiler_size = 0;
+	cpu_profiler_buffer = nullptr;
+}
+// BARTO-END
+
 const int areg_byteinc[] = { 1, 1, 1, 1, 1, 1, 1, 2 };
 const int imm8_table[] = { 8, 1, 2, 3, 4, 5, 6, 7 };
 
@@ -5223,11 +5244,22 @@ static void m68k_run_1_ce (void)
 					debug_trainer_match();
 				}
 
+				// BARTO
+				uae_u32 cpu_profiler_cycles = get_cycles();
+
 				r->instruction_pc = m68k_getpc ();
 				(*cpufunctbl[r->opcode])(r->opcode);
 				wait_memory_cycles();
 				if (cpu_tracer) {
 					cputrace.state = 0;
+				}
+
+				// BARTO
+				if(cpu_profiler_start_addr) {
+					if(r->instruction_pc >= cpu_profiler_start_addr && r->instruction_pc <= cpu_profiler_start_addr + cpu_profiler_size) {
+						auto cycles_for_instr = (get_cycles() - cpu_profiler_cycles) / (CYCLE_UNIT / 2);
+						cpu_profiler_buffer[(r->instruction_pc - cpu_profiler_start_addr) >> 1] += cycles_for_instr;
+					}
 				}
 cont:
 				if (cputrace.needendcycles) {
