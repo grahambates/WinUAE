@@ -144,9 +144,9 @@
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Test|Win32'">$(Configuration)\</IntDir>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">false</LinkIncremental>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Test|Win32'">false</LinkIncremental>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">d:\amiga\</OutDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">c:\Users\bwodok\Documents\Visual_Studio_Code\amiga-debug\bin</OutDir>
     <OutDir Condition="'$(Configuration)|$(Platform)'=='Test|x64'">d:\amiga\</OutDir>
-    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(Platform)\$(Configuration)\</IntDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(Configuration).x64\</IntDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Test|x64'">$(Platform)\$(Configuration)\</IntDir>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkIncremental>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Test|x64'">false</LinkIncremental>
@@ -161,7 +161,7 @@
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='FullRelease|x64'">false</LinkIncremental>
     <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='FullRelease|x64'">true</GenerateManifest>
     <TargetName Condition="'$(Configuration)|$(Platform)'=='FullRelease|x64'">winuae64</TargetName>
-    <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">winuae64</TargetName>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">winuae-gdb</TargetName>
     <TargetName Condition="'$(Configuration)|$(Platform)'=='Test|x64'">winuae64</TargetName>
     <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">winuae64</TargetName>
     <IncludePath Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(MSBuildProgramFiles32)\Windows Kits\10\Include\10.0.17763.0\ucrt;$(MSBuildProgramFiles32)\Windows Kits\10\Include\10.0.17763.0\winrt;$(MSBuildProgramFiles32)\Windows Kits\10\Include\10.0.17763.0\um;$(MSBuildProgramFiles32)\Windows Kits\10\Include\10.0.17763.0\shared;$(MSBuildProgramFiles32)\Windows Kits\10\Include\10.0.17763.0\km;c:\dev\include;$(IncludePath)</IncludePath>
