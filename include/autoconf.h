@@ -80,7 +80,6 @@ extern void align (int);
 
 extern volatile uae_atomic uae_int_requested;
 extern void rtarea_reset(void);
-extern bool rethink_traps(void);
 
 #define RTS 0x4e75
 #define RTE 0x4e73
@@ -116,9 +115,10 @@ extern int move_filesys_unitconfig (struct uae_prefs *p, int nr, int to);
 extern TCHAR *validatedevicename (TCHAR *s, const TCHAR *def);
 extern TCHAR *validatevolumename (TCHAR *s, const TCHAR *def);
 
-int filesys_insert (int nr, const TCHAR *volume, const TCHAR *rootdir, bool readonly, int flags);
-int filesys_eject (int nr);
-int filesys_media_change (const TCHAR *rootdir, int inserted, struct uaedev_config_data *uci);
+int filesys_insert(int nr, const TCHAR *volume, const TCHAR *rootdir, bool readonly, int flags);
+int filesys_eject(int nr);
+int filesys_media_change(const TCHAR *rootdir, int inserted, struct uaedev_config_data *uci);
+int filesys_media_change_queue(const TCHAR *rootdir, int total);
 
 extern TCHAR *filesys_createvolname (const TCHAR *volname, const TCHAR *rootdir, struct zvolume *zv, const TCHAR *def);
 extern int target_get_volume_name (struct uaedev_mount_info *mtinf, struct uaedev_config_info *ci, bool inserted, bool fullcheck, int cnt);
@@ -155,7 +155,7 @@ extern void expansion_scan_autoconfig(struct uae_prefs*, bool);
 extern void expansion_generate_autoconfig_info(struct uae_prefs *p);
 extern struct autoconfig_info *expansion_get_autoconfig_info(struct uae_prefs*, int romtype, int devnum);
 extern struct autoconfig_info *expansion_get_autoconfig_data(struct uae_prefs *p, int index);
-extern struct autoconfig_info *expansion_get_autoconfig_by_address(struct uae_prefs *p, uaecptr addr);
+extern struct autoconfig_info *expansion_get_autoconfig_by_address(struct uae_prefs *p, uaecptr addr, int index);
 extern void expansion_set_autoconfig_sort(struct uae_prefs *p);
 extern int expansion_autoconfig_move(struct uae_prefs *p, int index, int direction, bool test);
 extern bool expansion_can_move(struct uae_prefs *p, int index);
@@ -189,6 +189,8 @@ typedef void(*DEVICE_MEMORY_CALLBACK)(struct romconfig*, uae_u8*, int);
 #define EXPANSIONTYPE_FALLBACK_DISABLE 0x8000
 #define EXPANSIONTYPE_HAS_FALLBACK 0x10000
 #define EXPANSIONTYPE_X86_EXPANSION 0x20000
+#define EXPANSIONTYPE_PCMCIA 0x40000
+#define EXPANSIONTYPE_CUSTOMDISK 0x80000
 
 #define EXPANSIONBOARD_CHECKBOX 0
 #define EXPANSIONBOARD_MULTI 1
@@ -243,6 +245,7 @@ struct cpuboardsubtype
 	const TCHAR *name;
 	const TCHAR *configname;
 	int romtype, romtype_extra;
+	int cputype;
 	DEVICE_ADD add;
 	int deviceflags;
 	int memorytype;

@@ -36,6 +36,7 @@
 #include "rp.h"
 #include "direct3d.h"
 #include "debug.h"
+#include "devices.h"
 
 static int initialized;
 static RPGUESTINFO guestinfo;
@@ -196,11 +197,11 @@ static const int rp0_cd32[] = {
 	INPUTEVENT_JOY1_DOWN, INPUTEVENT_JOY1_UP,
 	INPUTEVENT_JOY1_CD32_RED,
 	INPUTEVENT_JOY1_CD32_BLUE,
-	INPUTEVENT_JOY1_CD32_GREEN,
 	INPUTEVENT_JOY1_CD32_YELLOW,
+	INPUTEVENT_JOY1_CD32_GREEN,
 	INPUTEVENT_JOY1_CD32_PLAY,
 	INPUTEVENT_JOY1_CD32_RWD,
-	INPUTEVENT_JOY1_CD32_FFW
+	INPUTEVENT_JOY1_CD32_FFW,
 	-1
 };
 static const int rp1_joystick[] = {
@@ -223,11 +224,11 @@ static const int rp1_cd32[] = {
 	INPUTEVENT_JOY2_DOWN, INPUTEVENT_JOY2_UP,
 	INPUTEVENT_JOY2_CD32_RED,
 	INPUTEVENT_JOY2_CD32_BLUE,
-	INPUTEVENT_JOY2_CD32_GREEN,
 	INPUTEVENT_JOY2_CD32_YELLOW,
+	INPUTEVENT_JOY2_CD32_GREEN,
 	INPUTEVENT_JOY2_CD32_PLAY,
 	INPUTEVENT_JOY2_CD32_RWD,
-	INPUTEVENT_JOY2_CD32_FFW
+	INPUTEVENT_JOY2_CD32_FFW,
 	-1
 };
 static const int rp2_joystick[] = {
@@ -380,7 +381,7 @@ static const TCHAR **getcustomeventorder(int *devicetype)
 	return NULL;
 }
 
-bool port_get_custom (int inputmap_port, TCHAR *out)
+static bool port_get_custom (int inputmap_port, TCHAR *out)
 {
 	int kb;
 	bool first = true;
@@ -549,7 +550,7 @@ static int port_insert (int inputmap_port, int devicetype, DWORD flags, const TC
 		if (inputmap_port >= 0 && inputmap_port < 4) {
 			dacttype[inputmap_port] = devicetype;
 			inputdevice_compa_clear(&changed_prefs, inputmap_port);
-			inputdevice_joyport_config(&changed_prefs, _T("none"), NULL, inputmap_port, 0, 0, true);
+			inputdevice_joyport_config(&changed_prefs, _T("none"), NULL, inputmap_port, 0, 0, 0, true);
 			return 1;
 		}
 		return 0;
@@ -561,7 +562,7 @@ static int port_insert (int inputmap_port, int devicetype, DWORD flags, const TC
 	inputdevice_compa_clear (&changed_prefs, inputmap_port);
 	
 	if (_tcslen (name) == 0) {
-		inputdevice_joyport_config (&changed_prefs, _T("none"), NULL, inputmap_port, 0, 0, true);
+		inputdevice_joyport_config (&changed_prefs, _T("none"), NULL, inputmap_port, 0, 0, 0, true);
 		return TRUE;
 	}
 	devicetype2 = -1;
@@ -583,11 +584,11 @@ static int port_insert (int inputmap_port, int devicetype, DWORD flags, const TC
 		_stprintf (tmp2, _T("KeyboardLayout%d"), i);
 		if (!_tcscmp (tmp2, name)) {
 			_stprintf (tmp2, _T("kbd%d"), i + 1);
-			ret = inputdevice_joyport_config (&changed_prefs, tmp2, NULL, inputmap_port, devicetype2, 0, true);
+			ret = inputdevice_joyport_config (&changed_prefs, tmp2, NULL, inputmap_port, devicetype2, 0, 0, true);
 			return ret;
 		}
 	}
-	ret = inputdevice_joyport_config (&changed_prefs, name, name, inputmap_port, devicetype2, 1, true);
+	ret = inputdevice_joyport_config (&changed_prefs, name, name, inputmap_port, devicetype2, 0, 1, true);
 	return ret;
 }
 
@@ -1543,6 +1544,7 @@ HRESULT rp_init (void)
 		dactmask[i] = 0;
 	}
 	mousecapture = 0;
+
 	return hr;
 }
 
@@ -1785,6 +1787,7 @@ void rp_fixup_options (struct uae_prefs *p)
 	set_config_changed ();
 
 	write_log(_T("rp_fixup_options end\n"));
+
 }
 
 static void rp_device_writeprotect (int dev, int num, bool writeprotected)
@@ -2321,4 +2324,11 @@ bool rp_mouseevent(int x, int y, int buttons, int buttonmask)
 int rp_isactive (void)
 {
 	return initialized;
+}
+
+void rp_reset(void)
+{
+	if (!initialized)
+		return;
+	device_add_vsync_pre(rp_vsync);
 }

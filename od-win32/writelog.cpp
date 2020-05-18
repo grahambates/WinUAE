@@ -68,13 +68,17 @@ int console_logging = 0;
 static int debugger_type = -1;
 extern BOOL debuggerinitializing;
 extern int lof_store;
-extern int seriallog;
 static int console_input_linemode = -1;
-int always_flush_log = 1;
+int always_flush_log = 0;
 
 #define WRITE_LOG_BUF_SIZE 4096
 
 /* console functions for debugger */
+
+bool is_console_open(void)
+{
+	return consoleopen;
+}
 
 static HWND myGetConsoleWindow (void)
 {

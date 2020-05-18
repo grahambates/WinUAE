@@ -52,7 +52,7 @@ extern int fpp_movem_index2[256];
 extern int fpp_movem_next[256];
 #endif
 
-extern int bus_error_offset;
+extern int hardware_bus_error;
 
 typedef uae_u32 REGPARAM3 cpuop_func (uae_u32) REGPARAM;
 typedef void REGPARAM3 cpuop_func_ce (uae_u32) REGPARAM;
@@ -84,8 +84,10 @@ struct comptbl {
 };
 #endif
 
+extern cpuop_func *loop_mode_table[];
+
 extern uae_u32 REGPARAM3 op_illg (uae_u32) REGPARAM;
-extern void REGPARAM3 op_unimpl (uae_u16) REGPARAM;
+extern void REGPARAM3 op_unimpl (uae_u32) REGPARAM;
 
 typedef uae_u8 flagtype;
 
@@ -173,13 +175,17 @@ struct regstruct
 	uae_u16 opcode;
 	uae_u32 instruction_pc;
 	uae_u32 instruction_pc_user_exception;
+	uae_u32 trace_pc;
 
-	uae_u16 irc, ir, db;
+	uae_u16 irc, ir, ird;
 	volatile uae_atomic spcflags;
 	uae_u32 last_prefetch;
 	uae_u32 chipset_latch_rw;
 	uae_u32 chipset_latch_read;
 	uae_u32 chipset_latch_write;
+	uae_u16 db, write_buffer, read_buffer;
+	int loop_mode;
+	int instruction_cnt;
 
 	uaecptr usp, isp, msp;
 	uae_u16 sr;
@@ -206,6 +212,7 @@ struct regstruct
 	uae_u32 fpu_exp_state;
 	uae_u16 fp_opword;
 	uaecptr fp_ea;
+	bool fp_ea_set;
 	uae_u32 fp_exp_pend, fp_unimp_pend;
 	bool fpu_exp_pre;
 	bool fp_unimp_ins;
@@ -267,7 +274,7 @@ struct cputracestruct
 {
 	uae_u32 regs[16];
 	uae_u32 usp, isp, pc;
-	uae_u16 ir, irc, sr, opcode;
+	uae_u16 ir, irc, ird, sr, opcode;
 	int intmask, stopped, state;
 
 	uae_u32 msp, vbr;
@@ -281,6 +288,7 @@ struct cputracestruct
 	int pipeline_pos;
 	int pipeline_r8[2];
 	int pipeline_stop;
+	uae_u16 read_buffer, write_buffer;
 
 	uae_u32 startcycles;
 	int needendcycles;
@@ -567,6 +575,8 @@ STATIC_INLINE void m68k_setpc_normal(uaecptr pc)
 
 extern void cpu_invalidate_cache(uaecptr, int);
 
+extern bool(*is_super_access)(bool);
+
 extern uae_u32(*read_data_030_bget)(uaecptr);
 extern uae_u32(*read_data_030_wget)(uaecptr);
 extern uae_u32(*read_data_030_lget)(uaecptr);
@@ -647,10 +657,10 @@ extern void REGPARAM3 put_bitfield (uae_u32 dst, uae_u32 bdata[2], uae_u32 val, 
 
 extern void m68k_disasm_ea (uaecptr addr, uaecptr *nextpc, int cnt, uae_u32 *seaddr, uae_u32 *deaddr, uaecptr lastpc);
 extern void m68k_disasm (uaecptr addr, uaecptr *nextpc, uaecptr lastpc, int cnt);
-extern void m68k_disasm_2 (TCHAR *buf, int bufsize, uaecptr addr, uaecptr *nextpc, int cnt, uae_u32 *seaddr, uae_u32 *deaddr, uaecptr lastpc, int safemode);
+extern uae_u32 m68k_disasm_2 (TCHAR *buf, int bufsize, uaecptr addr, uaecptr *nextpc, int cnt, uae_u32 *seaddr, uae_u32 *deaddr, uaecptr lastpc, int safemode);
 extern void sm68k_disasm (TCHAR*, TCHAR*, uaecptr addr, uaecptr *nextpc, uaecptr lastpc);
 extern int m68k_asm(TCHAR *buf, uae_u16 *out, uaecptr pc);
-extern uaecptr ShowEA(void *f, uaecptr pc, uae_u16 opcode, int reg, amodes mode, wordsizes size, TCHAR *buf, uae_u32 *eaddr, int safemode);
+extern uaecptr ShowEA(void *f, uaecptr pc, uae_u16 opcode, int reg, amodes mode, wordsizes size, TCHAR *buf, uae_u32 *eaddr, int *actualea, int safemode);
 extern int get_cpu_model (void);
 
 extern void set_cpu_caches (bool flush);
@@ -675,15 +685,34 @@ extern void init_m68k (void);
 extern void m68k_go (int);
 extern void m68k_dumpstate(uaecptr *, uaecptr);
 extern void m68k_dumpcache (bool);
+extern int getMulu68kCycles(uae_u16 src);
+extern int getMuls68kCycles(uae_u16 src);
 extern int getDivu68kCycles (uae_u32 dividend, uae_u16 divisor);
 extern int getDivs68kCycles (uae_s32 dividend, uae_s16 divisor);
 extern void divbyzero_special(bool issigned, uae_s32 dst);
-extern void setdivuoverflowflags(uae_u32 dividend, uae_u16 divisor);
-extern void setdivsoverflowflags(uae_s32 dividend, uae_s16 divisor);
+extern void setdivuflags(uae_u32 dividend, uae_u16 divisor);
+extern void setdivsflags(uae_s32 dividend, uae_s16 divisor);
+extern void setchkundefinedflags(uae_s32 src, uae_s32 dst, int size);
+extern void setchk2undefinedflags(uae_s32 lower, uae_s32 upper, uae_s32 val, int size);
 extern void protect_roms (bool);
 extern void unprotect_maprom (void);
 extern bool is_hardreset(void);
 extern bool is_keyboardreset(void);
+extern void Exception_build_stack_frame_common(uae_u32 oldpc, uae_u32 currpc, uae_u32 ssw, int nr);
+extern void Exception_build_stack_frame(uae_u32 oldpc, uae_u32 currpc, uae_u32 ssw, int nr, int format);
+extern void Exception_build_68000_address_error_stack_frame(uae_u16 mode, uae_u16 opcode, uaecptr fault_addr, uaecptr pc);
+extern uae_u32 exception_pc(int nr);
+extern void cpu_restore_fixup(void);
+extern bool privileged_copro_instruction(uae_u16 opcode);
+extern bool generates_group1_exception(uae_u16 opcode);
+
+void ccr_68000_long_move_ae_LZN(uae_s32 src);
+void ccr_68000_long_move_ae_LN(uae_s32 src);
+void ccr_68000_long_move_ae_HNZ(uae_s32 src);
+void ccr_68000_long_move_ae_normal(uae_s32 src);
+void ccr_68000_word_move_ae_normal(uae_s16 src);
+void dreg_68000_long_replace_low(int reg, uae_u16 v);
+void areg_68000_long_replace_low(int reg, uae_u16 v);
 
 extern void mmu_op (uae_u32, uae_u32);
 extern bool mmu_op30 (uaecptr, uae_u32, uae_u16, uaecptr);
@@ -702,13 +731,20 @@ extern void fpux_restore (int*);
 extern bool fpu_get_constant(fpdata *fp, int cr);
 extern int fpp_cond(int condition);
 
-extern void exception3_read(uae_u32 opcode, uaecptr addr);
-extern void exception3_write(uae_u32 opcode, uaecptr addr);
+extern void exception3_read(uae_u32 opcode, uaecptr addr, int size, int fc);
+extern void exception3_write(uae_u32 opcode, uaecptr addr, int size, uae_u32 val, int fc);
+extern void exception3_read_access(uae_u32 opcode, uaecptr addr, int size, int fc);
+extern void exception3_read_access2(uae_u32 opcode, uaecptr addr, int size, int fc);
+extern void exception3_write_access(uae_u32 opcode, uaecptr addr, int size, uae_u32 val, int fc);
+extern void exception3_read_prefetch(uae_u32 opcode, uaecptr addr);
+extern void exception3_read_prefetch_only(uae_u32 opcode, uaecptr addr);
 extern void exception3_notinstruction(uae_u32 opcode, uaecptr addr);
-extern void exception3i (uae_u32 opcode, uaecptr addr);
-extern void exception3b (uae_u32 opcode, uaecptr addr, bool w, bool i, uaecptr pc);
-extern void exception2 (uaecptr addr, bool read, int size, uae_u32 fc);
-extern void exception2_setup(uaecptr addr, bool read, int size, uae_u32 fc);
+extern void hardware_exception2(uaecptr addr, uae_u32 v, bool read, bool ins, int size);
+extern void exception2_setup(uae_u32 opcode, uaecptr addr, bool read, int size, uae_u32 fc);
+extern void exception2_read(uae_u32 opcode, uaecptr addr, int size, int fc);
+extern void exception2_write(uae_u32 opcode, uaecptr addr, int size, uae_u32 val, int fc);
+extern void exception2_fetch_opcode(uae_u32 opcode, int offset, int pcoffset);
+extern void exception2_fetch(uae_u32 opcode, int offset, int pcoffset);
 extern void m68k_reset (void);
 extern void cpureset (void);
 extern void cpu_halt (int id);
@@ -782,6 +818,7 @@ extern uae_u32 val_move2c (int regno);
 extern void val_move2c2 (int regno, uae_u32 val);
 struct cpum2c {
 	int regno;
+	int flags;
 	const TCHAR *regname;
 };
 extern struct cpum2c m2cregs[];
@@ -806,6 +843,7 @@ extern void stop_cpu_profiler();
 #define CPU_HALT_CPU_STUCK 9
 #define CPU_HALT_SSP_IN_NON_EXISTING_ADDRESS 10
 #define CPU_HALT_INVALID_START_ADDRESS 11
+#define CPU_HALT_68060_HALT 12
 
 uae_u32 process_cpu_indirect_memory_read(uae_u32 addr, int size);
 void process_cpu_indirect_memory_write(uae_u32 addr, uae_u32 data, int size);

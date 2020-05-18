@@ -30,6 +30,7 @@
 #include "ide.h"
 #include "debug.h"
 #include "ini.h"
+#include "rommgr.h"
 
 #ifdef WITH_CHD
 #include "archivers/chd/chdtypes.h"
@@ -269,21 +270,38 @@ void getchsgeometry_hdf (struct hardfiledata *hfd, uae_u64 size, int *pcyl, int 
 	getchsgeometry2 (size, pcyl, phead, psectorspertrack, size <= minsize ? 1 : 2);
 }
 
+// partition hdf default
+void gethdfgeometry(uae_u64 size, struct uaedev_config_info *ci)
+{
+	int head = 1;
+	int sectorspertrack = 32;
+	if (size >= 1048576000) { // >=1000M
+		head = 16;
+		while ((size / 512) / ((uae_u64)head * sectorspertrack) >= 32768 && sectorspertrack < 32768) {
+			sectorspertrack *= 2;
+		}
+	}
+	ci->surfaces = head;
+	ci->sectors = sectorspertrack;
+	ci->reserved = 2;
+	ci->blocksize = 512;
+}
+
 void getchspgeometry (uae_u64 total, int *pcyl, int *phead, int *psectorspertrack, bool idegeometry)
 {
 	uae_u64 blocks = total / 512;
 
-	if (blocks > 16515072) {
-		/* >8G, CHS=16383/16/63 */
-		*pcyl = 16383;
-		*phead = 16;
-		*psectorspertrack = 63;
-		return;
-	}
 	if (idegeometry) {
 		*phead = 16;
 		*psectorspertrack = 63;
 		*pcyl = blocks / ((*psectorspertrack) * (*phead));
+		if (blocks > 16515072) {
+			/* >8G, CHS=16383/16/63 */
+			*pcyl = 16383;
+			*phead = 16;
+			*psectorspertrack = 63;
+			return;
+		}
 		return;
 	}
 	getchsgeometry (total, pcyl, phead, psectorspertrack);
@@ -2347,14 +2365,12 @@ void hardfile_do_disk_change (struct uaedev_config_data *uci, bool insert)
 	int fsid = uci->configoffset;
 	struct hardfiledata *hfd;
 
-	if (uci->ci.controller_type == HD_CONTROLLER_TYPE_PCMCIA) {
-		if (uci->ci.controller_type_unit == 0) {
-			gayle_modify_pcmcia_sram_unit (&uci->ci, insert);
-		} else {
-			gayle_modify_pcmcia_ide_unit (&uci->ci, insert);
-		}
+	const struct expansionromtype *ert = get_unit_expansion_rom(uci->ci.controller_type);
+	if (ert && (ert->deviceflags & EXPANSIONTYPE_PCMCIA)) {
+		pcmcia_reinsert(&currprefs);
 		return;
 	}
+
 	hfd = get_hardfile_data (fsid);
 	if (!hfd)
 		return;

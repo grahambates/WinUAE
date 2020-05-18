@@ -180,7 +180,7 @@ typedef struct {
 	int bootpri; /* boot priority. -128 = no autoboot, -129 = no mount */
 	int devno;
 	bool wasisempty; /* if true, this unit was created empty */
-	bool canremove; /* if true, this unit can be safely ejected and remounted */
+	int canremove; /* if >0, this unit can be safely ejected and remounted */
 	bool configureddrive; /* if true, this is drive that was manually configured */
 	bool inject_icons; /* inject icons if directory filesystem */
 
@@ -877,8 +877,11 @@ int kill_filesys_unitconfig (struct uae_prefs *p, int nr)
 		return 0;
 	uci = getuci (p->mountconfig, nr);
 	hardfile_do_disk_change (uci, 0);
-	if (uci->configoffset >= 0 && uci->ci.controller_type == HD_CONTROLLER_TYPE_UAE)
-		filesys_media_change (uci->ci.rootdir, 0, uci);
+	if (uci->configoffset >= 0 && uci->ci.controller_type == HD_CONTROLLER_TYPE_UAE) {
+		filesys_media_change(uci->ci.rootdir, 0, uci);
+	} else {
+		pcmcia_disk_reinsert(p, &uci->ci, true);
+	}
 	while (nr < MOUNT_CONFIG_SIZE) {
 		memmove (&p->mountconfig[nr], &p->mountconfig[nr + 1], sizeof (struct uaedev_config_data));
 		nr++;
@@ -1113,6 +1116,7 @@ static void initialize_mountinfo (void)
 				if (added)
 					break;
 			}
+#if 0
 		} else if (type == HD_CONTROLLER_TYPE_PCMCIA) {
 			if (uci->controller_type_unit == 0) {
 				gayle_add_pcmcia_sram_unit (uci);
@@ -1121,6 +1125,7 @@ static void initialize_mountinfo (void)
 				gayle_add_pcmcia_ide_unit (uci);
 				added = true;
 			}
+#endif
 		}
 		if (added)
 			allocuci (&currprefs, nr, -1);
@@ -1835,9 +1840,22 @@ static void clear_exkeys (Unit *unit)
 	}
 }
 
+static void filesys_delayed_eject(Unit *u)
+{
+	if (u->reinsertdelay)
+		return;
+	u->reinsertdelay = 50;
+	u->newreadonly = false;
+	xfree(u->newrootdir);
+	u->newrootdir = NULL;
+	write_log(_T("FILESYS: delayed eject %d\n"), u->unit);
+}
+
 static void filesys_delayed_change (Unit *u, int frames, const TCHAR *rootdir, const TCHAR *volume, bool readonly, int flags)
 {
-	u->reinsertdelay = 50;
+	if (u->reinsertdelay)
+		return;
+	u->reinsertdelay = frames;
 	u->newflags = flags;
 	u->newreadonly = readonly;
 	u->newrootdir = my_strdup (rootdir);
@@ -1956,14 +1974,14 @@ int filesys_insert (int nr, const TCHAR *volume, const TCHAR *rootdir, bool read
 	if (nr < 0) {
 		for (u = units; u; u = u->next) {
 			if (is_virtual (u->unit)) {
-				if (!filesys_isvolume(u) && mountinfo.ui[u->unit].canremove)
+				if (!filesys_isvolume(u) && mountinfo.ui[u->unit].canremove > 0)
 					break;
 			}
 		}
 		if (!u) {
 			for (u = units; u; u = u->next) {
 				if (is_virtual (u->unit)) {
-					if (mountinfo.ui[u->unit].canremove)
+					if (mountinfo.ui[u->unit].canremove > 0)
 						break;
 				}
 			}
@@ -1984,8 +2002,8 @@ int filesys_insert (int nr, const TCHAR *volume, const TCHAR *rootdir, bool read
 	if (!is_virtual(nr))
 		return 0;
 	if (filesys_isvolume(u)) {
-		filesys_delayed_change (u, 50, rootdir, volume, readonly, flags);
-		return -1;
+		filesys_delayed_change (u, 10, rootdir, volume, readonly, flags);
+		return 1 + nr;
 	}
 	u->mountcount++;
 	u->mount_changed = 1;
@@ -2120,6 +2138,37 @@ static uae_u32 filesys_media_change_reply (int mode)
 	return 0;
 }
 
+// if multiple drag&drop mounting, queue them because mounting is async (needs Amiga-side code to run).
+static int media_queued_total;
+static int media_queued_cnt;
+static TCHAR **media_queued_paths;
+
+int filesys_media_change_queue(const TCHAR *rootdir, int total)
+{
+	if (total < 0) {
+		media_queued_cnt = 0;
+		for (int i = 0; i < media_queued_total; i++) {
+			xfree(media_queued_paths[i]);
+		}
+		xfree(media_queued_paths);
+		media_queued_cnt = 0;
+		media_queued_total = 0;
+		media_queued_paths = NULL;
+		return 0;
+	}
+	if (total == 0) {
+		media_queued_cnt = 0;
+		return 0;
+	}
+	if (media_queued_total < total) {
+		media_queued_total = total;
+		media_queued_paths = xcalloc(TCHAR*, media_queued_total);
+		media_queued_cnt = 0;
+	}
+	media_queued_paths[media_queued_cnt++] = my_strdup(rootdir);
+	return 1;
+}
+
 int filesys_media_change (const TCHAR *rootdir, int inserted, struct uaedev_config_data *uci)
 {
 	Unit *u;
@@ -2140,7 +2189,7 @@ int filesys_media_change (const TCHAR *rootdir, int inserted, struct uaedev_conf
 	for (u = units; u; u = u->next) {
 		if (is_virtual (u->unit)) {
 			ui = &mountinfo.ui[u->unit];
-			// inserted == 2: drag&drop insert, do not replace existing normal drives
+			// inserted >= 2: drag&drop insert, do not replace existing normal drives
 			if (inserted < 2 && ui->rootdir && !memcmp (ui->rootdir, rootdir, _tcslen (rootdir)) && _tcslen (rootdir) + 3 >= _tcslen (ui->rootdir)) {
 				if (filesys_isvolume(u) && inserted) {
 					if (uci)ctx, 
@@ -2201,6 +2250,12 @@ int filesys_media_change (const TCHAR *rootdir, int inserted, struct uaedev_conf
 		if (nr >= 100) {
 			if (uci)
 				uci->configoffset = nr - 100;
+			if (inserted == 3 && mountinfo.ui[nr - 100].canremove > 0)
+				mountinfo.ui[nr - 100].canremove = -1;
+			return nr;
+		} else if (nr > 0) {
+			if (inserted == 3 && mountinfo.ui[nr - 1].canremove > 0)
+				mountinfo.ui[nr - 1].canremove = -1;
 			return nr;
 		}
 		/* nope, uh, need black magic now.. */
@@ -2215,25 +2270,16 @@ int filesys_media_change (const TCHAR *rootdir, int inserted, struct uaedev_conf
 		nr = add_filesys_unit (&ci, true);
 		if (nr < 0)
 			return 0;
-		if (inserted > 1)
+		if (inserted == 2)
 			mountinfo.ui[nr].canremove = 1;
+		if (inserted == 3)
+			mountinfo.ui[nr].canremove = -1;
 		automountunit = nr;
 		uae_Signal (mountertask, 1 << 13);
 		/* poof */
 		if (uci)
 			uci->configoffset = nr;
 		return 100 + nr;
-	}
-	return 0;
-}
-
-int hardfile_added (struct uaedev_config_info *ci)
-{
-	if (ci->controller_type == HD_CONTROLLER_TYPE_PCMCIA) {
-		if (ci->controller_type_unit == 1)
-			return gayle_add_pcmcia_ide_unit(ci);
-		if (ci->controller_type_unit == 0)
-			return gayle_add_pcmcia_sram_unit(ci);
 	}
 	return 0;
 }
@@ -6021,7 +6067,7 @@ static void	action_delete_object(TrapContext *ctx, Unit *unit, dpacket *packet)
 				return;
 			}
 		} else {
-			if (my_unlink (a->nname) == -1) {
+			if (my_unlink (a->nname, false) == -1) {
 				PUT_PCK_RES1 (packet, DOS_FALSE);
 				PUT_PCK_RES2 (packet, dos_errno ());
 				return;
@@ -6242,10 +6288,14 @@ static void	action_more_cache(TrapContext *ctx, Unit *unit, dpacket *packet)
 
 static void	action_inhibit(TrapContext *ctx, Unit *unit, dpacket *packet)
 {
+	int old = unit->inhibited;
 	PUT_PCK_RES1 (packet, DOS_TRUE);
 	flush_cache (unit, 0);
 	unit->inhibited = GET_PCK_ARG1 (packet) != 0;
 	TRACE((_T("ACTION_INHIBIT(%d:%d)\n"), unit->unit, unit->inhibited));
+	if (unit->ui.canremove && !unit->ui.configureddrive && unit->ui.open && old && !GET_PCK_ARG1(packet)) {
+		filesys_delayed_eject(unit);
+	}
 }
 
 static void	action_write_protect(TrapContext *ctx, Unit *unit, dpacket *packet)
@@ -7901,11 +7951,14 @@ static uae_u32 REGPARAM2 filesys_init_storeinfo (TrapContext *ctx)
 		picasso96_alloc(ctx);
 #endif
 		break;
-	case 2:
+	case 2: // new unit number query
 		ret = automountunit;
-		automountunit = -1;
+		automountunit = -2;
 		break;
 	case 3:
+		return 0;
+	case 4: // mount done (d0=automountunit)
+		automountunit = -1;
 		return 0;
 	}
 	return ret;
@@ -8227,6 +8280,8 @@ static int pt_babe(TrapContext *ctx, uae_u8 *bufrdb, UnitInfo *uip, int unit_no,
 
 	bad = rl(bufrdb + 4);
 	if (bad) {
+		if (bad * hfd->ci.blocksize > FILESYS_MAX_BLOCKSIZE)
+			return 0;
 		hdf_read_rdb(hfd, bufrdb2, bad * hfd->ci.blocksize, hfd->ci.blocksize);
 		if (bufrdb2[0] != 0xBA || bufrdb2[1] != 0xD1)
 			return 0;
@@ -8523,6 +8578,11 @@ static int rdb_mount (TrapContext *ctx, UnitInfo *uip, int unit_no, int partnum,
 		return -2;
 	}
 
+	if (hfd->ci.blocksize > FILESYS_MAX_BLOCKSIZE) {
+		write_log(_T("failed, too large block size %d\n"), hfd->ci.blocksize);
+		return -2;
+	}
+
 	for (rdblock = 0; rdblock < lastblock; rdblock++) {
 		hdf_read_rdb (hfd, bufrdb, rdblock * hfd->ci.blocksize, hfd->ci.blocksize);
 		if (rdblock == 0 && bufrdb[0] == 0xBA && bufrdb[1] == 0xBE) {
@@ -8753,6 +8813,8 @@ static uae_u32 REGPARAM2 filesys_dev_storeinfo (TrapContext *ctx)
 	int type;
 
 	if (unit_no >= MAX_FILESYSTEM_UNITS)
+		return -2;
+	if (sub_no >= MAX_FILESYSTEM_UNITS)
 		return -2;
 
 	UnitInfo *uip = mountinfo.ui;
@@ -8992,6 +9054,7 @@ static uae_u32 REGPARAM2 mousehack_done (TrapContext *ctx)
 			return v;
 		} else {
 			trap_set_areg(ctx, 0, 0);
+			trap_set_dreg(ctx, 1, trap_get_areg(ctx, 1));
 			return trap_get_dreg(ctx, 0);
 		}
 	} else if (mode == 205 || mode == 207) {
@@ -9061,6 +9124,37 @@ void filesys_vsync (void)
 		}
 	}
 
+	if (media_queued_total > 0) {
+		if (automountunit == -1) {
+			bool cont = true;
+			for (u = units; u; u = u->next) {
+				if (u->reinsertdelay > 0) {
+					cont = false;
+					break;
+				}
+			}
+			if (cont) {
+				TCHAR *mountpath = media_queued_paths[media_queued_cnt++];
+				if (mountpath) {
+					filesys_media_change(mountpath, 3, NULL);
+				}
+				if (media_queued_cnt >= media_queued_total) {
+					for (int i = 0; i < media_queued_total; i++) {
+						xfree(media_queued_paths[i]);
+					}
+					xfree(media_queued_paths);
+					media_queued_cnt = 0;
+					media_queued_total = 0;
+					media_queued_paths = NULL;
+					for (int i = 0; i < MAX_FILESYSTEM_UNITS; i++) {
+						if (mountinfo.ui[i].canremove < 0)
+							mountinfo.ui[i].canremove = 1;
+					}
+				}
+			}
+		}
+	}
+
 	if (heartbeat == get_long_host(rtarea_bank.baseaddr + RTAREA_HEARTBEAT)) {
 		if (heartbeat_count > 0)
 			heartbeat_count--;
@@ -9076,7 +9170,11 @@ void filesys_vsync (void)
 		if (u->reinsertdelay > 0) {
 			u->reinsertdelay--;
 			if (u->reinsertdelay == 0) {
-				filesys_insert (u->unit, u->newvolume, u->newrootdir, u->newreadonly, u->newflags);
+				if (u->newrootdir == NULL && u->newvolume == NULL) {
+					filesys_eject(u->unit);
+				} else {
+					filesys_insert(u->unit, u->newvolume, u->newrootdir, u->newreadonly, u->newflags);
+				}
 				xfree (u->newvolume);
 				u->newvolume = NULL;
 				xfree (u->newrootdir);

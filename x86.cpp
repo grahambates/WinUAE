@@ -496,6 +496,7 @@ static uae_u8 x86_bridge_get_io(struct x86_bridge *xb, uaecptr addr)
 	return v;
 }
 
+static void x86_bridge_rethink(void);
 static void set_interrupt(struct x86_bridge *xb, int bit)
 {
 	if (xb->amiga_io[IO_AMIGA_INTERRUPT_STATUS] & (1 << bit))
@@ -1009,9 +1010,9 @@ static void floppy_do_cmd(struct x86_bridge *xb)
 		{
 #if FLOPPY_DEBUG
 			write_log(_T("Floppy%d write MT=%d MF=%d C=%d:H=%d:R=%d:N=%d:EOT=%d:GPL=%d:DTL=%d\n"),
-					  (floppy_cmd[0] & 0x80) ? 1 : 0, (floppy_cmd[0] & 0x40) ? 1 : 0,
-					  floppy_cmd[2], floppy_cmd[3], floppy_cmd[4], floppy_cmd[5],
-					  floppy_cmd[6], floppy_cmd[7], floppy_cmd[8]);
+				floppy_num, (floppy_cmd[0] & 0x80) ? 1 : 0, (floppy_cmd[0] & 0x40) ? 1 : 0,
+				floppy_cmd[2], floppy_cmd[3], floppy_cmd[4], floppy_cmd[5],
+				floppy_cmd[6], floppy_cmd[7], floppy_cmd[8]);
 			write_log(_T("DMA addr %08x len %04x\n"), dma[2].page | dma[2].ac, dma[2].ab);
 #endif
 			floppy_delay_hsync = 50;
@@ -1023,37 +1024,46 @@ static void floppy_do_cmd(struct x86_bridge *xb)
 					floppy_status[0] |= 0x40; // abnormal termination
 					floppy_status[2] |= 0x20; // wrong cylinder
 				} else if (fr.img) {
-					bool end = false;
+					int end = 0;
 					pcf->sector = floppy_cmd[4] - 1;
 					pcf->head = (floppy_cmd[1] & 4) ? 1 : 0;
-					while (!end) {
+					while (!end && !fr.wrprot) {
 						int len = 128 << floppy_cmd[5];
 						uae_u8 buf[512] = { 0 };
 						for (int i = 0; i < 512 && i < len; i++) {
 							int v = dma_channel_read(2);
-							if (v < 0)
+							if (v < 0) {
+								end = -1;
 								break;
+							}
 							buf[i] = v;
-							if (v >= 0x10000)
+							if (v >= 0x10000) {
+								end = 1;
 								break;
+							}
 						}
+#if FLOPPY_DEBUG
+						write_log(_T("LEN=%d END=%d C=%d H=%d S=%d. IMG S=%d H=%d\n"), len, end, pcf->cyl, pcf->head, pcf->sector, fr.secs, fr.heads);
+#endif
+						if (end < 0)
+							break;
 						zfile_fseek(fr.img, (pcf->cyl * fr.secs * fr.heads + pcf->head * fr.secs + pcf->sector) * 512, SEEK_SET);
 						zfile_fwrite(buf, 1, 512, fr.img);
 						pcf->sector++;
-						if (!(floppy_cmd[0] & 0x80))
-							break;
 						if (pcf->sector == eot) {
-							pcf->sector = 0;
 							if (mt) {
+								pcf->sector = 0;
 								if (pcf->head)
 									pcf->cyl++;
 								pcf->head ^= 1;
+							} else {
+								break;
 							}
-							break;
 						}
 						if (pcf->sector >= fr.secs) {
 							pcf->sector = 0;
 							pcf->head ^= 1;
+							break;
 						}
 					}
 					floppy_result[3] = cyl;
@@ -1086,6 +1096,7 @@ static void floppy_do_cmd(struct x86_bridge *xb)
 				floppy_cmd[2], floppy_cmd[3], floppy_cmd[4], floppy_cmd[5],
 				floppy_cmd[6], floppy_cmd[7], floppy_cmd[8]);
 			write_log(_T("DMA addr %08x len %04x\n"), dma[2].page | dma[2].ac, dma[2].cb);
+			write_log(_T("IMG: Secs=%d Heads=%d\n"), fr.secs, fr.heads);
 #endif
 			floppy_delay_hsync = 50;
 			int eot = floppy_cmd[6];
@@ -1115,20 +1126,20 @@ static void floppy_do_cmd(struct x86_bridge *xb)
 								end = true;
 						}
 						pcf->sector++;
-						if (!(floppy_cmd[0] & 0x80))
-							break;
 						if (pcf->sector == eot) {
-							pcf->sector = 0;
 							if (mt) {
+								pcf->sector = 0;
 								if (pcf->head)
 									pcf->cyl++;
 								pcf->head ^= 1;
+							} else {
+								break;
 							}
-							break;
 						}
 						if (pcf->sector >= fr.secs) {
 							pcf->sector = 0;
 							pcf->head ^= 1;
+							break;
 						}
 					}
 					floppy_result[3] = cyl;
@@ -1194,9 +1205,10 @@ static void floppy_do_cmd(struct x86_bridge *xb)
 		{
 #if FLOPPY_DEBUG
 			write_log(_T("Floppy%d format MF=%d N=%d:SC=%d:GPL=%d:D=%d\n"),
-					  floppy_num, (floppy_cmd[0] & 0x40) ? 1 : 0,
-					  floppy_cmd[2], floppy_cmd[3], floppy_cmd[4], floppy_cmd[5]);
+				floppy_num, (floppy_cmd[0] & 0x40) ? 1 : 0,
+				floppy_cmd[2], floppy_cmd[3], floppy_cmd[4], floppy_cmd[5]);
 			write_log(_T("DMA addr %08x len %04x\n"), dma[2].page | dma[2].ac, dma[2].cb);
+			write_log(_T("IMG: Secs=%d Heads=%d\n"), fr.secs, fr.heads);
 #endif
 			int secs = floppy_cmd[3];
 			if (valid_floppy && fr.img) {
@@ -1204,7 +1216,7 @@ static void floppy_do_cmd(struct x86_bridge *xb)
 				pcf->head = (floppy_cmd[1] & 4) ? 1 : 0;
 				uae_u8 buf[512];
 				memset(buf, floppy_cmd[5], sizeof buf);
-				for (int i = 0; i < secs && i < fr.secs; i++) {
+				for (int i = 0; i < secs && i < fr.secs && !fr.wrprot; i++) {
 					uae_u8 cx = dma_channel_read(2);
 					uae_u8 hx = dma_channel_read(2);
 					uae_u8 rx = dma_channel_read(2);
@@ -1215,6 +1227,7 @@ static void floppy_do_cmd(struct x86_bridge *xb)
 #endif
 					zfile_fseek(fr.img, (pcf->cyl * fr.secs * fr.heads + pcf->head * fr.secs + pcf->sector) * 512, SEEK_SET);
 					zfile_fwrite(buf, 1, 512, fr.img);
+					pcf->sector++;
 				}
 			} else {
 				floppy_status[0] |= 0x40; // abnormal termination
@@ -3173,7 +3186,7 @@ static uint32_t mem_read_romextl2(uint32_t addr, void *priv)
 	return *(uint32_t *)&xtiderom[addr & 0x3fff];
 }
 
-void x86_bridge_rethink(void)
+static void x86_bridge_rethink(void)
 {
 	struct x86_bridge *xb = bridges[0];
 	if (!xb)
@@ -3189,13 +3202,7 @@ void x86_bridge_rethink(void)
 	}
 }
 
-void x86_bridge_free(void)
-{
-	x86_bridge_reset();
-	x86_found = 0;
-}
-
-void x86_bridge_reset(void)
+static void x86_bridge_reset(int hardreset)
 {
 	for (int i = 0; i < X86_BRIDGE_MAX; i++) {
 		struct x86_bridge *xb = bridges[i];
@@ -3235,6 +3242,12 @@ void x86_bridge_reset(void)
 		memset(port_outw, 0, sizeof(port_outw));
 		memset(port_outl, 0, sizeof(port_outl));
 	}
+}
+
+static void x86_bridge_free(void)
+{
+	x86_bridge_reset(1);
+	x86_found = 0;
 }
 
 static void check_floppy_delay(void)
@@ -3319,7 +3332,7 @@ void x86_bridge_sync_change(void)
 		return;
 }
 
-void x86_bridge_vsync(void)
+static void x86_bridge_vsync(void)
 {
 	struct x86_bridge *xb = bridges[0];
 	if (!xb)
@@ -3335,7 +3348,7 @@ void x86_bridge_vsync(void)
 	xb->audeventtime = x86_base_event_clock * CYCLE_UNIT / currprefs.sound_freq + 1;
 }
 
-void x86_bridge_hsync(void)
+static void x86_bridge_hsync(void)
 {
 	static float totalcycles;
 	struct x86_bridge *xb = bridges[0];
@@ -3743,6 +3756,7 @@ bool x86_bridge_init(struct autoconfig_info *aci, uae_u32 romtype, int type)
 	const uae_u8 *ac;
 	struct romconfig *rc = aci->rc;
 
+	device_add_reset(x86_bridge_reset);
 	if (type >= TYPE_2286) {
 		ac = type >= TYPE_2386 ? a2386_autoconfig : a1060_autoconfig;
 	}
@@ -3997,6 +4011,12 @@ bool x86_bridge_init(struct autoconfig_info *aci, uae_u32 romtype, int type)
 	xb->bank = &x86_bridge_bank;
 
 	aci->addrbank = xb->bank;
+
+	device_add_hsync(x86_bridge_hsync);
+	device_add_vsync_pre(x86_bridge_vsync);
+	device_add_exit(x86_bridge_free);
+	device_add_rethink(x86_bridge_rethink);
+
 	return true;
 }
 

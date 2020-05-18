@@ -570,7 +570,7 @@ static void *hardware_trap_thread(void *arg)
 		ctx->tindex = tid;
 		ctx->tcnt = ++trap_cnt;
 
-		for (int i = 0; i < 15; i++) {
+		for (int i = 0; i < 16; i++) {
 			uae_u32 v = get_long_host(data + 4 + i * 4);
 			ctx->saved_regs.regs[i] = v;
 		}
@@ -957,6 +957,21 @@ void trap_set_background(TrapContext *ctx)
 	if (!trap_is_indirect())
 		return;
 	atomic_inc(&ctx->trap_background);
+}
+
+bool trap_valid_string(TrapContext *ctx, uaecptr addr, uae_u32 maxsize)
+{
+	if (!ctx || currprefs.uaeboard < 3) {
+		for (int i = 0; i < maxsize; i++) {
+			if (!valid_address(addr + i, 1))
+				return false;
+			if (get_byte(addr + i) == 0)
+				return true;
+		}
+		return false;
+	}
+	// can't really do any checks..
+	return true;
 }
 
 bool trap_valid_address(TrapContext *ctx, uaecptr addr, uae_u32 size)

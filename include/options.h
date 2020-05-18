@@ -15,7 +15,7 @@
 #include "traps.h"
 
 #define UAEMAJOR 4
-#define UAEMINOR 2
+#define UAEMINOR 4
 #define UAESUBREV 0
 
 #define MAX_AMIGADISPLAYS 4
@@ -102,6 +102,7 @@ struct inputdevconfig {
 struct jport {
 	int id;
 	int mode; // 0=def,1=mouse,2=joy,3=anajoy,4=lightpen
+	int submode;
 	int autofire;
 	struct inputdevconfig idc;
 	bool nokeyboardoverride;
@@ -380,6 +381,7 @@ struct romconfig
 	TCHAR romident[256];
 	uae_u32 board_ram_size;
 	bool autoboot_disabled;
+	bool inserted;
 	int device_id;
 	int device_settings;
 	int subtype;
@@ -472,6 +474,7 @@ struct uae_prefs {
 	TCHAR config_window_title[256];
 
 	bool illegal_mem;
+	bool debug_mem;
 	bool use_serial;
 	bool serial_demand;
 	bool serial_hwctsrts;
@@ -552,6 +555,7 @@ struct uae_prefs {
 	bool gfx_blackerthanblack;
 	int gfx_threebitcolors;
 	int gfx_api;
+	bool gfx_hdr;
 	int gfx_api_options;
 	int color_mode;
 	int gfx_extrawidth;
@@ -592,6 +596,7 @@ struct uae_prefs {
 	int collision_level;
 	int leds_on_screen;
 	int leds_on_screen_mask[2];
+	int leds_on_screen_multiplier[2];
 	int power_led_dim;
 	struct wh osd_pos;
 	int keyboard_leds[3];
@@ -629,6 +634,7 @@ struct uae_prefs {
 	TCHAR filesys_inject_icons_drawer[MAX_DPATH];
 	int uaescsidevmode;
 	bool reset_delay;
+	bool crash_auto_reset;
 
 	int cs_compatible;
 	int cs_ciaatod;
@@ -961,7 +967,6 @@ extern uae_u32 cfgfile_modify (uae_u32 index, const TCHAR *parms, uae_u32 size, 
 extern void cfgfile_addcfgparam (TCHAR *);
 extern int built_in_prefs (struct uae_prefs *p, int model, int config, int compa, int romcheck);
 extern int built_in_chipset_prefs (struct uae_prefs *p);
-extern int built_in_cpuboard_prefs(struct uae_prefs *p);
 extern int cmdlineparser (const TCHAR *s, TCHAR *outp[], int max);
 extern void fixup_prefs_dimensions (struct uae_prefs *prefs);
 extern void fixup_prefs (struct uae_prefs *prefs, bool userconfig);

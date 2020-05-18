@@ -192,11 +192,11 @@ bool preinit_shm (void)
 				max_allowed_mman = 256;
 		}
 	} else if (maxmem > 0) {
-		size64 = maxmem * 1024 * 1024;
+		size64 = (uae_u64)maxmem * 1024 * 1024;
 	}
 	if (size64 < 8 * 1024 * 1024)
 		size64 = 8 * 1024 * 1024;
-	if (max_allowed_mman * 1024 * 1024 > size64)
+	if ((uae_u64)max_allowed_mman * 1024 * 1024 > size64)
 		max_allowed_mman = size64 / (1024 * 1024);
 
 	uae_u32 natmem_size = (max_allowed_mman + 1) * 1024 * 1024;
@@ -726,7 +726,7 @@ bool uae_mman_info(addrbank *ab, struct uae_mman_data *md)
 	if (!_tcscmp(ab->label, _T("*"))) {
 		start = ab->start;
 		got = true;
-		if (expansion_get_autoconfig_by_address(&currprefs, ab->start) && !expansion_get_autoconfig_by_address(&currprefs, ab->start + size))
+		if (expansion_get_autoconfig_by_address(&currprefs, ab->start, 0) && !expansion_get_autoconfig_by_address(&currprefs, ab->start + size, 0))
 			barrier = true;
 	} else if (!_tcscmp(ab->label, _T("*B"))) {
 		start = ab->start;
@@ -735,7 +735,7 @@ bool uae_mman_info(addrbank *ab, struct uae_mman_data *md)
 	} else if (!_tcscmp(ab->label, _T("chip"))) {
 		start = 0;
 		got = true;
-		if (!expansion_get_autoconfig_by_address(&currprefs, 0x00200000) && currprefs.chipmem_size == 2 * 1024 * 1024)
+		if (!expansion_get_autoconfig_by_address(&currprefs, 0x00200000, 0) && currprefs.chipmem_size == 2 * 1024 * 1024)
 			barrier = true;
 		if (currprefs.chipmem_size != 2 * 1024 * 1024)
 			barrier = true;

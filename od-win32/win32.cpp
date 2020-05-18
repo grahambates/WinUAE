@@ -40,6 +40,7 @@
 #include <WtsApi32.h>
 #include <Avrt.h>
 #include <Cfgmgr32.h>
+#include <shellscalingapi.h>
 
 #include "resource.h"
 
@@ -175,6 +176,8 @@ int paraport_mask;
 
 HKEY hWinUAEKey = NULL;
 COLORREF g_dwBackgroundColor;
+HMODULE userdll;
+HMODULE kerneldll;
 
 int pause_emulation;
 
@@ -232,6 +235,40 @@ static GETTOUCHINPUTINFO pGetTouchInputInfo;
 static CLOSETOUCHINPUTHANDLE pCloseTouchInputHandle;
 #endif
 
+int getdpiformonitor(HMONITOR mon)
+{
+	if (mon) {
+		static HMODULE shcore;
+		if (!shcore)
+			shcore = LoadLibrary(_T("Shcore.dll"));
+		if (shcore) {
+			typedef HRESULT(CALLBACK *GETDPIFORMONITOR)(HMONITOR, MONITOR_DPI_TYPE, UINT *, UINT *);
+			GETDPIFORMONITOR pGetDpiForMonitor = (GETDPIFORMONITOR)GetProcAddress(shcore, "GetDpiForMonitor");
+			if (pGetDpiForMonitor) {
+				UINT x, y;
+				if (SUCCEEDED(pGetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &x, &y)))
+					return y;
+			}
+		}
+	}
+	HDC hdc = GetDC(NULL);
+	int dpi = GetDeviceCaps(hdc, LOGPIXELSX);
+	ReleaseDC(NULL, hdc);
+	return dpi;
+}
+
+int getdpiforwindow(HWND hwnd)
+{
+	typedef UINT(CALLBACK *GETDPIFORWINDOW)(HWND);
+	GETDPIFORWINDOW pGetDpiForWindow = (GETDPIFORWINDOW)GetProcAddress(userdll, "GetDpiForWindow");
+	if (pGetDpiForWindow)
+		return pGetDpiForWindow(hwnd);
+	HDC hdc = GetDC(NULL);
+	int dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+	ReleaseDC(NULL, hdc);
+	return dpi;
+}
+
 static ULONG ActualTimerResolution;
 
 int target_sleep_nanos(int nanos)
@@ -282,10 +319,11 @@ int target_sleep_nanos(int nanos)
 }
 
 uae_u64 spincount;
+extern bool calculated_scanline;
 
 void target_spin(int total)
 {
-	if (!spincount)
+	if (!spincount || calculated_scanline)
 		return;
 	if (total > 10)
 		total = 10;
@@ -303,13 +341,13 @@ void target_calibrate_spin(void)
 	struct amigadisplay *ad = &adisplays[0];
 	struct apmode *ap = ad->picasso_on ? &currprefs.gfx_apmode[1] : &currprefs.gfx_apmode[0];
 	int vp;
+	const int cntlines = 1;
 	uae_u64 sc;
 
-	sc = 0;
 	spincount = 0;
 	if (!ap->gfx_vsyncmode)
 		return;
-	if (busywait) {
+	if (busywait || calculated_scanline) {
 		write_log(_T("target_calibrate_spin() skipped\n"));
 		return;
 	}
@@ -323,27 +361,30 @@ void target_calibrate_spin(void)
 			if (vp >= 1 && vp < vsync_activeheight - 10)
 				break;
 		}
-		int vp3 = target_get_display_scanline(-1);
+		uae_u64 v1;
+		int vp2;
 		for (;;) {
-			int vp2 = target_get_display_scanline(-1);
+			v1 = __rdtsc();
+			vp2 = target_get_display_scanline(-1);
 			if (vp2 <= -10)
 				goto fail;
-			if (vp2 == vp + 1)
+			if (vp2 == vp + cntlines)
 				break;
-			if (vp2 != vp)
+			if (vp2 < vp || vp2 > vp + cntlines)
 				goto trynext;
 		}
-		uae_u64 v1 = __rdtsc();
 		for (;;) {
 			int vp2 = target_get_display_scanline(-1);
 			if (vp2 <= -10)
 				goto fail;
-			if (vp2 == vp + 2) {
-				uae_u64 sc = __rdtsc() - v1;
-				if (sc > sc)
-					sc = sc;
+			if (vp2 == vp + cntlines * 2) {
+				uae_u64 scd = (__rdtsc() - v1) / cntlines;
+				if (sc > scd)
+					sc = scd;
 			}
-			if (vp2 != vp + 1)
+			if (vp2 < vp)
+				break;
+			if (vp2 > vp + cntlines * 2)
 				break;
 		}
 trynext:;
@@ -766,9 +807,12 @@ void releasecapture(struct AmigaMonitor *mon)
 #endif
 	if (!mon_cursorclipped)
 		return;
-	ClipCursor(NULL);
-	ReleaseCapture();
-	ShowCursor(TRUE);
+	if (!ClipCursor(NULL))
+		write_log(_T("ClipCursor %08x\n"), GetLastError());
+	if (!ReleaseCapture())
+		write_log(_T("ReleaseCapture %08x\n"), GetLastError());
+	int c = ShowCursor(TRUE);
+	write_log(_T("ShowCursor %d\n"), c);
 	mon_cursorclipped = 0;
 }
 
@@ -2470,7 +2514,8 @@ static LRESULT CALLBACK AmigaWindowProc(HWND hWnd, UINT message, WPARAM wParam, 
 	case WM_DRAWCLIPBOARD:
 		if (clipboard_initialized) {
 			clipboard_changed(hWnd);
-			SendMessage(hwndNextViewer, message, wParam, lParam);
+			if (hwndNextViewer)
+				SendMessage(hwndNextViewer, message, wParam, lParam);
 			return 0;
 		}
 		break;
@@ -2661,23 +2706,28 @@ static LRESULT CALLBACK MainWindowProc (HWND hWnd, UINT message, WPARAM wParam, 
 	case WM_QUERYENDSESSION:
 	case WM_ENDSESSION:
 		return AmigaWindowProc (hWnd, message, wParam, lParam);
-#if 0
+
+	case WM_DWMCOMPOSITIONCHANGED:
+	case WM_THEMECHANGED:
 	case WM_DISPLAYCHANGE:
-		if (isfullscreen() <= 0 && !currprefs.gfx_filter && (wParam + 7) / 8 != DirectDraw_GetBytesPerPixel ())
-			WIN32GFX_DisplayChangeRequested ();
-		break;
-#endif
-		case WM_DWMCOMPOSITIONCHANGED:
-		case WM_THEMECHANGED:
 		WIN32GFX_DisplayChangeRequested (-1);
 		return 0;
 
-		case WM_POWERBROADCAST:
+	case WM_POWERBROADCAST:
 		if (wParam == PBT_APMRESUMEAUTOMATIC) {
 			setsystime ();
 			return TRUE;
 		}
 		return 0;
+
+	case WM_DPICHANGED:
+	{
+		if (isfullscreen() == 0) {
+			RECT* const r = (RECT*)lParam;
+			SetWindowPos(hWnd, NULL, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+			return 0;
+		}
+	}
 
 	case WM_GETMINMAXINFO:
 		{
@@ -2870,13 +2920,16 @@ static LRESULT CALLBACK MainWindowProc (HWND hWnd, UINT message, WPARAM wParam, 
 				tflags = txt[_tcslen (txt) + 1];
 				SetBkMode (lpDIS->hDC, TRANSPARENT);
 				if ((tflags & 2) == 0)
-					tflags &= ~(4 | 8 | 16);
+					tflags &= ~(4 | 8 | 16 | 32);
 				if (tflags & 4) {
 					oc = SetTextColor (lpDIS->hDC, RGB(0xcc, 0x00, 0x00)); // writing
 				} else if (tflags & 8) {
 					oc = SetTextColor (lpDIS->hDC, RGB(0x00, 0xcc, 0x00)); // playing
 				} else {
 					oc = SetTextColor (lpDIS->hDC, GetSysColor ((tflags & 2) ? COLOR_BTNTEXT : COLOR_GRAYTEXT));
+				}
+				if (tflags & 32) {
+					;
 				}
 				flags = DT_VCENTER | DT_SINGLELINE;
 				if (tflags & 1) {
@@ -3518,7 +3571,7 @@ void logging_init (void)
 #ifdef _WIN64
 	wow64 = 1;
 #else
-	fnIsWow64Process = (LPFN_ISWOW64PROCESS)GetProcAddress (GetModuleHandle (_T("kernel32")), "IsWow64Process");
+	fnIsWow64Process = (LPFN_ISWOW64PROCESS)GetProcAddress(kerneldll, "IsWow64Process");
 	if (fnIsWow64Process)
 		fnIsWow64Process (GetCurrentProcess (), &wow64);
 #endif
@@ -3546,7 +3599,7 @@ void logging_init (void)
 		SystemInfo.wProcessorArchitecture, SystemInfo.wProcessorLevel, SystemInfo.wProcessorRevision,
 		SystemInfo.dwNumberOfProcessors, filedate, os_touch);
 	write_log (_T("\n(c) 1995-2001 Bernd Schmidt   - Core UAE concept and implementation.")
-		_T("\n(c) 1998-2019 Toni Wilen      - Win32 port, core code updates.")
+		_T("\n(c) 1998-2020 Toni Wilen      - Win32 port, core code updates.")
 		_T("\n(c) 1996-2001 Brian King      - Win32 port, Picasso96 RTG, and GUI.")
 		_T("\n(c) 1996-1999 Mathias Ortmann - Win32 port and bsdsocket support.")
 		_T("\n(c) 2000-2001 Bernd Meyer     - JIT engine.")
@@ -4080,9 +4133,9 @@ void target_quit (void)
 void target_fixup_options (struct uae_prefs *p)
 {
 	if (p->win32_automount_cddrives && !p->scsi)
-		p->scsi = UAESCSI_SPTI;
-	if (p->scsi > UAESCSI_LAST)
-		p->scsi = UAESCSI_SPTI;
+		p->scsi = 1;
+	if (p->win32_uaescsimode > UAESCSI_LAST)
+		p->win32_uaescsimode = UAESCSI_SPTI;
 	bool paused = false;
 	bool nosound = false;
 	bool nojoy = true;
@@ -5087,7 +5140,7 @@ static int parseversion (TCHAR **vs)
 	return _tstol (tmp);
 }
 
-static int checkversion (TCHAR *vs)
+static int checkversion (TCHAR *vs, int *verp)
 {
 	int ver;
 	if (_tcslen (vs) < 10)
@@ -5098,6 +5151,8 @@ static int checkversion (TCHAR *vs)
 	ver = parseversion (&vs) << 16;
 	ver |= parseversion (&vs) << 8;
 	ver |= parseversion (&vs);
+	if (verp)
+		*verp = ver;
 	if (ver >= ((UAEMAJOR << 16) | (UAEMINOR << 8) | UAESUBREV))
 		return 0;
 	return 1;
@@ -5432,6 +5487,35 @@ void associate_file_extensions (void)
 		SHChangeNotify (SHCNE_ASSOCCHANGED, 0, 0, 0); 
 }
 
+static bool resetgui_pending;
+static void resetgui(void)
+{
+	regdelete(NULL, _T("GUIPosX"));
+	regdelete(NULL, _T("GUIPosY"));
+	regdelete(NULL, _T("GUIPosFWX"));
+	regdelete(NULL, _T("GUIPosFWY"));
+	regdelete(NULL, _T("GUIPosFSX"));
+	regdelete(NULL, _T("GUIPosFSY"));
+	regdelete(NULL, _T("GUISizeX"));
+	regdelete(NULL, _T("GUISizeY"));
+	regdelete(NULL, _T("GUISizeFWX"));
+	regdelete(NULL, _T("GUISizeFWY"));
+	regdelete(NULL, _T("GUISizeFSX"));
+	regdelete(NULL, _T("GUISizeFSY"));
+	regdelete(NULL, _T("GUIFont"));
+	regdelete(NULL, _T("GUIListFont"));
+	UAEREG *key = regcreatetree(NULL, _T("ListViews"));
+	if (key) {
+		for (int i = 1; i <= 10; i++) {
+			TCHAR buf[100];
+			_stprintf(buf, _T("LV_%d"), i);
+			regdelete(key, buf);
+		}
+		regclosetree(key);
+	}
+	resetgui_pending = false;
+}
+
 static void WIN32_HandleRegistryStuff (void)
 {
 	RGBFTYPE colortype = RGBFB_NONE;
@@ -5451,11 +5535,30 @@ static void WIN32_HandleRegistryStuff (void)
 	initpath (_T("SaveimagePath"), start_path_data);
 	initpath (_T("VideoPath"), start_path_data);
 	initpath (_T("InputPath"), start_path_data);
+
+	size = sizeof(version) / sizeof(TCHAR);
+	if (regquerystr(NULL, _T("Version"), version, &size)) {
+		int ver = 0;
+		if (checkversion(version, &ver)) {
+			regsetstr(NULL, _T("Version"), VersionStr);
+			// Reset GUI setting if pre-4.3.0
+			if (ver > 0x030000 && ver < 0x040300) {
+				resetgui_pending = true;
+			}
+		}
+	} else {
+		regsetstr(NULL, _T("Version"), VersionStr);
+	}
+	if (resetgui_pending) {
+		resetgui();
+	}
+
 	if (!regexists (NULL, _T("MainPosX")) || !regexists (NULL, _T("GUIPosX"))) {
 		int x = GetSystemMetrics (SM_CXSCREEN);
 		int y = GetSystemMetrics (SM_CYSCREEN);
-		x = (x - 800) / 2;
-		y = (y - 600) / 2;
+		int dpi = getdpiformonitor(NULL);
+		x = (x - (800 * dpi / 96)) / 2;
+		y = (y - (600 * dpi / 96)) / 2;
 		if (x < 10)
 			x = 10;
 		if (y < 10)
@@ -5467,15 +5570,8 @@ static void WIN32_HandleRegistryStuff (void)
 		regsetint (NULL, _T("GUIPosY"), y);
 	}
 	size = sizeof (version) / sizeof (TCHAR);
-	if (regquerystr (NULL, _T("Version"), version, &size)) {
-		if (checkversion (version))
-			regsetstr (NULL, _T("Version"), VersionStr);
-	} else {
-		regsetstr (NULL, _T("Version"), VersionStr);
-	}
-	size = sizeof (version) / sizeof (TCHAR);
 	if (regquerystr (NULL, _T("ROMCheckVersion"), version, &size)) {
-		if (checkversion (version)) {
+		if (checkversion (version, NULL)) {
 			if (regsetstr (NULL, _T("ROMCheckVersion"), VersionStr))
 				forceroms = 1;
 		}
@@ -5516,6 +5612,11 @@ static void WIN32_HandleRegistryStuff (void)
 		regqueryint(NULL, _T("ArtImageWidth"), &stored_boxart_window_width);
 	else
 		regsetint(NULL, _T("ArtImageWidth"), stored_boxart_window_width);
+
+	if (regexists(NULL, _T("ArtImageWidthFS")))
+		regqueryint(NULL, _T("ArtImageWidthFS"), &stored_boxart_window_width_fsgui);
+	else
+		regsetint(NULL, _T("ArtImageWidthFS"), stored_boxart_window_width_fsgui);
 
 	if (regexists (NULL, _T("SaveImageOriginalPath")))
 		regqueryint (NULL, _T("SaveImageOriginalPath"), &saveimageoriginalpath);
@@ -5648,6 +5749,7 @@ static int betamessage (void)
 
 int os_admin, os_64bit, os_win7, os_win8, os_win10, os_vista, cpu_number, os_touch;
 BOOL os_dwm_enabled;
+BOOL dpi_aware_v2;
 
 static int isadminpriv (void)
 {
@@ -5714,10 +5816,9 @@ static int osdetect (void)
 	PGETNATIVESYSTEMINFO pGetNativeSystemInfo;
 	PISUSERANADMIN pIsUserAnAdmin;
 
-	pGetNativeSystemInfo = (PGETNATIVESYSTEMINFO)GetProcAddress (
-		GetModuleHandle (_T("kernel32.dll")), "GetNativeSystemInfo");
-	pIsUserAnAdmin = (PISUSERANADMIN)GetProcAddress (
-		GetModuleHandle (_T("shell32.dll")), "IsUserAnAdmin");
+	pGetNativeSystemInfo = (PGETNATIVESYSTEMINFO)GetProcAddress(kerneldll, "GetNativeSystemInfo");
+	pIsUserAnAdmin = (PISUSERANADMIN)GetProcAddress(
+		GetModuleHandle(_T("shell32.dll")), "IsUserAnAdmin");
 
 	GetSystemInfo (&SystemInfo);
 	if (pGetNativeSystemInfo)
@@ -6324,6 +6425,10 @@ static int parseargs(const TCHAR *argx, const TCHAR *np, const TCHAR *np2)
 		log_sercon = 2;
 		return 1;
 	}
+	if (!_tcscmp(arg, _T("serlog3"))) {
+		log_sercon = 3;
+		return 1;
+	}
 	if (!_tcscmp(arg, _T("a2065log"))) {
 		log_a2065 = 1;
 		return 1;
@@ -6449,11 +6554,13 @@ static int parseargs(const TCHAR *argx, const TCHAR *np, const TCHAR *np2)
 		return 1;
 	}
 	if (!_tcscmp(arg, _T("cd32log"))) {
-		log_cd32 = 1;
+		if (log_cd32 < 1)
+			log_cd32 = 1;
 		return 1;
 	}
 	if (!_tcscmp(arg, _T("cd32log2"))) {
-		log_cd32 = 2;
+		if (log_cd32 < 2)
+			log_cd32 = 2;
 		return 1;
 	}
 	if (!_tcscmp(arg, _T("nolcd"))) {
@@ -6475,6 +6582,10 @@ static int parseargs(const TCHAR *argx, const TCHAR *np, const TCHAR *np2)
 	}
 	if (!_tcscmp(arg, _T("nontdelayexecution"))) {
 		noNtDelayExecution = 1;
+		return 1;
+	}
+	if (!_tcscmp(arg, _T("resetgui"))) {
+		resetgui_pending = true;
 		return 1;
 	}
 	if (!np)
@@ -7265,7 +7376,7 @@ LONG WINAPI WIN32_ExceptionFilter (struct _EXCEPTION_POINTERS *pExceptionPointer
 							prevpc = (uae_u8*)ppc;
 						}
 						m68k_setpc ((uaecptr)p);
-						exception2(opc, er->ExceptionInformation[0] == 0, 4, regs.s ? 4 : 0);
+						hardware_exception2(opc, 0, er->ExceptionInformation[0] == 0, true, 4);
 						lRet = EXCEPTION_CONTINUE_EXECUTION;
 					}
 			}
@@ -7341,12 +7452,9 @@ void registertouch(HWND hwnd)
 
 	if (!os_touch)
 		return;
-	pRegisterTouchWindow = (REGISTERTOUCHWINDOW)GetProcAddress(
-		GetModuleHandle (_T("user32.dll")), "RegisterTouchWindow");
-	pGetTouchInputInfo = (GETTOUCHINPUTINFO)GetProcAddress(
-		GetModuleHandle (_T("user32.dll")), "GetTouchInputInfo");
-	pCloseTouchInputHandle = (CLOSETOUCHINPUTHANDLE)GetProcAddress(
-		GetModuleHandle (_T("user32.dll")), "CloseTouchInputHandle");
+	pRegisterTouchWindow = (REGISTERTOUCHWINDOW)GetProcAddress(userdll, "RegisterTouchWindow");
+	pGetTouchInputInfo = (GETTOUCHINPUTINFO)GetProcAddress(userdll, "GetTouchInputInfo");
+	pCloseTouchInputHandle = (CLOSETOUCHINPUTHANDLE)GetProcAddress(userdll, "CloseTouchInputHandle");
 	if (!pRegisterTouchWindow || !pGetTouchInputInfo || !pCloseTouchInputHandle)
 		return;
 	if (!pRegisterTouchWindow(hwnd, 0)) {
@@ -7357,7 +7465,7 @@ void registertouch(HWND hwnd)
 
 void systray (HWND hwnd, int remove)
 {
-	static const GUID iconguid = { 0xdac2e99b, 0xe8f6, 0x4150, { 0x98, 0x46, 0xd, 0x4a, 0x61, 0xfb, 0xdd, 0x03 } };
+	static const GUID iconguid = { 0x6974bfc1, 0x898b, 0x4157, { 0xa4, 0x30, 0x43, 0x6b, 0xa0, 0xdd, 0x5d, 0xf2 } };
 	NOTIFYICONDATA nid;
 	BOOL v;
 	static bool noguid;
@@ -7398,7 +7506,7 @@ void systray (HWND hwnd, int remove)
 		if (!remove) {
 			// if guid identifier: always remove first.
 			// old icon may not have been removed due to crash etc
-			Shell_NotifyIcon(NIM_DELETE, &nid);
+			v = Shell_NotifyIcon(NIM_DELETE, &nid);
 		}
 	}
 	v = Shell_NotifyIcon (remove ? NIM_DELETE : NIM_ADD, &nid);
@@ -7754,6 +7862,8 @@ bool is_mainthread(void)
 }
 
 typedef BOOL (CALLBACK* CHANGEWINDOWMESSAGEFILTER)(UINT, DWORD);
+typedef DPI_AWARENESS_CONTEXT (CALLBACK* GETTHREADDPIAWARENESSCONTEXT)(void);
+typedef DPI_AWARENESS (CALLBACK* GETAWARENESSFROMDPIAWARENESSCONTEXT)(DPI_AWARENESS_CONTEXT);
 
 #ifndef NDEBUG
 typedef BOOL(WINAPI* SETPROCESSMITIGATIONPOLICY)(DWORD, PVOID, SIZE_T);
@@ -7781,12 +7891,17 @@ int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdL
 #endif
 #endif
 
+	userdll = GetModuleHandle(_T("user32.dll"));
+	kerneldll = GetModuleHandle(_T("kernel32.dll"));
+	if (!userdll || !kerneldll)
+		return 0;
+
 #ifndef NDEBUG
 	PROCESS_MITIGATION_STRICT_HANDLE_CHECK_POLICY p = { 0 };
 	p.HandleExceptionsPermanentlyEnabled = 1;
 	p.RaiseExceptionOnInvalidHandleReference = 1;
 	//ProcessStrictHandleCheckPolicy = 3
-	pSetProcessMitigationPolicy = (SETPROCESSMITIGATIONPOLICY)GetProcAddress(GetModuleHandle(_T("kernel32.dll")), "SetProcessMitigationPolicy");
+	pSetProcessMitigationPolicy = (SETPROCESSMITIGATIONPOLICY)GetProcAddress(kerneldll, "SetProcessMitigationPolicy");
 	pSetProcessMitigationPolicy(3, &p, sizeof p);
 #endif
 
@@ -7798,6 +7913,20 @@ int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdL
 	SetDllDirectory (_T(""));
 	/* Make sure we do an InitCommonControls() to get some advanced controls */
 	CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+	GETTHREADDPIAWARENESSCONTEXT pGetThreadDpiAwarenessContext = (GETTHREADDPIAWARENESSCONTEXT)GetProcAddress(userdll, "GetThreadDpiAwarenessContext");
+	if (pGetThreadDpiAwarenessContext) {
+		DPI_AWARENESS_CONTEXT dpiawactx = pGetThreadDpiAwarenessContext();
+		if (dpiawactx) {
+			GETAWARENESSFROMDPIAWARENESSCONTEXT pGetAwarenessFromDpiAwarenessContext = (GETAWARENESSFROMDPIAWARENESSCONTEXT)GetProcAddress(userdll, "GetAwarenessFromDpiAwarenessContext");
+			if (pGetAwarenessFromDpiAwarenessContext) {
+				DPI_AWARENESS dpiawa = pGetAwarenessFromDpiAwarenessContext(dpiawactx);
+				if (dpiawa == DPI_AWARENESS_PER_MONITOR_AWARE)
+					dpi_aware_v2 = true;
+			}
+		}
+	}
+
 	InitCommonControls ();
 
 	original_affinity = 1;
@@ -7813,7 +7942,7 @@ int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdL
 #define MSGFLT_ADD 1
 	CHANGEWINDOWMESSAGEFILTER pChangeWindowMessageFilter;
 	pChangeWindowMessageFilter = (CHANGEWINDOWMESSAGEFILTER)GetProcAddress(
-		GetModuleHandle(_T("user32.dll")), _T("ChangeWindowMessageFilter"));
+		userdll, "ChangeWindowMessageFilter");
 	if (pChangeWindowMessageFilter)
 		pChangeWindowMessageFilter(WM_DROPFILES, MSGFLT_ADD);
 #endif

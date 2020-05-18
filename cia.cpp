@@ -96,8 +96,8 @@ unsigned int ciabpra;
 
 static unsigned long ciaala, ciaalb, ciabla, ciablb;
 static int ciaatodon, ciabtodon;
-static unsigned int ciaapra, ciaaprb, ciaadra, ciaadrb, ciaasdr, ciaasdr_cnt;
-static unsigned int ciabprb, ciabdra, ciabdrb, ciabsdr, ciabsdr_cnt;
+static unsigned int ciaapra, ciaaprb, ciaadra, ciaadrb, ciaasdr, ciaasdr_buf, ciaasdr_load, ciaasdr_cnt;
+static unsigned int ciabprb, ciabdra, ciabdrb, ciabsdr, ciabsdr_buf, ciabsdr_load, ciabsdr_cnt;
 static int div10;
 static int kbstate, kblostsynccnt;
 static unsigned long kbhandshakestart;
@@ -177,7 +177,7 @@ static void RethinkICRA (void)
 		if (!(ciaaicr & 0x80)) {
 			ciaaicr |= 0x80;
 			if (currprefs.cpu_memory_cycle_exact) {
-				event2_newevent_xx (-1, DIV10 + 2 * CYCLE_UNIT + CYCLE_UNIT / 2, 0, ICRA);
+				event2_newevent_xx (-1, DIV10 + 2 * CYCLE_UNIT + CYCLE_UNIT / 2 + 4 * CYCLE_UNIT, 0, ICRA);
 			} else {
 				ICRA (0);
 			}
@@ -194,7 +194,7 @@ static void RethinkICRB (void)
 		if (!(ciabicr & 0x80)) {
 			ciabicr |= 0x80;
 			if (currprefs.cpu_memory_cycle_exact) {
-				event2_newevent_xx (-1, DIV10 + 2 * CYCLE_UNIT + CYCLE_UNIT / 2, 0, ICRB);
+				event2_newevent_xx (-1, DIV10 + 2 * CYCLE_UNIT + CYCLE_UNIT / 2 + 4 * CYCLE_UNIT, 0, ICRB);
 			} else {
 				ICRB (0);
 			}
@@ -276,6 +276,7 @@ static int CIA_update_check (void)
 	div10 = ccount % DIV10;
 
 	/* CIA A timers */
+	// A INMODE=0
 	if ((ciaacra & 0x21) == 0x01) {
 		bool check = true;
 		unsigned long int cc = ciaclocks;
@@ -291,9 +292,20 @@ static int CIA_update_check (void)
 		if (check) {
 			assert ((ciaata + 1) >= cc);
 			if ((ciaata + 1) == cc) {
-				if ((ciaacra & 0x48) == 0x40 && ciaasdr_cnt > 0 && --ciaasdr_cnt == 0)
-					asp = 1;
+				// SP in output mode (data sent can be ignored)
+				if ((ciaacra & 0x48) == 0x40 && ciaasdr_cnt > 0) {
+					ciaasdr_cnt--;
+					if (ciaasdr_cnt == 0) {
+						asp = 1;
+						if (ciaasdr_load) {
+							ciaasdr_load = 0;
+							ciaasdr_buf = ciaasdr;
+							ciaasdr_cnt = 8 * 2;
+						}
+					}
+				}
 				aovfla = 1;
+				// B INMODE=10 or 11
 				if ((ciaacrb & 0x61) == 0x41 || (ciaacrb & 0x61) == 0x61) {
 					if (ciaatb-- == 0)
 						aovflb = 1;
@@ -302,6 +314,7 @@ static int CIA_update_check (void)
 			ciaata -= cc;
 		}
 	}
+	// A INMODE=00
 	if ((ciaacrb & 0x61) == 0x01) {
 		bool check = true;
 		unsigned long int cc = ciaclocks;
@@ -323,6 +336,7 @@ static int CIA_update_check (void)
 	}
 
 	/* CIA B timers */
+	// A INMODE=0
 	if ((ciabcra & 0x21) == 0x01) {
 		bool check = true;
 		unsigned long int cc = ciaclocks;
@@ -338,9 +352,23 @@ static int CIA_update_check (void)
 		if (check) {
 			assert ((ciabta + 1) >= cc);
 			if ((ciabta + 1) == cc) {
-				if ((ciabcra & 0x48) == 0x40 && ciabsdr_cnt > 0 && --ciabsdr_cnt == 0)
-					bsp = 1;
+				// SP in output mode
+				if ((ciabcra & 0x48) == 0x40 && ciabsdr_cnt > 0) {
+					ciaasdr_cnt--;
+					if (!(ciaasdr_cnt & 1)) {
+						ciabsdr_buf <<= 1;
+					}
+					if (ciabsdr_cnt == 0) {
+						bsp = 1;
+						if (ciabsdr_load) {
+							ciabsdr_load = 0;
+							ciabsdr_buf = ciabsdr;
+							ciabsdr_cnt = 8 * 2;
+						}
+					}
+				}
 				bovfla = 1;
+				// B INMODE=10 or 11
 				if ((ciabcrb & 0x61) == 0x41 || (ciabcrb & 0x61) == 0x61) {
 					if (ciabtb-- == 0)
 						bovflb = 1;
@@ -349,6 +377,7 @@ static int CIA_update_check (void)
 			ciabta -= cc;
 		}
 	}
+	// B INMODE=00
 	if ((ciabcrb & 0x61) == 0x01) {
 		bool check = true;
 		unsigned long int cc = ciaclocks;
@@ -944,6 +973,7 @@ void CIA_vsync_prehandler (void)
 		kblostsynccnt -= maxvpos;
 		if (kblostsynccnt <= 0) {
 			kblostsynccnt = 0;
+			kbcode = 0;
 			keyreq ();
 #if KB_DEBUG
 			write_log (_T("lostsync\n"));
@@ -970,7 +1000,7 @@ void CIAA_tod_inc (int cycles)
 	event2_newevent_xx (-1, cycles + TOD_INC_DELAY, 0, CIAA_tod_handler);
 }
 
-static void check_led (void)
+static void check_led(void)
 {
 	uae_u8 v = ciaapra;
 	bool led2;
@@ -978,28 +1008,29 @@ static void check_led (void)
 	v |= ~ciaadra; /* output is high when pin's direction is input */
 	led2 = (v & 2) ? 0 : 1;
 	if (led2 != led) {
-		calc_led (led);
+		calc_led(led);
 		led = led2;
 		led_old_brightness = -1;
 	}
 }
 
-static void bfe001_change (void)
+static void bfe001_change(void)
 {
 	uae_u8 v = ciaapra;
-	check_led ();
+	v |= ~ciaadra; /* output is high when pin's direction is input */
+	check_led();
 	if (currprefs.cs_ciaoverlay && (v & 1) != oldovl) {
 		oldovl = v & 1;
 		if (!oldovl) {
-			map_overlay (1);
+			map_overlay(1);
 		} else {
-			//activate_debugger ();
-			map_overlay (0);
+			//activate_debugger();
+			map_overlay(0);
 		}
 	}
 	if (currprefs.cs_cd32cd && (v & 1) != oldcd32mute) {
 		oldcd32mute = v & 1;
-		akiko_mute (oldcd32mute ? 0 : 1);
+		akiko_mute(oldcd32mute ? 0 : 1);
 	}
 }
 
@@ -1075,20 +1106,21 @@ static uae_u8 ReadCIAA (unsigned int addr, uae_u32 *flags)
 		return v;
 	}
 	case 1:
+		tmp = (ciaaprb & ciaadrb) | (ciaadrb ^ 0xff);
 #ifdef PARALLEL_PORT
-		if (isprinter () > 0) {
+		if (isprinter() > 0) {
 			tmp = ciaaprb;
-		} else if (isprinter () < 0) {
+		} else if (isprinter() < 0) {
 			uae_u8 v;
-			parallel_direct_read_data (&v);
+			parallel_direct_read_data(&v);
 			tmp = v;
 #ifdef ARCADIA
 		} else if (arcadia_bios) {
-			tmp = arcadia_parport (0, ciaaprb, ciaadrb);
+			tmp = arcadia_parport(0, ciaaprb, ciaadrb);
 #endif
 		} else if (currprefs.win32_samplersoundcard >= 0) {
 
-			tmp = sampler_getsample ((ciabpra & 4) ? 1 : 0);
+			tmp = sampler_getsample((ciabpra & 4) ? 1 : 0);
 #endif
 
 		} else if (parallel_port_scsi) {
@@ -1096,24 +1128,29 @@ static uae_u8 ReadCIAA (unsigned int addr, uae_u32 *flags)
 			tmp = parallel_port_scsi_read(0, ciaaprb, ciaadrb);
 
 		} else {
-			tmp = handle_parport_joystick (0, ciaaprb, ciaadrb);
+			tmp = handle_parport_joystick (0, tmp);
 			tmp = dongle_cia_read (1, reg, ciaadrb, tmp);
 #if DONGLE_DEBUG > 0
 			if (notinrom())
 				write_log (_T("BFE101 R %02X %s\n"), tmp, debuginfo(0));
 #endif
 		}
+		// PBON
 		if (ciaacrb & 2) {
 			int pb7 = 0;
-			if (ciaacrb & 4)
+			// OUTMODE
+			if (ciaacrb & 4) {
 				pb7 = ciaacrb & 1;
+			}
 			tmp &= ~0x80;
 			tmp |= pb7 ? 0x80 : 00;
 		}
 		if (ciaacra & 2) {
 			int pb6 = 0;
-			if (ciaacra & 4)
+			// OUTMODE
+			if (ciaacra & 4) {
 				pb6 = ciaacra & 1;
+			}
 			tmp &= ~0x40;
 			tmp |= pb6 ? 0x40 : 00;
 		}
@@ -1218,35 +1255,38 @@ static uae_u8 ReadCIAB (unsigned int addr, uae_u32 *flags)
 
 	switch (reg) {
 	case 0:
-		tmp = 0;
-#ifdef ARCADIA
-		// CD inactive, Arcadia bios 4.00 does not detect printer
-		if (arcadia_bios && !currprefs.use_serial)
-			tmp = 0x20;
-#endif
+		tmp = (ciabpra & ciabdra) | (ciabdra ^ 0xff);
 #ifdef SERIAL_PORT
-		if (currprefs.use_serial)
-			tmp = serial_readstatus (ciabdra);
+		if (currprefs.use_serial) {
+			tmp &= 7;
+			tmp |= serial_readstatus(ciabdra) & 0xf8;
+		}
 #endif
 #ifdef PARALLEL_PORT
-		if (isprinter () > 0) {
-			//tmp |= ciabpra & (0x04 | 0x02 | 0x01);
+		if (isprinter() > 0) {
 			tmp &= ~3; // clear BUSY and PAPEROUT
 			tmp |= 4; // set SELECT
-		} else if (isprinter () < 0) {
+		} else if (isprinter() < 0) {
 			uae_u8 v;
-			parallel_direct_read_status (&v);
+			tmp &= ~7;
+			parallel_direct_read_status(&v);
 			tmp |= v & 7;
 		} else if (parallel_port_scsi) {
 			tmp = parallel_port_scsi_read(1, ciabpra, ciabdra);
 		} else {
-			tmp |= handle_parport_joystick (1, ciabpra, ciabdra);
+			// serial port in output mode
+			if (ciabcra & 0x40) {
+				tmp &= ~3;
+				tmp |= (ciabsdr_cnt & 1) ? 2 : 0; // clock
+				tmp |= (ciabsdr_buf & 0x80) ? 1 : 0; // data
+			}
+			tmp = handle_parport_joystick(1, tmp);
 		}
 #endif
-		tmp = dongle_cia_read (1, reg, ciabpra, tmp);
+		tmp = dongle_cia_read(1, reg, ciabpra, tmp);
 #if DONGLE_DEBUG > 0
-		if (notinrom ())
-			write_log (_T("BFD000 R %02X %s\n"), tmp, debuginfo(0));
+		if (notinrom())
+			write_log(_T("BFD000 R %02X %s\n"), tmp, debuginfo(0));
 #endif
 
 		if (currprefs.cs_ciatype[1]) {
@@ -1263,6 +1303,7 @@ static uae_u8 ReadCIAB (unsigned int addr, uae_u32 *flags)
 		tmp = ciabprb;
 		tmp = DISK_status_ciab(tmp);
 		tmp = dongle_cia_read (1, reg, ciabprb, tmp);
+		// A PBON
 		if (ciabcrb & 2) {
 			int pb7 = 0;
 			if (ciabcrb & 4)
@@ -1270,6 +1311,7 @@ static uae_u8 ReadCIAB (unsigned int addr, uae_u32 *flags)
 			tmp &= ~0x80;
 			tmp |= pb7 ? 0x80 : 00;
 		}
+		// B PBON
 		if (ciabcra & 2) {
 			int pb6 = 0;
 			if (ciabcra & 4)
@@ -1506,8 +1548,14 @@ static void WriteCIAA (uae_u16 addr, uae_u8 val, uae_u32 *flags)
 	case 12:
 		CIA_update ();
 		ciaasdr = val;
-		if ((ciaacra & 0x41) == 0x41 && ciaasdr_cnt == 0)
-			ciaasdr_cnt = 8 * 2;
+		if ((ciaacra & 0x41) == 0x41) {
+			ciaasdr_load = 1;
+			if (ciaasdr_cnt == 0) {
+				ciaasdr_cnt = 8 * 2;
+				ciaasdr_load = 0;
+				ciaasdr_buf = ciaasdr;
+			}
+		}
 #if KB_DEBUG
 		write_log (_T("CIAA serial port write: %02x cnt=%d PC=%08x\n"), ciaasdr, ciaasdr_cnt, M68K_GETPC);
 #endif
@@ -1532,6 +1580,9 @@ static void WriteCIAA (uae_u16 addr, uae_u8 val, uae_u32 *flags)
 			if (kblostsynccnt > 0 && currprefs.cs_kbhandshake) {
 				kbhandshakestart = get_cycles();
 			}
+#if KB_DEBUG
+			write_log(_T("KB_ACK_START %02x->%02x %08x\n"), ciaacra, val, M68K_GETPC);
+#endif
 		} else if ((val & 0x40) == 0 && (ciaacra & 0x40) != 0) {
 			// handshake end
 			/* todo: check if low to high or high to low only */
@@ -1543,7 +1594,7 @@ static void WriteCIAA (uae_u16 addr, uae_u8 val, uae_u32 *flags)
 			}
 			kblostsynccnt = 0;
 #if KB_DEBUG
-			write_log (_T("KB_ACK %02x->%02x %08x\n"), ciaacra, val, M68K_GETPC);
+			write_log (_T("KB_ACK_END %02x->%02x %08x\n"), ciaacra, val, M68K_GETPC);
 #endif
 		}
 		ciaacra = val;
@@ -1567,6 +1618,66 @@ static void WriteCIAA (uae_u16 addr, uae_u8 val, uae_u32 *flags)
 	}
 }
 
+static void write_ciab_serial(uae_u8 ndata, uae_u8 odata, uae_u8 ndir, uae_u8 odir)
+{
+	uae_u8 val = ndata & ndir;
+	// CNT 0->1?
+	if ((val & 2) && !((odata & odir) & 2)) {
+		int icr = 0;
+		// CIA-B SP in input mode
+		if (!(ciabcra & 0x40)) {
+			ciabsdr_buf <<= 1;
+			ciabsdr_buf |= (val & 1) ? 0x01 : 0x00;
+			ciabsdr_cnt++;
+			if (ciabsdr_cnt >= 8) {
+				// Data received
+				ciabsdr = ciabsdr_buf;
+				ciabicr |= 8;
+				icr = 1;
+				ciabsdr_cnt = 0;
+			}
+		}
+		// A INMODE=1 (count CNT pulses)
+		if ((ciabcra & 0x21) == 0x21) {
+			ciabta--;
+			if (ciabta == 0) {
+				ciabicr |= 1;
+				ciabta = ciabla;
+				if (ciabcra & 0x8) {
+					ciabcra &= ~1;
+				}
+				// B INMODE = 10 or 11 (count A undeflows)
+				if ((ciabcrb & 0x41) == 0x41) {
+					ciabtb--;
+					if (ciabtb == 0) {
+						ciabicr |= 2;
+						ciabtb = ciablb;
+						if (ciabcrb & 0x8) {
+							ciabcrb &= ~1;
+						}
+					}
+				}
+				icr = 1;
+			}
+		}
+		// B INMODE=01 (count CNT pulses)
+		if ((ciabcrb & 0x61) == 0x21) {
+			ciabtb--;
+			if (ciabtb == 0) {
+				ciabicr |= 2;
+				ciabtb = ciablb;
+				if (ciabcrb & 0x8) {
+					ciabcrb &= ~1;
+				}
+				icr = 1;
+			}
+		}
+		if (icr) {
+			RethinkICRB();
+		}
+	}
+}
+
 static void WriteCIAB (uae_u16 addr, uae_u8 val, uae_u32 *flags)
 {
 	int reg = addr & 15;
@@ -1585,6 +1696,7 @@ static void WriteCIAB (uae_u16 addr, uae_u8 val, uae_u32 *flags)
 			write_log (_T("BFD000 W %02X %s\n"), val, debuginfo(0));
 #endif
 		dongle_cia_write (1, reg, ciabdra, val);
+		write_ciab_serial(val, ciabpra, ciabdra, ciabdra);
 		ciabpra = val;
 #ifdef SERIAL_PORT
 		if (currprefs.use_serial)
@@ -1606,6 +1718,25 @@ static void WriteCIAB (uae_u16 addr, uae_u8 val, uae_u32 *flags)
 #endif
 		dongle_cia_write (1, ciabdrb, reg, val);
 		ciabprb = val;
+		// PBON overrides PB6 and PB7
+		if (ciabcrb & 2) {
+			int pb7 = 0;
+			// OUTMODE
+			if (ciabcrb & 4) {
+				pb7 = ciabcrb & 1;
+			}
+			val &= ~0x80;
+			val |= pb7 ? 0x80 : 00;
+		}
+		if (ciabcra & 2) {
+			int pb6 = 0;
+			// OUTMODE
+			if (ciabcra & 4) {
+				pb6 = ciabcra & 1;
+			}
+			val &= ~0x40;
+			val |= pb6 ? 0x40 : 00;
+		}
 		DISK_select (val);
 		break;
 	case 2:
@@ -1614,6 +1745,7 @@ static void WriteCIAB (uae_u16 addr, uae_u8 val, uae_u32 *flags)
 			write_log (_T("BFD200 W %02X %s\n"), val, debuginfo(0));
 #endif
 		dongle_cia_write (1, reg, ciabpra, val);
+		write_ciab_serial(ciabpra, ciabpra, val, ciabdra);
 		ciabdra = val;
 #ifdef SERIAL_PORT
 		if (currprefs.use_serial)
@@ -1704,10 +1836,13 @@ static void WriteCIAB (uae_u16 addr, uae_u8 val, uae_u32 *flags)
 	case 12:
 		CIA_update ();
 		ciabsdr = val;
-		if ((ciabcra & 0x40) == 0)
-			ciabsdr_cnt = 0;
-		if ((ciabcra & 0x41) == 0x41 && ciabsdr_cnt == 0)
-			ciabsdr_cnt = 8 * 2;
+		if ((ciabcra & 0x41) == 0x41) {
+			ciabsdr_load = 1;
+			if (ciabsdr_cnt == 0) {
+				ciabsdr_cnt = 8 * 2;
+				ciabsdr_load = 0;
+			}
+		}
 		CIA_calctimers ();
 		break;
 	case 13:
@@ -1774,8 +1909,8 @@ void CIA_reset (void)
 		ciaaalarm = ciabalarm = 0;
 		ciabpra = 0x8C; ciabdra = 0;
 		div10 = 0;
-		ciaasdr_cnt = 0; ciaasdr = 0;
-		ciabsdr_cnt = 0; ciabsdr = 0;
+		ciaasdr_cnt = 0; ciaasdr = 0; ciaasdr_load = 0;
+		ciabsdr_cnt = 0; ciabsdr = 0; ciabsdr_buf = 0; ciabsdr_load = 0;
 		ciaata_passed = ciaatb_passed = ciabta_passed = ciabtb_passed = 0;
 		CIA_calctimers ();
 		DISK_select_set (ciabprb);
@@ -1795,13 +1930,6 @@ void CIA_reset (void)
 			map_overlay (oldovl ? 0 : 1);
 		}
 	}
-#ifdef CD32
-	if (!isrestore ()) {
-		akiko_reset ();
-		if (!akiko_init ())
-			currprefs.cs_cd32cd = changed_prefs.cs_cd32cd = 0;
-	}
-#endif
 }
 
 void dumpcia (void)
@@ -2054,18 +2182,21 @@ static uae_u32 REGPARAM2 cia_wget (uaecptr addr)
 		if (!issinglecia ())
 		{
 			cia_wait_pre (1 | 2);
-			v = (ReadCIAB (r, &flags) << 8) | ReadCIAA (r, &flags);
+			v = ReadCIAB(r, &flags) << 8;
+			v |= ReadCIAA(r, &flags);
 			cia_wait_post (1 | 2, v);
 		}
 		break;
 	case 1:
 		cia_wait_pre (2);
-		v = (ReadCIAB (r, &flags) << 8) | dummy_get_safe(addr, 1, false, 0);
+		v = ReadCIAB(r, &flags) << 8;
+		v |= dummy_get_safe(addr + 1, 1, false, 0);
 		cia_wait_post (2, v);
 		break;
 	case 2:
 		cia_wait_pre (1);
-		v = (dummy_get_safe(addr, 1, false, 0) << 8) | ReadCIAA (r, &flags);
+		v = ReadCIAA(r, &flags);
+		v |= dummy_get_safe(addr, 1, false, 0) << 8;
 		cia_wait_post (1, v);
 		break;
 	case 3:
@@ -2080,6 +2211,8 @@ static uae_u32 REGPARAM2 cia_wget (uaecptr addr)
 		}
 		break;
 	}
+	if (addr & 1)
+		v = (v << 8) | (v >> 8);
 #ifdef ACTION_REPLAY
 	if (flags) {
 		action_replay_cia_access((flags & 2) != 0);
@@ -2109,9 +2242,23 @@ static uae_u32 REGPARAM2 cia_lgeti (uaecptr addr)
 	return cia_lget (addr);
 }
 
+
+static bool cia_debug(uaecptr addr, uae_u32 value, int size)
+{
+	if (addr == DEBUG_SPRINTF_ADDRESS || addr == DEBUG_SPRINTF_ADDRESS + 4 ||
+		(addr == DEBUG_SPRINTF_ADDRESS + 2 && currprefs.cpu_model < 68020) ||
+		(addr == DEBUG_SPRINTF_ADDRESS + 6 && currprefs.cpu_model < 68020)) {
+		return debug_sprintf(addr, value, size);
+	}
+	return false;
+}
+
 static void REGPARAM2 cia_bput (uaecptr addr, uae_u32 value)
 {
 	int r = (addr & 0xf00) >> 8;
+
+	if (cia_debug(addr, value, sz_byte))
+		return;
 
 	if (isgarynocia(addr)) {
 		dummy_put(addr, 1, false);
@@ -2147,9 +2294,12 @@ static void REGPARAM2 cia_bput (uaecptr addr, uae_u32 value)
 	}
 }
 
-static void REGPARAM2 cia_wput (uaecptr addr, uae_u32 value)
+static void REGPARAM2 cia_wput (uaecptr addr, uae_u32 v)
 {
 	int r = (addr & 0xf00) >> 8;
+
+	if (cia_debug(addr, v, sz_word))
+		return;
 
 	if (isgarynocia(addr)) {
 		dummy_put(addr, 2, false);
@@ -2160,8 +2310,11 @@ static void REGPARAM2 cia_wput (uaecptr addr, uae_u32 value)
 		return;
 
 	if (memwatch_access_validator) {
-		write_log(_T("CIA word write %08x = %04x PC=%08x\n"), addr, value & 0xffff, M68K_GETPC);
+		write_log(_T("CIA word write %08x = %04x PC=%08x\n"), addr, v & 0xffff, M68K_GETPC);
 	}
+
+	if (addr & 1)
+		v = (v << 8) | (v >> 8);
 
 	int cs = cia_chipselect(addr);
 
@@ -2169,12 +2322,12 @@ static void REGPARAM2 cia_wput (uaecptr addr, uae_u32 value)
 		uae_u32 flags = 0;
 		cia_wait_pre (((cs & 2) == 0 ? 1 : 0) | ((cs & 1) == 0 ? 2 : 0));
 		if ((cs & 2) == 0)
-			WriteCIAB (r, value >> 8, &flags);
+			WriteCIAB (r, v >> 8, &flags);
 		if ((cs & 1) == 0)
-			WriteCIAA (r, value & 0xff, &flags);
-		cia_wait_post (((cs & 2) == 0 ? 1 : 0) | ((cs & 1) == 0 ? 2 : 0), value);
+			WriteCIAA (r, v & 0xff, &flags);
+		cia_wait_post (((cs & 2) == 0 ? 1 : 0) | ((cs & 1) == 0 ? 2 : 0), v);
 		if (((cs & 3) == 3) && (warned > 0 || currprefs.illegal_mem)) {
-			write_log (_T("cia_wput: unknown CIA address %08X=%04X %08X\n"), addr, value & 0xffff, M68K_GETPC);
+			write_log (_T("cia_wput: unknown CIA address %08X=%04X %08X\n"), addr, v & 0xffff, M68K_GETPC);
 			warned--;
 		}
 #ifdef ACTION_REPLAY
@@ -2187,6 +2340,8 @@ static void REGPARAM2 cia_wput (uaecptr addr, uae_u32 value)
 
 static void REGPARAM2 cia_lput (uaecptr addr, uae_u32 value)
 {
+	if (cia_debug(addr, value, sz_long))
+		return;
 	cia_wput (addr, value >> 16);
 	cia_wput (addr + 2, value & 0xffff);
 }
@@ -2484,11 +2639,13 @@ uae_u8 *restore_cia (int num, uae_u8 *src)
 	b = restore_u8 ();
 	if (num) ciabtlatch = b & 1; else ciaatlatch = b & 1;	/* is TOD latched? */
 	if (num) ciabtodon = b & 2; else ciaatodon = b & 2;		/* is TOD stopped? */
+	if (num) ciaasdr_load = b & 4; else ciaasdr_load = b & 4; /* SP data pending */
 	b = restore_u8 ();
 	if (num)
 		div10 = CYCLE_UNIT * b;
 	b = restore_u8 ();
 	if (num) ciabsdr_cnt = b; else ciaasdr_cnt = b;
+	if (num) ciabsdr_buf = b;
 	return src;
 }
 
@@ -2566,9 +2723,14 @@ uae_u8 *save_cia (int num, int *len, uae_u8 *dstptr)
 		b |= ciabtodon ? 2 : 0;
 	else
 		b |= ciaatodon ? 2 : 0;   /* TOD stopped? */
-	save_u8 (b);
-	save_u8 (num ? div10 / CYCLE_UNIT : 0);
-	save_u8 (num ? ciabsdr_cnt : ciaasdr_cnt);
+	if (num)
+		b |= ciabsdr_load ? 4 : 0;
+	else
+		b |= ciaasdr_load ? 2 : 0;   /* TOD stopped? */
+	save_u8(b);
+	save_u8(num ? div10 / CYCLE_UNIT : 0);
+	save_u8(num ? ciabsdr_cnt : ciaasdr_cnt);
+	save_u8(num ? ciabsdr_buf : ciaasdr_buf);
 	*len = dst - dstbak;
 	return dstbak;
 }

@@ -135,11 +135,13 @@ extern uae_u8 *save_keyboard (int *,uae_u8*);
 
 extern uae_u8 *restore_akiko (uae_u8 *src);
 extern uae_u8 *save_akiko (int *len, uae_u8*);
-extern void restore_akiko_finish (void);
+extern void restore_akiko_finish(void);
+extern void restore_akiko_final(void);
 
 extern uae_u8 *restore_cdtv (uae_u8 *src);
 extern uae_u8 *save_cdtv (int *len, uae_u8*);
-extern void restore_cdtv_finish (void);
+extern void restore_cdtv_finish(void);
+extern void restore_cdtv_final(void);
 
 extern uae_u8 *restore_cdtv_dmac (uae_u8 *src);
 extern uae_u8 *save_cdtv_dmac (int *len, uae_u8*);
@@ -217,8 +219,13 @@ extern uae_u8 *save_a3000hram (int *);
 extern uae_u8 *restore_rom (uae_u8 *);
 extern uae_u8 *save_rom (int, int *, uae_u8 *);
 
-extern uae_u8 *save_expansion_info(int*, uae_u8*);
-extern uae_u8 *restore_expansion_info(uae_u8*);
+extern uae_u8 *save_expansion_boards(int*, uae_u8*, int);
+extern uae_u8 *restore_expansion_boards(uae_u8*);
+#if 0
+extern uae_u8 *save_expansion_info_old(int*, uae_u8*);
+extern uae_u8 *restore_expansion_info_old(uae_u8*);
+#endif
+extern void restore_expansion_finish(void);
 
 extern uae_u8 *restore_action_replay (uae_u8 *);
 extern uae_u8 *save_action_replay (int *, uae_u8 *);
@@ -229,7 +236,8 @@ extern void restore_ar_finish (void);
 extern void savestate_initsave (const TCHAR *filename, int docompress, int nodialogs, bool save);
 extern int save_state (const TCHAR *filename, const TCHAR *description);
 extern void restore_state (const TCHAR *filename);
-extern void savestate_restore_finish (void);
+extern bool savestate_restore_finish(void);
+extern void savestate_restore_final(void);
 extern void savestate_memorysave (void);
 
 

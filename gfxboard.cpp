@@ -42,6 +42,7 @@ static bool memlogw = true;
 #include "gfxboard.h"
 #include "rommgr.h"
 #include "xwin.h"
+#include "devices.h"
 
 #include "qemuvga/qemuuaeglue.h"
 #include "qemuvga/vga.h"
@@ -139,7 +140,7 @@ static const struct gfxboard boards[] =
 	{
 		_T("Piccolo SD64 Zorro III"), _T("Ingenieurbüro Helfrich"), _T("PiccoloSD64_Z3"),
 		BOARD_MANUFACTURER_PICCOLO, BOARD_MODEL_MEMORY_PICCOLO64, BOARD_MODEL_REGISTERS_PICCOLO64,
-		0x00000000, 0x00200000, 0x00400000, 0x04000000, CIRRUS_ID_CLGD5434, 3, 6, true
+		0x00000000, 0x00200000, 0x00400000, 0x01000000, CIRRUS_ID_CLGD5434, 3, 6, true
 	},
 	{
 		_T("Spectrum 28/24 Zorro II"), _T("Great Valley Products"), _T("Spectrum28/24_Z2"),
@@ -154,14 +155,14 @@ static const struct gfxboard boards[] =
 	{
 		_T("Picasso IV Zorro II"), _T("Village Tronic"), _T("PicassoIV_Z2"),
 		BOARD_MANUFACTURER_PICASSO, BOARD_MODEL_MEMORY_PICASSOIV, BOARD_MODEL_REGISTERS_PICASSOIV,
-		0x00000000, 0x00400000, 0x00400000, 0x00400000, CIRRUS_ID_CLGD5446, 2, 2, false,
+		0x00000000, 0x00200000, 0x00400000, 0x00400000, CIRRUS_ID_CLGD5446, 2, 2, false,
 		ROMTYPE_PICASSOIV
 	},
 	{
 		// REG:00600000 IO:00200000 VRAM:01000000
 		_T("Picasso IV Zorro III"), _T("Village Tronic"), _T("PicassoIV_Z3"),
 		BOARD_MANUFACTURER_PICASSO, BOARD_MODEL_MEMORY_PICASSOIV, 0,
-		0x00000000, 0x00400000, 0x00400000, 0x04000000, CIRRUS_ID_CLGD5446, 3, 2, false,
+		0x00000000, 0x00400000, 0x00400000, 0x02000000, CIRRUS_ID_CLGD5446, 3, 2, false,
 		ROMTYPE_PICASSOIV
 	},
 	{
@@ -308,7 +309,7 @@ static const addrbank tmpl_gfxboard_bank_wbsmemory = {
 	gfxboard_lput_wbsmem, gfxboard_wput_wbsmem, gfxboard_bput_wbsmem,
 	gfxboard_xlate, gfxboard_check, NULL, NULL, NULL,
 	gfxboard_lget_wbsmem, gfxboard_wget_wbsmem,
-	ABFLAG_RAM | ABFLAG_THREADSAFE | ABFLAG_CACHE_ENABLE_ALL, S_READ, S_WRITE
+	ABFLAG_RAM | ABFLAG_THREADSAFE | ABFLAG_PPCIOSPACE | ABFLAG_CACHE_ENABLE_ALL, S_READ, S_WRITE
 };
 
 static const addrbank tmpl_gfxboard_bank_lbsmemory = {
@@ -316,7 +317,7 @@ static const addrbank tmpl_gfxboard_bank_lbsmemory = {
 	gfxboard_lput_lbsmem, gfxboard_wput_lbsmem, gfxboard_bput_lbsmem,
 	gfxboard_xlate, gfxboard_check, NULL, NULL, NULL,
 	gfxboard_lget_lbsmem, gfxboard_wget_lbsmem,
-	ABFLAG_RAM | ABFLAG_THREADSAFE | ABFLAG_CACHE_ENABLE_ALL, S_READ, S_WRITE
+	ABFLAG_RAM | ABFLAG_THREADSAFE | ABFLAG_PPCIOSPACE | ABFLAG_CACHE_ENABLE_ALL, S_READ, S_WRITE
 };
 
 static const addrbank tmpl_gfxboard_bank_nbsmemory = {
@@ -324,7 +325,7 @@ static const addrbank tmpl_gfxboard_bank_nbsmemory = {
 	gfxboard_lput_nbsmem, gfxboard_wput_nbsmem, gfxboard_bput_bsmem,
 	gfxboard_xlate, gfxboard_check, NULL, NULL, _T("Picasso IV banked VRAM"),
 	gfxboard_lget_nbsmem, gfxboard_wget_nbsmem,
-	ABFLAG_RAM | ABFLAG_THREADSAFE | ABFLAG_CACHE_ENABLE_ALL, S_READ, S_WRITE
+	ABFLAG_RAM | ABFLAG_THREADSAFE | ABFLAG_PPCIOSPACE | ABFLAG_CACHE_ENABLE_ALL, S_READ, S_WRITE
 };
 
 static const addrbank tmpl_gfxboard_bank_registers = {
@@ -388,6 +389,16 @@ void gfxboard_free_vram(int index)
 	}
 	if (vram_ram_a8 - 1 == index)
 		vram_ram_a8 = 0;
+}
+
+static void gfxboard_hsync_handler(void)
+{
+	for (int i = 0; i < MAX_RTG_BOARDS; i++) {
+		struct rtggfxboard *gb = &rtggfxboards[i];
+		if (gb->func && gb->userdata) {
+			gb->func->hsync(gb->userdata);
+		}
+	}
 }
 
 static void init_board (struct rtggfxboard *gb)
@@ -463,6 +474,8 @@ static void init_board (struct rtggfxboard *gb)
 	gb->vga.vga.con = (void*)gb;
 	cirrus_init_common(&gb->vga, chiptype, 0,  NULL, NULL, gb->board->manufacturer == 0, gb->board->romtype == ROMTYPE_x86_VGA);
 	picasso_allocatewritewatch(gb->rbc->rtg_index, gb->rbc->rtgmem_size);
+
+	device_add_hsync(gfxboard_hsync_handler);
 }
 
 static int GetBytesPerPixel(RGBFTYPE RGBfmt)
@@ -500,8 +513,11 @@ static bool gfxboard_setmode(struct rtggfxboard *gb, struct gfxboard_mode *mode)
 
 	state->Width = mode->width;
 	state->Height = mode->height;
+	state->VirtualWidth = state->Width;
+	state->VirtualHeight = state->Height;
 	int bpp = GetBytesPerPixel(mode->mode);
 	state->BytesPerPixel = bpp;
+	state->BytesPerRow = mode->width * bpp;
 	state->RGBFormat = mode->mode;
 	write_log(_T("GFXBOARD %dx%dx%d\n"), mode->width, mode->height, bpp);
 	if (!ad->picasso_requested_on && !ad->picasso_on) {
@@ -821,10 +837,11 @@ DisplaySurface* qemu_create_displaysurface_from(int width, int height, int bpp,
                                                 int linesize, uint8_t *data,
                                                 bool byteswap)
 {
-	struct rtggfxboard *gb;
 	for (int i = 0; i < MAX_RTG_BOARDS; i++) {
-		gb = &rtggfxboards[i];
+		struct rtggfxboard *gb = &rtggfxboards[i];
 		if (data >= gb->vram && data < gb->vramend) {
+			struct picasso96_state_struct *state = &picasso96_state[gb->monitor_id];
+			state->XYOffset = (gb->vram - data) + gfxmem_banks[gb->rtg_index]->start;
 			gb->modechanged = true;
 			return &gb->fakesurface;
 		}
@@ -901,16 +918,6 @@ void gfxboard_refresh(int monid)
 			if (rbc->rtgmem_size) {
 				gfxboard_refresh(rbc->monitor_id);
 			}
-		}
-	}
-}
-
-void gfxboard_hsync_handler(void)
-{
-	for (int i = 0; i < MAX_RTG_BOARDS; i++) {
-		struct rtggfxboard *gb = &rtggfxboards[i];
-		if (gb->func && gb->userdata) {
-			gb->func->hsync(gb->userdata);
 		}
 	}
 }
@@ -2837,8 +2844,11 @@ int gfxboard_num_boards (struct rtgboardconfig *rbc)
 		return 1;
 	struct rtggfxboard *gb = &rtggfxboards[rbc->rtg_index];
 	gb->board = &boards[type - 2];
-	if (type == GFXBOARD_PICASSO4_Z2)
+	if (type == GFXBOARD_PICASSO4_Z2) {
+		if (rbc->rtgmem_size < 0x400000)
+			return 2;
 		return 3;
+	}
 	if (gb->board->model_registers == 0)
 		return 1;
 	return 2;

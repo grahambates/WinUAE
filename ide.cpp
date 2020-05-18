@@ -6,7 +6,7 @@
 * (c) 2006 - 2015 Toni Wilen
 */
 
-#define IDE_LOG 1
+#define IDE_LOG 0
 
 #include "sysconfig.h"
 #include "sysdeps.h"
@@ -276,6 +276,28 @@ void ata_byteswapidentity(uae_u8 *d)
 	ql(d, 230);
 }
 
+static void pl(struct ide_hdf *ide, int offset, uae_u32 l)
+{
+	if (ide->byteswap) {
+		l = ((l >> 24) & 0x000000ff) | ((l >> 8) & 0x0000ff00) | ((l << 8) & 0x00ff0000) | ((l << 24) & 0xff000000);
+	}
+	ide->secbuf[offset * 2 + 0] = l;
+	ide->secbuf[offset * 2 + 1] = l >> 8;
+	ide->secbuf[offset * 2 + 2] = l >> 16;
+	ide->secbuf[offset * 2 + 3] = l >> 24;
+}
+
+static void pq(struct ide_hdf *ide, int offset, uae_u64 q)
+{
+	if (ide->byteswap) {
+		pl(ide, offset + 0, q >> 32);
+		pl(ide, offset + 2, q >>  0);
+	} else {
+		pl(ide, offset + 0, q >>  0);
+		pl(ide, offset + 2, q >> 32);
+	}
+}
+
 static void pw (struct ide_hdf *ide, int offset, uae_u16 w)
 {
 	if (ide->byteswap) {
@@ -452,16 +474,25 @@ static void ide_identity_buffer(struct ide_hdf *ide)
 {
 	TCHAR tmp[100];
 	bool atapi = ide->atapi;
+	int device_type = ide->atapi_device_type;
 	bool cf = ide->media_type > 0;
 	bool real = false;
 	int v;
 
 	memset(ide->secbuf, 0, 512);
+	if (!device_type)
+		device_type = 5; // CD
 
 	if (ata_get_identity(ide->hdhfd.hfd.geometry, ide->secbuf, true)) {
 
 		if (ini_getval(ide->hdhfd.hfd.geometry, _T("IDENTITY"), _T("atapi"), &v)) {
 			ide->atapi = v != 0;
+			if (ide->atapi) {
+				ide->atapi_device_type = 0;
+				ini_getval(ide->hdhfd.hfd.geometry, _T("IDENTITY"), _T("atapi_type"), &ide->atapi_device_type);
+				if (!ide->atapi_device_type)
+					ide->atapi_device_type = 5;
+			}
 		}
 		if (!ide->byteswap) {
 			ata_byteswapidentity(ide->secbuf);
@@ -477,7 +508,7 @@ static void ide_identity_buffer(struct ide_hdf *ide)
 
 	} else {
 
-		pw(ide, 0, atapi ? 0x85c0 : (cf ? 0x848a : (1 << 6)));
+		pw(ide, 0, atapi ? 0x80c0 | (device_type << 8) : (cf ? 0x848a : (1 << 6)));
 		pw(ide, 1, ide->hdhfd.cyls_def);
 		pw(ide, 2, 0xc837);
 		pw(ide, 3, ide->hdhfd.heads_def);
@@ -503,9 +534,8 @@ static void ide_identity_buffer(struct ide_hdf *ide)
 		pw(ide, 54, ide->hdhfd.cyls);
 		pw(ide, 55, ide->hdhfd.heads);
 		pw(ide, 56, ide->hdhfd.secspertrack);
-		uae_u64 totalsecs = ide->hdhfd.cyls * ide->hdhfd.heads * ide->hdhfd.secspertrack;
-		pw(ide, 57, (uae_u16)totalsecs);
-		pw(ide, 58, (uae_u16)(totalsecs >> 16));
+		uae_u64 totalsecs = (uae_u64)ide->hdhfd.cyls * ide->hdhfd.heads * ide->hdhfd.secspertrack;
+		pl(ide, 57, totalsecs);
 		pw(ide, 59, ide->max_multiple_mode ? (0x100 | ide->max_multiple_mode >> (ide->blocksize / 512 - 1)) : 0); /* Multiple mode supported */
 		pw(ide, 62, 0x0f);
 		pw(ide, 63, 0x0f);
@@ -513,9 +543,8 @@ static void ide_identity_buffer(struct ide_hdf *ide)
 			totalsecs = ide->blocksize ? ide->hdhfd.size / ide->blocksize : 0;
 			if (totalsecs > 0x0fffffff)
 				totalsecs = 0x0fffffff;
-			pw(ide, 60, (uae_u16)totalsecs);
-			pw(ide, 61, (uae_u16)(totalsecs >> 16));
-			if (ide->ata_level) {
+			pl(ide, 60, totalsecs);
+			if (ide->ata_level > 0) {
 				pw(ide, 64, ide->ata_level ? 0x03 : 0x00); /* PIO3 and PIO4 */
 				pw(ide, 65, 120); /* MDMA2 supported */
 				pw(ide, 66, 120);
@@ -533,10 +562,7 @@ static void ide_identity_buffer(struct ide_hdf *ide)
 				pw(ide, 93, (1 << 14) | (1 << 13) | (1 << 0));
 				if (ide->lba48) {
 					totalsecs = ide->hdhfd.size / ide->blocksize;
-					pw(ide, 100, (uae_u16)(totalsecs >> 0));
-					pw(ide, 101, (uae_u16)(totalsecs >> 16));
-					pw(ide, 102, (uae_u16)(totalsecs >> 32));
-					pw(ide, 103, (uae_u16)(totalsecs >> 48));
+					pq(ide, 100, totalsecs);
 				}
 			}
 		}
@@ -556,7 +582,7 @@ static void ide_identity_buffer(struct ide_hdf *ide)
 
 static void ide_identify_drive (struct ide_hdf *ide)
 {
-	if (!ide_isdrive (ide)) {
+	if (!ide_isdrive (ide) || ide->ata_level < 0) {
 		ide_fail (ide);
 		return;
 	}
@@ -629,7 +655,7 @@ static void ide_initialize_drive_parameters (struct ide_hdf *ide)
 		if (ide->hdhfd.hfd.ci.pcyls)
 			ide->hdhfd.cyls = ide->hdhfd.hfd.ci.pcyls;
 		else
-			ide->hdhfd.cyls = (ide->hdhfd.size / ide->blocksize) / (ide->hdhfd.secspertrack * ide->hdhfd.heads);
+			ide->hdhfd.cyls = (ide->hdhfd.size / ide->blocksize) / ((uae_u64)ide->hdhfd.secspertrack * ide->hdhfd.heads);
 		if (ide->hdhfd.heads * ide->hdhfd.cyls * ide->hdhfd.secspertrack > 16515072 || ide->lba48) {
 			if (ide->hdhfd.hfd.ci.pcyls)
 				ide->hdhfd.cyls = ide->hdhfd.hfd.ci.pcyls;
@@ -649,6 +675,11 @@ static void ide_initialize_drive_parameters (struct ide_hdf *ide)
 
 static void ide_set_multiple_mode (struct ide_hdf *ide)
 {
+	if (ide->ata_level < 0) {
+		ide_fail(ide);
+		return;
+	}
+
 	write_log (_T("IDE%d drive multiple mode = %d\n"), ide->num, ide->regs.ide_nsector);
 	if (ide->regs.ide_nsector > (ide->max_multiple_mode >> (ide->blocksize / 512 - 1))) {
 		ide_fail(ide);
@@ -660,6 +691,11 @@ static void ide_set_multiple_mode (struct ide_hdf *ide)
 
 static void ide_set_features (struct ide_hdf *ide)
 {
+	if (ide->ata_level < 0) {
+		ide_fail(ide);
+		return;
+	}
+
 	int type = ide->regs.ide_nsector >> 3;
 	int mode = ide->regs.ide_nsector & 7;
 
@@ -691,7 +727,7 @@ static void get_lbachs (struct ide_hdf *ide, uae_u64 *lbap, unsigned int *cyl, u
 	if (ide->lba48 && ide->lba48cmd && (ide->regs.ide_select & 0x40)) {
 		uae_u64 lba;
 		lba = (ide->regs.ide_hcyl << 16) | (ide->regs.ide_lcyl << 8) | ide->regs.ide_sector;
-		lba |= ((ide->regs.ide_hcyl2 << 16) | (ide->regs.ide_lcyl2 << 8) | ide->regs.ide_sector2) << 24;
+		lba |= ((uae_u64)(((ide->regs.ide_hcyl2 << 16) | (ide->regs.ide_lcyl2 << 8) | ide->regs.ide_sector2))) << 24;
 		*lbap = lba;
 	} else {
 		if ((ide->regs.ide_select & 0x40) && ide->lba) {
@@ -700,7 +736,7 @@ static void get_lbachs (struct ide_hdf *ide, uae_u64 *lbap, unsigned int *cyl, u
 			*cyl = (ide->regs.ide_hcyl << 8) | ide->regs.ide_lcyl;
 			*head = ide->regs.ide_select & 15;
 			*sec = ide->regs.ide_sector;
-			*lbap = (((*cyl) * ide->hdhfd.heads + (*head)) * ide->hdhfd.secspertrack) + (*sec) - 1;
+			*lbap = (((uae_u64)(*cyl) * ide->hdhfd.heads + (*head)) * ide->hdhfd.secspertrack) + (*sec) - 1;
 		}
 	}
 }
@@ -1018,7 +1054,7 @@ static void ide_read_sectors (struct ide_hdf *ide, int flags)
 	int multi = flags & 1;
 
 	ide->lba48cmd = (flags & 2) != 0;
-	if (multi && ide->multiple_mode == 0) {
+	if (multi && (ide->multiple_mode == 0 || ide->ata_level < 0)) {
 		ide_fail (ide);
 		return;
 	}
@@ -1056,7 +1092,7 @@ static void ide_write_sectors (struct ide_hdf *ide, int flags)
 	int multi = flags & 1;
 
 	ide->lba48cmd = (flags & 2) != 0;
-	if (multi && ide->multiple_mode == 0) {
+	if (multi && (ide->multiple_mode == 0 || ide->ata_level < 0)) {
 		ide_fail (ide);
 		return;
 	}
@@ -1097,7 +1133,7 @@ static void ide_format_track(struct ide_hdf *ide)
 	cyl = (ide->regs.ide_hcyl << 8) | ide->regs.ide_lcyl;
 	head = ide->regs.ide_select & 15;
 	sec = ide->regs.ide_nsector;
-	lba = (((cyl) * ide->hdhfd.heads + (head)) * ide->hdhfd.secspertrack);
+	lba = (((uae_u64)(cyl) * ide->hdhfd.heads + (head)) * ide->hdhfd.secspertrack);
 	if (lba >= ide->max_lba) {
 		ide_interrupt(ide);
 		return;
@@ -1187,7 +1223,11 @@ static void ide_do_command (struct ide_hdf *ide, uae_u8 cmd)
 		} else if (cmd == 0x70) { /* seek */
 			ide_interrupt (ide);
 		} else if (cmd == 0xe0 || cmd == 0xe1 || cmd == 0xe7 || cmd == 0xea) { /* standby now/idle/flush cache/flush cache ext */
-			ide_interrupt (ide);
+			if (ide->ata_level < 0) {
+				ide_fail(ide);
+			} else {
+				ide_interrupt(ide);
+			}
 		} else if (cmd == 0xe5) { /* check power mode */
 			ide->regs.ide_nsector = 0xff;
 			ide_interrupt (ide);
@@ -1556,6 +1596,9 @@ void ide_initialize(struct ide_hdf **idetable, int chpair)
 	struct ide_hdf *ide0 = idetable[chpair * 2 + 0];
 	struct ide_hdf *ide1 = idetable[chpair * 2 + 1];
 
+	if (!ide0 || !ide1)
+		return;
+
 	ide0->regs0 = &ide0->regs;
 	ide0->regs1 = &ide1->regs;
 	ide0->pair = ide1;
@@ -1605,6 +1648,7 @@ void remove_ide_unit(struct ide_hdf **idetable, int ch)
 struct ide_hdf *add_ide_unit (struct ide_hdf **idetable, int max, int ch, struct uaedev_config_info *ci, struct romconfig *rc)
 {
 	struct ide_hdf *ide;
+	bool vb;
 
 	alloc_ide_mem(idetable, max, NULL);
 	if (ch < 0)
@@ -1624,6 +1668,7 @@ struct ide_hdf *add_ide_unit (struct ide_hdf **idetable, int max, int ch, struct
 		ide_identity_buffer(ide);
 		ide->cd_unit_num = ci->device_emu_unit;
 		ide->atapi = true;
+		ide->atapi_device_type = 5;
 		ide->blocksize = 512;
 		ide->uae_unitnum = ci->uae_unitnum;
 		gui_flicker_led(LED_CD, ci->uae_unitnum, -1);
@@ -1640,6 +1685,7 @@ struct ide_hdf *add_ide_unit (struct ide_hdf **idetable, int max, int ch, struct
 
 		ide_identity_buffer(ide);
 		ide->atapi = true;
+		ide->atapi_device_type = 1;
 		ide->blocksize = 512;
 		ide->cd_unit_num = -1;
 		ide->uae_unitnum = ci->uae_unitnum;
@@ -1677,6 +1723,14 @@ struct ide_hdf *add_ide_unit (struct ide_hdf **idetable, int max, int ch, struct
 			ide->max_lba = ci.max_lba;
 		if (ide->lba48 && !ide->ata_level)
 			ide->ata_level = 1;
+		if (ini_getbool(ide->hdhfd.hfd.geometry, _T("IDENTITY"), _T("disabled"), &vb)) {
+			if (vb) {
+				ide->ata_level = -1;
+				ide->lba48 = false;
+				ide->lba = false;
+				ide->max_multiple_mode = 0;
+			}
+		}
 
 		write_log (_T("IDE%d HD '%s', LCHS=%d/%d/%d. PCHS=%d/%d/%d %uM. MM=%d LBA48=%d\n"),
 			ch, ide->hdhfd.hfd.ci.rootdir,

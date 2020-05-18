@@ -2057,9 +2057,18 @@ int open_debug_window(void)
 	dbgaccel = LoadAccelerators(hUIDLL ? hUIDLL : hInst, MAKEINTRESOURCE (IDR_DBGACCEL));
 	nr = getresource(IDD_DEBUGGER);
 	if (nr) {
-		hDbgWnd = CreateDialogIndirect (nr->inst, nr->resource, NULL, DebuggerProc);
-		freescaleresource(nr);
+		typedef DPI_AWARENESS_CONTEXT(CALLBACK *SETTHREADDPIAWARENESSCONTEXT)(DPI_AWARENESS_CONTEXT);
+		SETTHREADDPIAWARENESSCONTEXT pSetThreadDpiAwarenessContext = (SETTHREADDPIAWARENESSCONTEXT)GetProcAddress(userdll, "SetThreadDpiAwarenessContext");
+		DPI_AWARENESS_CONTEXT ac = DPI_AWARENESS_CONTEXT_UNAWARE;
+		if (pSetThreadDpiAwarenessContext) {
+			ac = pSetThreadDpiAwarenessContext(ac);
+		}
+		hDbgWnd = CreateDialogIndirect (nr->inst, nr->sourceresource, NULL, DebuggerProc);
+		if (pSetThreadDpiAwarenessContext) {
+			pSetThreadDpiAwarenessContext(ac);
+		}
 	}
+	freescaleresource(nr);
 	debuggerinitializing = FALSE;
 	if (!hDbgWnd)
 		return 0;

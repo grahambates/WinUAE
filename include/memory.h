@@ -442,9 +442,9 @@ extern void rtarea_init(void);
 extern void rtarea_free(void);
 extern void rtarea_init_mem(void);
 extern void rtarea_setup(void);
-extern void expamem_reset (void);
-extern void expamem_next (addrbank *mapped, addrbank *next);
-extern void expamem_shutup (addrbank *mapped);
+extern void expamem_reset(int);
+extern void expamem_next(addrbank *mapped, addrbank *next);
+extern void expamem_shutup(addrbank *mapped);
 extern bool expamem_z3hack(struct uae_prefs*);
 extern void expansion_cpu_fallback(void);
 extern void set_expamem_z3_hack_mode(int);
@@ -552,6 +552,52 @@ STATIC_INLINE uae_u32 get_wordi(uaecptr addr)
 	return memory_get_wordi(addr);
 }
 
+// do split memory access if it can cross memory banks
+STATIC_INLINE uae_u32 get_long_compatible(uaecptr addr)
+{
+	if ((addr &0xffff) < 0xfffd) {
+		return memory_get_long(addr);
+	} else if (addr & 1) {
+		uae_u8 v0 = memory_get_byte(addr + 0);
+		uae_u16 v1 = memory_get_word(addr + 1);
+		uae_u8 v3 = memory_get_byte(addr + 3);
+		return (v0 << 24) | (v1 << 8) | (v3 << 0);
+	} else {
+		uae_u16 v0 = memory_get_word(addr + 0);
+		uae_u16 v1 = memory_get_word(addr + 2);
+		return (v0 << 16) | (v1 << 0);
+	}
+}
+STATIC_INLINE uae_u32 get_word_compatible(uaecptr addr)
+{
+	if ((addr & 0xffff) < 0xffff) {
+		return memory_get_word(addr);
+	} else {
+		uae_u8 v0 = memory_get_byte(addr + 0);
+		uae_u8 v1 = memory_get_byte(addr + 1);
+		return (v0 << 8) | (v1 << 0);
+	}
+}
+STATIC_INLINE uae_u32 get_byte_compatible(uaecptr addr)
+{
+	return memory_get_byte(addr);
+}
+STATIC_INLINE uae_u32 get_longi_compatible(uaecptr addr)
+{
+	if ((addr & 0xffff) < 0xfffd) {
+		return memory_get_longi(addr);
+	} else {
+		uae_u16 v0 = memory_get_wordi(addr + 0);
+		uae_u16 v1 = memory_get_wordi(addr + 2);
+		return (v0 << 16) | (v1 << 0);
+	}
+}
+STATIC_INLINE uae_u32 get_wordi_compatible(uaecptr addr)
+{
+	return memory_get_wordi(addr);
+}
+
+
 STATIC_INLINE uae_u32 get_long_jit(uaecptr addr)
 {
 #ifdef JIT
@@ -639,6 +685,35 @@ STATIC_INLINE void put_byte (uaecptr addr, uae_u32 b)
 {
 	memory_put_byte(addr, b);
 }
+
+// do split memory access if it can cross memory banks
+STATIC_INLINE void put_long_compatible(uaecptr addr, uae_u32 l)
+{
+	if ((addr & 0xffff) < 0xfffd) {
+		memory_put_long(addr, l);
+	} else if (addr & 1) {
+		memory_put_byte(addr + 0, l >> 24);
+		memory_put_word(addr + 1, l >>  8);
+		memory_put_byte(addr + 3, l >>  0);
+	} else {
+		memory_put_word(addr + 0, l >> 16);
+		memory_put_word(addr + 2, l >>  0);
+	}
+}
+STATIC_INLINE void put_word_compatible(uaecptr addr, uae_u32 w)
+{
+	if ((addr & 0xffff) < 0xffff) {
+		memory_put_word(addr, w);
+	} else {
+		memory_put_byte(addr + 0, w >> 8);
+		memory_put_byte(addr + 1, w >> 0);
+	}
+}
+STATIC_INLINE void put_byte_compatible(uaecptr addr, uae_u32 b)
+{
+	memory_put_byte(addr, b);
+}
+
 
 STATIC_INLINE void put_long_jit(uaecptr addr, uae_u32 l)
 {

@@ -11,19 +11,21 @@
 *
 */
 
+#define EEPROM_DEBUG 0
+
 /*
-	B80000-B80003: C0CACAFE (Read-only identifier)
+	B80000-B80003: $C0CACAFE (Read-only identifier)
 
 	B80004.L: INTREQ (RO)
 	B80008.L: INTENA (R/W)
 
-	 31 = Subcode interrupt (One subcode buffer filled and B0018.B has changed)
-	 30 = Drive has received all command bytes and executed the command
-	 29 = Drive has status data pending
-	 28 = Drive command DMA transmit complete
-	 27 = Drive status DMA receive complete
-	 26 = Drive data DMA complete
-	 25 = DMA overflow (lost data)?
+	 31 $80000000 = Subcode interrupt (One subcode buffer filled and B0018.B has changed)
+	 30 $40000000 = Drive has received all command bytes and executed the command (PIO only)
+	 29 $20000000 = Drive has status data pending (PIO only)
+	 28 $10000000 = Drive command DMA transmit complete (DMA only)
+	 27 $08000000 = Drive status DMA receive complete (DMA only)
+	 26 $04000000 = Drive data DMA complete
+	 25 $02000000 = DMA overflow (lost data)?
 
 	 INTREQ is read-only, each interrupt has different method to clear the interrupt.
 
@@ -42,13 +44,13 @@
 	B0001D.B WRITE = Transmit DMA circular buffer end position.
 
 	 If written value is different than current: transmit DMA starts and sends command bytes to drive until value matches end position.
-	 Clears also transmit interrupt (bit 30)
+	 Clears also transmit interrupt (bit 28)
 	
 	B0001E.B READ = Receive DMA circular buffer current position.
 	B0001F.B WRITE = Receive DMA circular buffer end position.
 
 	 If written value is different than current: receive DMA fills DMA buffer if drive has response data remaining, until value matches end position.
-	 Clears also Receive interrupt (bit 29)
+	 Clears also Receive interrupt (bit 27)
 
 	B80020.W WRITE = DMA transfer block enable
 	
@@ -59,10 +61,12 @@
 	 Bit 14 = DMA base address + 0xe000
 	 Bit 15 = DMA base address + 0xf000
 
+	 When writing, if bit is one, matching register bit gets set, if bit is zero, nothing happens, it is not possible to clear already set bits.
 	 All one bit blocks (CD sectors) are transferred one by one. Bit 15 is always checked and processed first, then 14 and so on..
-	 Interrupt is generated after each transferred block (bit 1 to 0 transition)
+	 Interrupt is generated after each transferred block and matching register bit is cleared.
 
-	 Writing to this register also clears INTREQ bit 28.
+	 Writing to this register also clears INTREQ bit 26. Writing zero will only clear interrupt.
+	 If CONFIG data transfer DMA enable is not active: register gets cleared and writes are ignored.
 
 	 Structure of each block:
 
@@ -72,25 +76,26 @@
 	 0xc00: 146 bytes of CD error correction data?
 	 The rest is unused(?).
 
-	B80020.R READ = Read current DMA transfer status.
+	B80020.W READ = Read current DMA transfer status.
 
 	B80024.L: CONFIG (R/W)
 
-	 31 = Subcode DMA enable
-	 30 = Command write (to CD) DMA enable
-	 29 = Status read (from CD) DMA enable
-	 28 = Memory access mode?
-	 27 = Data transfer DMA enable
-	 26 = CD interface enable?
-	 25 = CD data mode?
-	 24 = CD data mode?
-	 23 = Akiko internal CIA faked vsync rate (0=50Hz,1=60Hz)
+	 31 $80000000 = Subcode DMA enable
+	 30 $40000000 = Command write (to CD) DMA enable
+	 29 $20000000 = Status read (from CD) DMA enable
+	 28 $10000000 = Memory access mode?
+	 27 $08000000 = Data transfer DMA enable
+	 26 $04000000 = CD interface enable?
+	 25 $02000000 = CD data mode?
+	 24 $01000000 = CD data mode?
+	 23 $00800000 = Akiko internal CIA faked vsync rate (0=50Hz,1=60Hz)
 	 00-22 = unused
 
-	B80028.B WRITE = PIO write (If CONFIG bit 30 off)
-	B80028.B READ = PIO read (If CONFIG bit 29 off)
+	B80028.B WRITE = PIO write (If CONFIG bit 30 off). Clears also interrupt bit 30.
+	B80028.B READ = PIO read (If CONFIG bit 29 off). Clears also interrupt bit 29 if no data available anymore.
 
-	B80030.L NVRAM I2C
+	B80030.B NVRAM I2C IO. Bit 7 = SCL, bit 6 = SDA
+	B80032.B NVRAM I2C DIRECTION. Bit 7 = SCL direction, bit 6 = SDA direction)
 
 	B80038.L C2P
 
@@ -237,6 +242,10 @@ static void akiko_nvram_write (int offset, uae_u32 v)
 	switch (offset)
 	{
 	case 0:
+	{
+#if EEPROM_DEBUG
+		uae_u8 o = (cd32_i2c_data_scl ? 0x80 : 0x00) | (cd32_i2c_data_sda ? 0x40 : 0x00);
+#endif
 		if (cd32_i2c_direction & 0x80)
 			cd32_i2c_data_scl = (v & 0x80) != 0;
 		else
@@ -247,10 +256,22 @@ static void akiko_nvram_write (int offset, uae_u32 v)
 		else
 			cd32_i2c_data_sda = true;
 		eeprom_i2c_set(cd32_eeprom, BITBANG_I2C_SDA, cd32_i2c_data_sda);
+#if EEPROM_DEBUG
+		uae_u8 n = (cd32_i2c_data_scl ? 0x80 : 0x00) | (cd32_i2c_data_sda ? 0x40 : 0x00);
+		write_log(_T("Data write: %02x->%02x (%02x)\n"), o, v, n);
+#endif
 		break;
+	}
 	case 2:
+	{
+#if EEPROM_DEBUG
+		if (cd32_i2c_direction != v) {
+			write_log(_T("Direction write: %02x->%02x\n"), cd32_i2c_direction, v);
+		}
+#endif
 		cd32_i2c_direction = v;
 		break;
+	}
 	}
 }
 
@@ -262,9 +283,15 @@ static uae_u32 akiko_nvram_read (int offset)
 	case 0:
 		v |= eeprom_i2c_set(cd32_eeprom, BITBANG_I2C_SCL, cd32_i2c_data_scl) ? 0x80 : 0x00;
 		v |= eeprom_i2c_set(cd32_eeprom, BITBANG_I2C_SDA, cd32_i2c_data_sda) ? 0x40 : 0x00;
+#if EEPROM_DEBUG
+		write_log(_T("Data read: %02x\n"), v);
+#endif
 		break;
 	case 2:
 		v = cd32_i2c_direction;
+#if EEPROM_DEBUG
+		write_log(_T("Direction read: %02x\n"), v);
+#endif
 		break;
 	}
 	return v;
@@ -470,7 +497,7 @@ static volatile int frame2counter;
 
 static smp_comm_pipe requests;
 static volatile int akiko_thread_running;
-static uae_sem_t akiko_sem, sub_sem;
+static uae_sem_t akiko_sem, sub_sem, cda_sem;
 
 static void checkint (void)
 {
@@ -499,7 +526,7 @@ static void set_status (uae_u32 status)
 	cdrom_led ^= LED_CD_ACTIVE2;
 }
 
-void rethink_akiko (void)
+static void rethink_akiko(void)
 {
 	checkint ();
 }
@@ -560,18 +587,20 @@ static void subfunc (uae_u8 *data, int cnt)
 	uae_sem_post (&sub_sem);
 }
 
-static int statusfunc (int status, int playpos)
+static int statusfunc(int status, int playpos)
 {
 	if (status == -1)
 		return 0;
 	if (status == -2)
 		return 10;
+	if (status < 0)
+		return 0;
 	if (cdrom_audiostatus != status) {
 		if (status == AUDIO_STATUS_IN_PROGRESS) {
 			if (cdrom_playing == 0)
 				cdrom_playing = 1;
 			cdrom_audiotimeout = 1;
-		} 
+		}
 		if (cdrom_playing && status != AUDIO_STATUS_IN_PROGRESS && status != AUDIO_STATUS_PAUSED && status != AUDIO_STATUS_NOT_SUPPORTED) {
 			cdrom_audiotimeout = -1;
 		}
@@ -580,16 +609,25 @@ static int statusfunc (int status, int playpos)
 	return 0;
 }
 
-static void cdaudioplay_do (void)
+static int statusfunc_imm(int status, int playpos)
 {
-	uae_u32 startlsn = read_comm_pipe_u32_blocking (&requests);
-	uae_u32 endlsn = read_comm_pipe_u32_blocking (&requests);
-	uae_u32 scan = read_comm_pipe_u32_blocking (&requests);
+	if (status == -3 || status > AUDIO_STATUS_IN_PROGRESS)
+		uae_sem_post(&cda_sem);
+	if (status < 0)
+		return 0;
+	return statusfunc(status, playpos);
+}
+
+static void cdaudioplay_do(bool immediate)
+{
+	uae_u32 startlsn = read_comm_pipe_u32_blocking(&requests);
+	uae_u32 endlsn = read_comm_pipe_u32_blocking(&requests);
+	uae_u32 scan = read_comm_pipe_u32_blocking(&requests);
 	qcode_valid = 0;
 	if (unitnum < 0)
 		return;
-	sys_command_cd_pause (unitnum, 0);
-	sys_command_cd_play (unitnum, startlsn, endlsn, scan, statusfunc, subfunc);
+	sys_command_cd_pause(unitnum, 0);
+	sys_command_cd_play(unitnum, startlsn, endlsn, scan, immediate ? statusfunc_imm : statusfunc, subfunc);
 }
 
 static bool isaudiotrack (int startlsn)
@@ -943,6 +981,10 @@ static int checkerr (void)
 
 static int cdrom_command_stop (void)
 {
+#if AKIKO_DEBUG_IO_CMD
+	if (log_cd32 > 0)
+		write_log(_T("CD32: STOP: %d\n"), cdrom_playing);
+#endif
 	cdrom_audiotimeout = 0;
 	cdrom_result_buffer[0] = cdrom_command;
 	if (checkerr ())
@@ -957,7 +999,7 @@ static int cdrom_command_pause (void)
 {
 #if AKIKO_DEBUG_IO_CMD
 	if (log_cd32 > 0)
-		write_log (_T("CD32: pause: %d, %d\n"), cdrom_paused, cdrom_playing);
+		write_log (_T("CD32: PAUSE: %d, %d\n"), cdrom_paused, cdrom_playing);
 #endif
 	cdrom_audiotimeout = 0;
 	cdrom_toc_counter = -1;
@@ -979,7 +1021,7 @@ static int cdrom_command_unpause (void)
 {
 #if AKIKO_DEBUG_IO_CMD
 	if (log_cd32 > 0)
-		write_log (_T("CD32: unpause: %d, %d\n"), cdrom_paused, cdrom_playing);
+		write_log (_T("CD32: UNPAUSE: %d, %d\n"), cdrom_paused, cdrom_playing);
 #endif
 	cdrom_result_buffer[0] = cdrom_command;
 	if (checkerr ())
@@ -1400,24 +1442,28 @@ static void akiko_internal (void)
 	}
 }
 
-void AKIKO_hsync_handler (void)
+static void AKIKO_hsync_handler (void)
 {
 	bool framesync = false;
 
 	if (!currprefs.cs_cd32cd || !akiko_inited)
 		return;
 
-	static float framecounter;
-	framecounter--;
-	if (framecounter <= 0) {
+	static float framecounter1, framecounter2;
+	framecounter1--;
+	if (framecounter1 <= 0) {
 		if (cdrom_seek_delay <= 0) {
-			cdrom_run_read ();
+			cdrom_run_read();
 		} else {
 			cdrom_seek_delay--;
 		}
-		framecounter += (float)maxvpos * vblank_hz / (75.0 * cdrom_speed);
+		framecounter1 += (float)maxvpos * vblank_hz / (75.0 * cdrom_speed);
 		if (currprefs.cd_speed == 0 || currprefs.turbo_emulation)
-			framecounter = 1;
+			framecounter1 = 1;
+	}
+	framecounter2--;
+	if (framecounter2 <= 0) {
+		framecounter2 += (float)maxvpos * vblank_hz / (75.0 * cdrom_speed);
 		framesync = true;
 	}
 
@@ -1488,9 +1534,13 @@ static void *akiko_thread (void *null)
 			case 0x0105: // mute change
 				sys_command_cd_volume (unitnum, cdrom_muted ? 0 : 0x7fff, cdrom_muted ? 0 : 0x7fff);
 				break;
+			case 0x0111: // instant play
+				sys_command_cd_volume(unitnum, cdrom_muted ? 0 : 0x7fff, cdrom_muted ? 0 : 0x7fff);
+				cdaudioplay_do(true);
+				break;
 			case 0x0110: // do_play!
 				sys_command_cd_volume (unitnum, cdrom_muted ? 0 : 0x7fff, cdrom_muted ? 0 : 0x7fff);
-				cdaudioplay_do ();
+				cdaudioplay_do(false);
 				break;
 			}
 		}
@@ -1976,26 +2026,29 @@ addrbank akiko_bank = {
 	ABFLAG_IO | ABFLAG_SAFE, S_READ, S_WRITE
 };
 
-static const uae_u8 patchdata[]={0x0c,0x82,0x00,0x00,0x03,0xe8,0x64,0x00,0x00,0x46};
-static void patchrom (void)
+static const uae_u8 patchdata[] = { 0x0c, 0x82, 0x00, 0x00, 0x03, 0xe8, 0x64, 0x00, 0x00, 0x46 };
+static const uae_u8 patchdata2[] = { 0x0c, 0x82, 0x00, 0x00, 0x03, 0xe8, 0x4e, 0x71, 0x4e, 0x71 };
+static void patchrom(void)
 {
     int i;
 	if (currprefs.cpu_model > 68020 || currprefs.cachesize || currprefs.m68k_speed != 0) {
 		uae_u8 *p = extendedkickmem_bank.baseaddr;
 		if (p) {
-			for (i = 0; i < 524288 - sizeof (patchdata); i++) {
-				if (!memcmp (p + i, patchdata, sizeof(patchdata))) {
-					protect_roms (false);
+			for (i = 0; i < 524288 - 512; i++) {
+				if (!memcmp(p + i, patchdata2, sizeof(patchdata2)))
+					return;				
+				if (!memcmp(p + i, patchdata, sizeof(patchdata))) {
+					protect_roms(false);
 					p[i + 6] = 0x4e;
 					p[i + 7] = 0x71;
 					p[i + 8] = 0x4e;
 					p[i + 9] = 0x71;
-					protect_roms (true);
-					write_log (_T("CD32: extended rom delay loop patched at 0x%08x\n"), i + 6 + 0xe00000);
+					protect_roms(true);
+					write_log(_T("CD32: extended rom delay loop patched at 0x%08x\n"), i + 6 + 0xe00000);
 					return;
 				}
 			}
-			write_log (_T("CD32: couldn't patch extended rom\n"));
+			write_log(_T("CD32: couldn't patch extended rom\n"));
 		}
 	}
 }
@@ -2013,8 +2066,32 @@ static void akiko_cdrom_free (void)
 	sector_buffer_info_2 = 0;
 }
 
-void akiko_reset (void)
+static int akiko_thread_do(int start)
 {
+	if (!start) {
+		if (akiko_thread_running > 0) {
+			cdaudiostop();
+			akiko_thread_running = 0;
+			while (akiko_thread_running == 0)
+				sleep_millis(10);
+			akiko_thread_running = 0;
+			destroy_comm_pipe(&requests);
+			return 1;
+		}
+	} else {
+		if (!akiko_thread_running) {
+			akiko_thread_running = 1;
+			init_comm_pipe(&requests, 100, 1);
+			uae_start_thread(_T("akiko"), akiko_thread, 0, NULL);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static void akiko_reset(int hardreset)
+{
+	patchrom();
 	cdaudiostop_do ();
 	nvram_read ();
 	eeprom_reset(cd32_eeprom);
@@ -2030,34 +2107,28 @@ void akiko_reset (void)
 		cdrom_intreq = CDINTERRUPT_SUBCODE;
 		cdrom_subcodeoffset = 0xc2;
 		cdrom_intena = 0;
+		cdrom_flags = 0;
 	}
 	cdrom_led = 0;
 	cdrom_receive_length = 0;
 	cdrom_receive_offset = 0;
 	cd_initialized = 0;
-
-	if (akiko_thread_running > 0) {
-		cdaudiostop ();
-		akiko_thread_running = 0;
-		while(akiko_thread_running == 0)
-			sleep_millis (10);
-		akiko_thread_running = 0;
-	}
-	akiko_cdrom_free ();
 	mediacheckcounter = 0;
-	akiko_inited = false;
 }
 
-void akiko_free (void)
+static void akiko_free(void)
 {
-	akiko_reset ();
-	akiko_cdrom_free ();
+	akiko_thread_do(0);
+	akiko_cdrom_free();
+	mediacheckcounter = 0;
+	akiko_inited = false;
 }
 
 int akiko_init (void)
 {
 	if (!currprefs.cs_cd32cd)
 		return 0;
+	device_add_reset_imm(akiko_reset);
 	akiko_free ();
 	akiko_precalculate ();
 	unitnum = -1;
@@ -2069,19 +2140,20 @@ int akiko_init (void)
 	sector_buffer_sector_1 = -1;
 	sector_buffer_sector_2 = -1;
 	uae_sem_init (&akiko_sem, 0, 1);
-	uae_sem_init (&sub_sem, 0, 1);
+	uae_sem_init(&sub_sem, 0, 1);
+	uae_sem_init(&cda_sem, 0, 0);
 	if (!savestate_state) {
 		cdrom_playing = cdrom_paused = 0;
 		cdrom_data_offset = -1;
 	}
-	patchrom ();
-	if (!akiko_thread_running) {
-		akiko_thread_running = 1;
-		init_comm_pipe (&requests, 100, 1);
-		uae_start_thread (_T("akiko"), akiko_thread, 0, NULL);
-	}
+	akiko_thread_do(1);
 	gui_flicker_led (LED_HD, 0, -1);
 	akiko_inited = true;
+
+	device_add_hsync(AKIKO_hsync_handler);
+	device_add_exit(akiko_free);
+	device_add_rethink(rethink_akiko);
+
 	return 1;
 }
 
@@ -2222,15 +2294,21 @@ void restore_akiko_finish (void)
 	akiko_init ();
 	akiko_c2p_do ();
 	get_cdrom_toc ();
-	write_comm_pipe_u32 (&requests, 0x0102, 1); // pause
-	write_comm_pipe_u32 (&requests, 0x0104, 1); // stop
-	write_comm_pipe_u32 (&requests, 0x0103, 1); // unpause
-	if (cdrom_playing && isaudiotrack (last_play_pos)) {
-		write_comm_pipe_u32 (&requests, 0x0103, 1); // unpause
-		write_comm_pipe_u32 (&requests, 0x0110, 0); // play
-		write_comm_pipe_u32 (&requests, last_play_pos, 0);
-		write_comm_pipe_u32 (&requests, last_play_end, 0);
-		write_comm_pipe_u32 (&requests, 0, 1);
+}
+
+void restore_akiko_final(void)
+{
+	if (!currprefs.cs_cd32cd)
+		return;
+	write_comm_pipe_u32(&requests, 0x0102, 1); // pause
+	write_comm_pipe_u32(&requests, 0x0104, 1); // stop
+	write_comm_pipe_u32(&requests, 0x0103, 1); // unpause
+	if (cdrom_playing && isaudiotrack(last_play_pos)) {
+		write_comm_pipe_u32(&requests, 0x0111, 0); // play immediate
+		write_comm_pipe_u32(&requests, last_play_pos, 0);
+		write_comm_pipe_u32(&requests, last_play_end, 0);
+		write_comm_pipe_u32(&requests, 0, 1);
+		uae_sem_wait(&cda_sem);
 	}
 	cd_initialized = 2;
 }

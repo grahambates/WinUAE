@@ -23,6 +23,8 @@
 #define ELFMODE_ROM 1
 #define ELFMODE_DEBUGMEM 2
 
+#define ELF_ALIGN_MASK 7
+
 #define N_GSYM 0x20
 #define N_FUN 0x24
 #define N_STSYM 0x26
@@ -216,6 +218,7 @@ static int alloccnt;
 #define DEBUGMEM_INUSE 0x80
 #define DEBUGMEM_PARTIAL 0x100
 #define DEBUGMEM_NOSTACKCHECK 0x200
+#define DEBUGMEM_WRITE_NOCACHEFLUSH 0x400
 #define DEBUGMEM_STACK 0x1000
 
 struct debugmemdata
@@ -348,7 +351,7 @@ static void debugreport(struct debugmemdata *dm, uaecptr addr, int rwi, int size
 		addr_start, addr_start + PAGE_SIZE - 1,
 		!(state & (DEBUGMEM_ALLOCATED | DEBUGMEM_INUSE)) ? 'I' : (state & DEBUGMEM_WRITE) ? 'W' : 'R',
 		(state & DEBUGMEM_WRITE) ? '*' : (state & DEBUGMEM_INITIALIZED) ? '+' : '-',
-		dm->unused_start, PAGE_SIZE - dm->unused_end);
+		dm->unused_start, PAGE_SIZE - dm->unused_end - 1);
 	debugmem_break(1);
 }
 
@@ -551,6 +554,38 @@ bool debugmem_break_stack_push(void)
 	return true;
 }
 
+void debugmem_flushcache(uaecptr addr, int size)
+{
+	if (!debugmem_initialized)
+		return;
+	if (size < 0) {
+		for (int i = 0; i < totalmemdata; i++) {
+			struct debugmemdata* dm = dmd[i];
+			if (dm->flags & DEBUGMEM_WRITE_NOCACHEFLUSH) {
+				for (int j = 0; j < PAGE_SIZE; j++) {
+					dm->state[j] &= ~DEBUGMEM_WRITE_NOCACHEFLUSH;
+				}
+				dm->flags &= ~DEBUGMEM_WRITE_NOCACHEFLUSH;
+			}
+		}
+		return;
+	}
+	if (addr + size < debugmem_bank.start || addr >= debugmem_bank.start + debugmem_bank.allocated_size)
+		return;
+	for (int i = 0; i < (PAGE_SIZE + size - 1) / PAGE_SIZE; i++) {
+		uaecptr a = (addr & ~PAGE_SIZE) + i * PAGE_SIZE;
+		if (a < debugmem_bank.start || a >= debugmem_bank.start + debugmem_bank.allocated_size)
+			continue;
+		struct debugmemdata* dm = dmd[(a - debugmem_bank.start) / PAGE_SIZE];
+		for (int j = 0; j < PAGE_SIZE; j++) {
+			uaecptr aa = a + j;
+			if (aa < addr || aa >= addr + size)
+				continue;
+			dm->state[j] &= ~DEBUGMEM_WRITE_NOCACHEFLUSH;
+		}
+	}
+}
+
 static bool debugmem_func(uaecptr addr, int rwi, int size, uae_u32 val)
 {
 	bool ret = true;
@@ -585,13 +620,16 @@ static bool debugmem_func(uaecptr addr, int rwi, int size, uae_u32 val)
 		}
 
 		if (!(rwi & DEBUGMEM_NOSTACKCHECK) || ((rwi & DEBUGMEM_NOSTACKCHECK) && !(dm->flags & DEBUGMEM_STACK))) {
-			if ((rwi & DEBUGMEM_FETCH) && !(state & DEBUGMEM_INITIALIZED)) {
+			if ((rwi & DEBUGMEM_FETCH) && !(state & DEBUGMEM_INITIALIZED) && !(state & DEBUGMEM_WRITE)) {
 				debugreport(dm, oaddr, rwi, size, _T("Instruction fetch from uninitialized memory"));
 				return false;
 			}
-
-			if ((rwi & DEBUGMEM_FETCH) && (state & DEBUGMEM_WRITE) && !(state & DEBUGMEM_FETCH)) {
-				debugreport(dm, oaddr, rwi, size, _T("Instruction fetch from memory that was modified"));
+			if ((rwi & DEBUGMEM_FETCH) && (state & DEBUGMEM_WRITE_NOCACHEFLUSH)) {
+				debugreport(dm, oaddr, rwi, size, _T("Instruction fetch from memory that was modified without flushing caches"));
+				return false;
+			}
+			if ((rwi & DEBUGMEM_FETCH) && (state & DEBUGMEM_WRITE) && (state & DEBUGMEM_FETCH)) {
+				debugreport(dm, oaddr, rwi, size, _T("Instruction fetch from memory that was modified after being executed at least once"));
 				return false;
 			}
 		}
@@ -611,6 +649,12 @@ static bool debugmem_func(uaecptr addr, int rwi, int size, uae_u32 val)
 				return false;
 			}
 		}
+		if (rwi & DEBUGMEM_WRITE) {
+			rwi |= DEBUGMEM_WRITE_NOCACHEFLUSH;
+			dm->flags |= DEBUGMEM_WRITE_NOCACHEFLUSH;
+		}
+		if ((rwi & DEBUGMEM_FETCH) && (state & DEBUGMEM_WRITE))
+			state &= ~(DEBUGMEM_WRITE | DEBUGMEM_WRITE_NOCACHEFLUSH);
 		if ((state | rwi) != state) {
 			//console_out_f(_T("addr %08x %d/%d (%02x -> %02x) PC=%08x\n"), addr, i, size, state, rwi, M68K_GETPC);
 			dm->state[offset] |= rwi;
@@ -2379,12 +2423,13 @@ static void swap_rel(struct rel *d, struct rel *s)
 static int loadelf(uae_u8 *file, int filelen, uae_u8 **outp, int outsize, struct sheader *sh)
 {
 	int size = sh->size;
+	int asize = (size + ELF_ALIGN_MASK) & ~ELF_ALIGN_MASK;
 	uae_u8 *out = *outp;
 	if (outsize >= 0) {
 		if (!out)
-			out = xcalloc(uae_u8, outsize + size);
+			out = xcalloc(uae_u8, outsize + asize);
 		else
-			out = xrealloc(uae_u8, out, outsize + size);
+			out = xrealloc(uae_u8, out, outsize + asize);
 	} else {
 		outsize = 0;
 	}
@@ -2457,23 +2502,6 @@ static uae_u8 *loadelffile(uae_u8 *file, int filelen, uae_u8 *dbgfile, int debug
 		struct sheader *shp = (struct sheader*)(file + i * sizeof(sheader) + eh->shoff);
 		struct sheader sh;
 		swap_header(&sh, shp);
-		uae_char *name = (uae_char*)(strtabsym + sh.name);
-		if (!strcmp(name, ".gnu_debuglink")) {
-			debuglink = true;
-		}
-	}
-
-	if (debuglink) {
-		;
-	} else {
-		dbgfile = NULL;
-		debugfilelen = 0;
-	}
-
-	for (int i = 0; i < shnum; i++) {
-		struct sheader *shp = (struct sheader*)(file + i * sizeof(sheader) + eh->shoff);
-		struct sheader sh;
-		swap_header(&sh, shp);
 		if (sh.type == SHT_STRTAB) {
 			if (!strtab && i != eh->shstrndx) {
 				strtab = file + sh.offset;
@@ -2491,6 +2519,23 @@ static uae_u8 *loadelffile(uae_u8 *file, int filelen, uae_u8 *dbgfile, int debug
 			}
 		}
 	}
+
+	for (int i = 0; i < shnum; i++) {
+		struct sheader *shp = (struct sheader*)(file + i * sizeof(sheader) + eh->shoff);
+		struct sheader sh;
+		swap_header(&sh, shp);
+		uae_char *name = (uae_char*)(strtabsym + sh.name);
+		if (strtabsym && !strcmp(name, ".gnu_debuglink")) {
+			debuglink = true;
+		}
+	}
+	if (debuglink) {
+		;
+	} else {
+		dbgfile = NULL;
+		debugfilelen = 0;
+	}
+
 	for (int i = 0; i < shnum; i++) {
 		struct sheader *shp = (struct sheader*)(file + i * sizeof(sheader) + eh->shoff);
 		struct sheader sh;
@@ -2520,6 +2565,7 @@ static uae_u8 *loadelffile(uae_u8 *file, int filelen, uae_u8 *dbgfile, int debug
 
 	struct loadelfsection *lelfs = xcalloc(struct loadelfsection, shnum);
 	outsize = 0;
+	int aoutsize = 0;
 	for (int i = 0; i < shnum; i++) {
 		struct sheader *shp = (struct sheader*)&shp_first[i];
 		struct sheader sh;
@@ -2541,9 +2587,10 @@ static uae_u8 *loadelffile(uae_u8 *file, int filelen, uae_u8 *dbgfile, int debug
 				} else {
 					lelfs[i].offsets = outsize;
 					if (relocate)
-						lelfs[i].bases = outsize;
+						lelfs[i].bases = aoutsize;
 				}
 				outsize += sh.size;
+				aoutsize += (sh.size + ELF_ALIGN_MASK) & ~ELF_ALIGN_MASK;
 			}
 		} else if (sh.type == SHT_NOBITS) {
 			if (sh.size) {
@@ -2571,7 +2618,7 @@ static uae_u8 *loadelffile(uae_u8 *file, int filelen, uae_u8 *dbgfile, int debug
 	}
 
 	if (mode == ELFMODE_ROM) {
-		relocate_base = getrombase(outsize);
+		relocate_base = getrombase(aoutsize);
 		if (!relocate_base)
 			goto end;
 		for (int i = 0; i < shnum; i++) {
@@ -2654,6 +2701,7 @@ static uae_u8 *loadelffile(uae_u8 *file, int filelen, uae_u8 *dbgfile, int debug
 						loadelf(file, filelen, &outp, -1, &sh);
 					} else {
 						int newoutsize = loadelf(file, filelen, &outp, outsize, &sh);
+						newoutsize = (newoutsize + ELF_ALIGN_MASK) & ~ELF_ALIGN_MASK;
 						outptr = outp + outsize;
 						outsize = newoutsize;
 						*outsizep = outsize;

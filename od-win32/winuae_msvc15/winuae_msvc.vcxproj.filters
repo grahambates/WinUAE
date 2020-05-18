@@ -5,10 +5,6 @@
       <UniqueIdentifier>{86cfeeb5-a9b0-4c06-bd94-69c258884a66}</UniqueIdentifier>
       <Extensions>cpp;c;cxx;rc;def;r;odl;idl;hpj;bat</Extensions>
     </Filter>
-    <Filter Include="win32\Resource Files">
-      <UniqueIdentifier>{5c4c971a-37b6-4c1e-82f1-d225ebb12808}</UniqueIdentifier>
-      <Extensions>ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe</Extensions>
-    </Filter>
     <Filter Include="common">
       <UniqueIdentifier>{c0e78831-47fa-48a0-a34e-8c3c4410c34b}</UniqueIdentifier>
       <Extensions>cpp;c;cxx;rc;def;r;odl;idl;hpj;bat</Extensions>
@@ -73,6 +69,13 @@
     </Filter>
     <Filter Include="win32\FX11">
       <UniqueIdentifier>{aacd260d-3fd9-43a0-9cac-463ddd009704}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="nasm">
+      <UniqueIdentifier>{9d6d0e7b-76b0-4b28-a9ef-0b69a02528c7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="win32\Shaders\Resource Files">
+      <UniqueIdentifier>{5c4c971a-37b6-4c1e-82f1-d225ebb12808}</UniqueIdentifier>
+      <Extensions>ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe</Extensions>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -937,103 +940,91 @@
     <ClCompile Include="..\..\pcem\mouse_ps2.cpp">
       <Filter>x86</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\disasm.cpp">
+      <Filter>common</Filter>
+    </ClCompile>
     <ClCompile Include="..\barto_gdbserver.cpp">
       <Filter>win32</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\resources\35floppy.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\amigainfo.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\avioutput.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\chip.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\configfile.ico">
-      <Filter>win32\Resource Files</Filter>
-    </None>
-    <None Include="configfile.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\cpu.ico">
-      <Filter>win32\Resource Files</Filter>
-    </None>
-    <None Include="diskimage.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\diskimage.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\Drive.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\expansion.ico">
-      <Filter>win32\Resource Files</Filter>
-    </None>
-    <None Include="expansion.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\file.ico">
-      <Filter>win32\Resource Files</Filter>
-    </None>
-    <None Include="file.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\folder.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\h_arrow.cur">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\icon3.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\joystick.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\lcd.bmp">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\misc.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\move_dow.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\move_up.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\paths.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\port.ico">
-      <Filter>win32\Resource Files</Filter>
-    </None>
-    <None Include="port.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\quickstart.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\root.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\screen.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\sound.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\winuae.ico">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\xarcade-winuae.bmp">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </None>
     <None Include="..\resources\drive_click.wav" />
     <None Include="..\resources\drive_snatch.wav" />
@@ -1043,16 +1034,8 @@
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="..\resources\winuae.rc">
-      <Filter>win32\Resource Files</Filter>
+      <Filter>win32\Shaders\Resource Files</Filter>
     </ResourceCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <Library Include="..\hq2x16.obj" />
-    <Library Include="..\hq2x32.obj" />
-    <Library Include="..\hq3x16.obj" />
-    <Library Include="..\hq3x32.obj" />
-    <Library Include="..\hq4x16.obj" />
-    <Library Include="..\hq4x32.obj" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\resources\resource.h" />
@@ -1078,7 +1061,29 @@
     </FxCompile>
   </ItemGroup>
   <ItemGroup>
-    <Object Include="..\fpux86_80.obj" />
-    <Object Include="..\fpux64_80.obj" />
+    <CustomBuild Include="..\fpux64_80.asm">
+      <Filter>nasm</Filter>
+    </CustomBuild>
+    <CustomBuild Include="..\fpux86_80.asm">
+      <Filter>nasm</Filter>
+    </CustomBuild>
+    <CustomBuild Include="..\hq2x16.asm">
+      <Filter>nasm</Filter>
+    </CustomBuild>
+    <CustomBuild Include="..\hq2x32.asm">
+      <Filter>nasm</Filter>
+    </CustomBuild>
+    <CustomBuild Include="..\hq3x16.asm">
+      <Filter>nasm</Filter>
+    </CustomBuild>
+    <CustomBuild Include="..\hq3x32.asm">
+      <Filter>nasm</Filter>
+    </CustomBuild>
+    <CustomBuild Include="..\hq4x16.asm">
+      <Filter>nasm</Filter>
+    </CustomBuild>
+    <CustomBuild Include="..\hq4x32.asm">
+      <Filter>nasm</Filter>
+    </CustomBuild>
   </ItemGroup>
 </Project>

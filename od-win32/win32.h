@@ -20,12 +20,12 @@
 #define LANG_DLL_FULL_VERSION_MATCH 1
 
 #if WINUAEPUBLICBETA
-#define WINUAEBETA _T("5")
+#define WINUAEBETA _T("3")
 #else
 #define WINUAEBETA _T("")
 #endif
 
-#define WINUAEDATE MAKEBD(2019, 3, 10)
+#define WINUAEDATE MAKEBD(2020, 5, 17)
 
 //#define WINUAEEXTRA _T("AmiKit Preview")
 //#define WINUAEEXTRA _T("Amiga Forever Edition")
@@ -75,6 +75,8 @@ extern void minimizewindow(int monid);
 extern uae_u32 OSDEP_minimize_uae(void);
 extern void updatemouseclip(struct AmigaMonitor*);
 extern void updatewinrect(struct AmigaMonitor*, bool);
+int getdpiformonitor(HMONITOR mon);
+int getdpiforwindow(HWND hwnd);
 
 extern bool resumepaused (int priority);
 extern bool setpaused (int priority);
@@ -90,7 +92,7 @@ extern int sound_available;
 extern TCHAR VersionStr[256];
 extern TCHAR BetaStr[64];
 extern int os_admin, os_64bit, os_vista, os_win7, os_win8, os_win10, cpu_number, os_touch;
-extern BOOL os_dwm_enabled;
+extern BOOL os_dwm_enabled, dpi_aware_v2;
 extern OSVERSIONINFO osVersion;
 extern int paraport_mask;
 extern int gui_active;
@@ -98,6 +100,8 @@ extern int quickstart, configurationcache, saveimageoriginalpath, relativepaths,
 
 extern HKEY hWinUAEKey;
 extern HINSTANCE hInst;
+extern HMODULE userdll;
+extern HMODULE kerneldll;
 extern int af_path_2005;
 extern TCHAR start_path_new1[MAX_DPATH], start_path_new2[MAX_DPATH];
 extern TCHAR bootlogpath[MAX_DPATH];

@@ -1410,16 +1410,13 @@ static void updateleds (struct d3dstruct *d3d)
 
 	for (int y = 0; y < TD_TOTAL_HEIGHT * d3d->statusbar_vx; y++) {
 		uae_u8 *buf = (uae_u8*)locked.pBits + y * locked.Pitch;
-		statusline_single_erase(d3d - d3ddata, buf, 32 / 8, y, d3d->ledwidth * d3d->statusbar_hx);
+		statusline_single_erase(d3d - d3ddata, buf, 32 / 8, y, d3d->ledwidth);
 	}
 	statusline_render(d3d - d3ddata, (uae_u8*)locked.pBits, 32 / 8, locked.Pitch, d3d->ledwidth, d3d->ledheight, rc, gc, bc, a);
 
-	int y = 0;
-	for (int yy = 0; yy < d3d->statusbar_vx * TD_TOTAL_HEIGHT; yy++) {
-		uae_u8 *buf = (uae_u8*)locked.pBits + yy * locked.Pitch;
+	for (int y = 0; y < TD_TOTAL_HEIGHT * d3d->statusbar_vx; y++) {
+		uae_u8 *buf = (uae_u8*)locked.pBits + y * locked.Pitch;
 		draw_status_line_single(d3d - d3ddata, buf, 32 / 8, y, d3d->ledwidth, rc, gc, bc, a);
-		if ((yy % d3d->statusbar_vx) == 0)
-			y++;
 	}
 
 	d3d->ledtexture->UnlockRect (0);
@@ -1427,13 +1424,12 @@ static void updateleds (struct d3dstruct *d3d)
 
 static int createledtexture (struct d3dstruct *d3d)
 {
+	struct AmigaMonitor *mon = &AMonitors[d3d - d3ddata];
+
+	d3d->statusbar_hx = d3d->statusbar_vx = statusline_set_multiplier(mon->monitor_id, d3d->tout_w, d3d->tout_h);
 	d3d->ledwidth = d3d->window_w;
-	d3d->ledheight = TD_TOTAL_HEIGHT;
-	if (d3d->statusbar_hx < 1)
-		d3d->statusbar_hx = 1;
-	if (d3d->statusbar_vx < 1)
-		d3d->statusbar_vx = 1;
-	d3d->ledtexture = createtext (d3d, d3d->ledwidth * d3d->statusbar_hx, d3d->ledheight * d3d->statusbar_vx, D3DFMT_A8R8G8B8);
+	d3d->ledheight = TD_TOTAL_HEIGHT * d3d->statusbar_vx;
+	d3d->ledtexture = createtext(d3d, d3d->ledwidth, d3d->ledheight * d3d->statusbar_vx, D3DFMT_A8R8G8B8);
 	if (!d3d->ledtexture)
 		return 0;
 	return 1;
@@ -1769,7 +1765,7 @@ static int createmask2texture (struct d3dstruct *d3d, const TCHAR *filename)
 		d3d->mask2textureled_power_dim->Release();
 	d3d->mask2textureled_power_dim = NULL;
 
-	if (filename[0] == 0 || WIN32GFX_IsPicassoScreen(mon))
+	if (filename[0] == 0)
 		return 0;
 
 	zf = NULL;
@@ -2111,7 +2107,7 @@ end:
 	return 0;
 }
 
-static bool xD3D_getscalerect(int monid, float *mx, float *my, float *sx, float *sy)
+static bool xD3D_getscalerect(int monid, float *mx, float *my, float *sx, float *sy, int width, int height)
 {
 	struct d3dstruct *d3d = &d3ddata[monid];
 	struct vidbuf_description *vidinfo = &adisplays[monid].gfxvidinfo;
@@ -2122,8 +2118,8 @@ static bool xD3D_getscalerect(int monid, float *mx, float *my, float *sx, float 
 	float mw = d3d->mask2rect.right - d3d->mask2rect.left;
 	float mh = d3d->mask2rect.bottom - d3d->mask2rect.top;
 
-	float mxt = (float)mw / vidinfo->outbuffer->inwidth2;
-	float myt = (float)mh / vidinfo->outbuffer->inheight2;
+	float mxt = (float)mw / width;
+	float myt = (float)mh / height;
 
 	*mx = d3d->mask2texture_minusx / mxt;
 	*my = d3d->mask2texture_minusy / myt;
@@ -3727,7 +3723,7 @@ static void D3D_render2(struct d3dstruct *d3d, int mode)
 		}
 		if (d3d->ledtexture && (((currprefs.leds_on_screen & STATUSLINE_RTG) && WIN32GFX_IsPicassoScreen(mon)) || ((currprefs.leds_on_screen & STATUSLINE_CHIPSET) && !WIN32GFX_IsPicassoScreen(mon)))) {
 			int slx, sly;
-			statusline_getpos(d3d - d3ddata, &slx, &sly, d3d->window_w, d3d->window_h, d3d->statusbar_hx, d3d->statusbar_vx);
+			statusline_getpos(d3d - d3ddata, &slx, &sly, d3d->window_w, d3d->window_h);
 			v.x = slx;
 			v.y = sly;
 			v.z = 0;

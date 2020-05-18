@@ -28,6 +28,7 @@ const struct mem_labels int_labels[] =
 	{ _T("TRACE"),      0x0024 },
 	{ _T("LINEA EMU"),  0x0028 },
 	{ _T("LINEF EMU"),  0x002C },
+	{ _T("FORMAT ERR"), 0x0038 },
 	{ _T("INT Uninit"), 0x003C },
 	{ _T("INT Unjust"), 0x0060 },
 	{ _T("Lvl 1 Int"),  0x0064 },
@@ -59,6 +60,22 @@ const struct mem_labels trap_labels[] =
 	{ _T("TRAP 14"),    0x00B8 },
 	{ _T("TRAP 15"),    0x00BC },
 	{ 0, 0 }
+};
+
+const struct mem_labels extraexp_labels[] =
+{
+	{ _T("FP BSUN"),	0x00c0 },
+	{ _T("FP INEXACT"), 0x00c4 },
+	{ _T("FP DIV BY 0"),0x00c8 },
+	{ _T("FP UNDERF"),	0x00cc },
+	{ _T("FP OPERR"),	0x00d0 },
+	{ _T("FP OVERF"),	0x00d4 },
+	{ _T("FP SNAN"),	0x00d8 },
+	{ _T("FP UNIMP DT"),0x00dc },
+	{ _T("MMU CNFERR"),	0x00e0 },
+	{ _T("UNIMP EA"),   0x00f0 },
+	{ _T("UNIMP INT"),	0x00f4 },
+	{ NULL, 0 }
 };
 
 const struct mem_labels mem_labels[] =
@@ -123,7 +140,7 @@ const struct customData custd[] =
 	{ _T("VHPOSR"),   0xdff006, 0 }, /* Read vert and horiz position of beam */
 	{ _T("DSKDATR"),  0xdff008, CD_NONE }, /* Disk data early read (dummy address) */
 	{ _T("JOY0DAT"),  0xdff00A, 0 }, /* Joystick-mouse 0 data (vert,horiz) */
-	{ _T("JOT1DAT"),  0xdff00C, 0 }, /* Joystick-mouse 1 data (vert,horiz) */
+	{ _T("JOY1DAT"),  0xdff00C, 0 }, /* Joystick-mouse 1 data (vert,horiz) */
 	{ _T("CLXDAT"),   0xdff00E, 0 }, /* Collision data reg. (read and clear) */
 	{ _T("ADKCONR"),  0xdff010, 0 }, /* Audio,disk control register read */
 	{ _T("POT0DAT"),  0xdff012, 0 }, /* Pot counter pair 0 data (vert,horiz) */
@@ -159,7 +176,7 @@ const struct customData custd[] =
 	{ _T("BLTBPTL"),  0xdff04E, CD_WO | CD_DMA_PTR }, /* Blitter pointer to source B (low 15 bits) */
 	{ _T("BLTAPTH"),  0xdff050, CD_WO | CD_DMA_PTR }, /* Blitter pointer to source A (high 5 bits) */
 	{ _T("BLTAPTL"),  0xdff052, CD_WO | CD_DMA_PTR }, /* Blitter pointer to source A (low 15 bits) */
-	{ _T("BPTDPTH"),  0xdff054, CD_WO | CD_DMA_PTR }, /* Blitter pointer to destn  D (high 5 bits) */
+	{ _T("BLTDPTH"),  0xdff054, CD_WO | CD_DMA_PTR }, /* Blitter pointer to destn  D (high 5 bits) */
 	{ _T("BLTDPTL"),  0xdff056, CD_WO | CD_DMA_PTR }, /* Blitter pointer to destn  D (low 15 bits) */
 	{ _T("BLTSIZE"),  0xdff058, CD_WO }, /* Blitter start and size (win/width,height) */
 	{ _T("BLTCON0L"), 0xdff05A, CD_WO | CD_ECS_AGNUS }, /* Blitter control 0 lower 8 bits (minterms) */

@@ -257,6 +257,10 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 
 	if (mon->screen_is_picasso) {
 		getrtgfilterrect2(monid, sr, dr, zr, dst_width, dst_height);
+		if (D3D_getscalerect && D3D_getscalerect(monid, &mrmx, &mrmy, &mrsx, &mrsy, dst_width, dst_height)) {
+			sizeoffset(dr, zr, mrmx, mrmy);
+			OffsetRect(dr, mrsx, mrsy);
+		}
 		return;
 	}
 
@@ -270,7 +274,7 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 	extrah = -ahs * (filter_vert_zoom - currprefs.gf[ad->picasso_on].gfx_filteroverlay_overscan * 10) / 2.0f;
 
 	extraw2 = 0;
-	if (D3D_getscalerect && D3D_getscalerect(0, &mrmx, &mrmy, &mrsx, &mrsy)) {
+	if (D3D_getscalerect && D3D_getscalerect(monid, &mrmx, &mrmy, &mrsx, &mrsy, avidinfo->outbuffer->inwidth2, avidinfo->outbuffer->inheight2)) {
 		extraw2 = mrmx;
 		//extrah -= mrmy;
 	}
@@ -356,7 +360,7 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 					cx = 28 << currprefs.gfx_resolution;
 					cy = 10 << currprefs.gfx_vresolution;
 					cw -= 40 << currprefs.gfx_resolution;
-					ch -= 25 << currprefs.gfx_vresolution;
+					ch -= 20 << currprefs.gfx_vresolution;
 				}
 				set_custom_limits (cw, ch, cx, cy);
 				store_custom_limits (cw, ch, cx, cy);
@@ -454,7 +458,14 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 
 			cv = 1;
 
-		} else if (scalemode == AUTOSCALE_CENTER || scalemode == AUTOSCALE_RESIZE) {
+		} else if (scalemode == AUTOSCALE_CENTER) {
+
+			cv = get_custom_limits(&cw, &ch, &cx, &cy, &crealh);
+			if (cv) {
+				store_custom_limits(cw, ch, cx, cy);
+			}
+
+		} else if (scalemode == AUTOSCALE_RESIZE) {
 
 			cv = get_custom_limits (&cw, &ch, &cx, &cy, &crealh);
 			if (cv) {
@@ -704,7 +715,7 @@ cont:
 
 end:
 
-	if (D3D_getscalerect && D3D_getscalerect(0, &mrmx, &mrmy, &mrsx, &mrsy)) {
+	if (D3D_getscalerect && D3D_getscalerect(monid, &mrmx, &mrmy, &mrsx, &mrsy, avidinfo->outbuffer->inwidth2, avidinfo->outbuffer->inheight2)) {
 		sizeoffset (dr, zr, mrmx, mrmy);
 		OffsetRect (dr, mrsx, mrsy);
 	}
@@ -793,15 +804,16 @@ static void statusline(int monid)
 
 	if (!(currprefs.leds_on_screen & STATUSLINE_CHIPSET) || !tempsurf)
 		return;
-	statusline_getpos(monid, &slx, &sly, dst_width, dst_height, 1, 1);
+	statusline_getpos(monid, &slx, &sly, dst_width, dst_height);
+	int m = statusline_get_multiplier(monid);
 	lx = dst_width;
 	ly = dst_height;
-	SetRect(&sr, slx, 0, slx + lx, TD_TOTAL_HEIGHT);
-	SetRect(&dr, slx, sly, slx + lx, sly + TD_TOTAL_HEIGHT);
+	SetRect(&sr, slx, 0, slx + lx, TD_TOTAL_HEIGHT * m);
+	SetRect(&dr, slx, sly, slx + lx, sly + TD_TOTAL_HEIGHT * m);
 	DirectDraw_BlitRect(tempsurf, &sr, NULL, &dr);
 	if (DirectDraw_LockSurface(tempsurf, &desc)) {
 		statusline_render(0, (uae_u8*)desc.lpSurface, dst_depth / 8, desc.lPitch, lx, ly, rc, gc, bc, NULL);
-		for (y = 0; y < TD_TOTAL_HEIGHT; y++) {
+		for (y = 0; y < TD_TOTAL_HEIGHT * m; y++) {
 			uae_u8 *buf = (uae_u8*)desc.lpSurface + y * desc.lPitch;
 			draw_status_line_single(monid, buf, dst_depth / 8, y, lx, rc, gc, bc, NULL);
 		}
@@ -874,6 +886,7 @@ bool S2X_init(int monid, int dw, int dh, int dd)
 	d3d = currprefs.gfx_api;
 	changed_prefs.leds_on_screen |= STATUSLINE_TARGET;
 	currprefs.leds_on_screen |= STATUSLINE_TARGET;
+	statusline_set_multiplier(monid, dw, dh);
 
 	if (d3d)
 		dd = amiga_depth2;

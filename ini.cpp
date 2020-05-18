@@ -347,7 +347,14 @@ bool ini_getval_multi(struct ini_data *ini, const TCHAR *section, const TCHAR *k
 	TCHAR *out2 = NULL;
 	if (!ini_getstring_multi(ini, section, key, &out2, ctx))
 		return false;
-	*v = _tstol(out2);
+	if (out2[0] == 0)
+		return false;
+	if (_tcslen(out2) > 2 && out2[0] == '0' && _totupper(out2[1]) == 'X') {
+		TCHAR *endptr;
+		*v = _tcstol(out2 + 2, &endptr, 16);
+	} else {
+		*v = _tstol(out2);
+	}
 	xfree(out2);
 	return true;
 }
@@ -355,6 +362,24 @@ bool ini_getval_multi(struct ini_data *ini, const TCHAR *section, const TCHAR *k
 bool ini_getval(struct ini_data *ini, const TCHAR *section, const TCHAR *key, int *v)
 {
 	return ini_getval_multi(ini, section, key, v, NULL);
+}
+
+bool ini_getbool(struct ini_data *ini, const TCHAR *section, const TCHAR *key, bool *v)
+{
+	TCHAR *s = NULL;
+	if (!ini_getstring(ini, section, key, &s))
+		return false;
+	if (!_tcsicmp(s, _T("true")) || !_tcsicmp(s, _T("1"))) {
+		xfree(s);
+		*v = true;
+		return true;
+	}
+	if (!_tcsicmp(s, _T("false")) || !_tcsicmp(s, _T("0"))) {
+		xfree(s);
+		*v = false;
+		return true;
+	}
+	return false;
 }
 
 bool ini_getdata_multi(struct ini_data *ini, const TCHAR *section, const TCHAR *key, uae_u8 **out, int *size, struct ini_context *ctx)
@@ -421,6 +446,30 @@ bool ini_getdata(struct ini_data *ini, const TCHAR *section, const TCHAR *key, u
 	return ini_getdata_multi(ini, section, key, out, size, NULL);
 }
 
+bool ini_getsection(struct ini_data *ini, int idx, TCHAR **section)
+{
+	const TCHAR *sptr = NULL;
+	for (int c = 0; c < ini->inilines; c++) {
+		struct ini_line *il = ini->inidata[c];
+		if (il) {
+			if (!sptr) {
+				sptr = il->section;
+			}
+			if (!sptr)
+				continue;
+			if (_tcsicmp(sptr, il->section)) {
+				idx--;
+				if (idx < 0) {
+					*section = my_strdup(il->section);
+					return true;
+				}
+				sptr = il->section;
+			}
+		}
+	}
+	return false;
+}
+
 bool ini_getsectionstring(struct ini_data *ini, const TCHAR *section, int idx, TCHAR **keyout, TCHAR **valout)
 {
 	for (int c = 0; c < ini->inilines; c++) {
@@ -444,6 +493,11 @@ bool ini_getsectionstring(struct ini_data *ini, const TCHAR *section, int idx, T
 void ini_setcurrentasstart(struct ini_data *ini, struct ini_context *ctx)
 {
 	ctx->start = ctx->lastpos;
+}
+
+void ini_setnextasstart(struct ini_data *ini, struct ini_context *ctx)
+{
+	ctx->start = ctx->lastpos + 1;
 }
 
 void ini_setlast(struct ini_data *ini, const TCHAR *section, const TCHAR *key, struct ini_context *ctx)

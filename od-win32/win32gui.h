@@ -18,39 +18,120 @@ int dragdrop (HWND hDlg, HDROP hd, struct uae_prefs *prefs, int currentpage);
 UAEREG *read_disk_history (int type);
 void write_disk_history (void);
 
+#define MAX_GUIIDPARAMS 16
+#define MAX_DLGID 100
+
+struct dlgstore
+{
+	RECT r;
+	UINT wc;
+	HWND h;
+};
+
+struct dlgcontext
+{
+	struct dlgstore dstore[MAX_DLGID];
+	int dlgstorecnt;
+};
+
+/* Dialog info structure */
+typedef struct
+{
+	HWND      hwndFocus;   /* Current control with focus */
+	HFONT     hUserFont;   /* Dialog font */
+	HMENU     hMenu;       /* Dialog menu */
+	UINT      xBaseUnit;   /* Dialog units (depends on the font) */
+	UINT      yBaseUnit;
+	INT       idResult;    /* EndDialog() result / default pushbutton ID */
+	UINT      flags;       /* EndDialog() called for this dialog */
+} DIALOGINFO;
+
+/* Dialog template */
+typedef struct
+{
+	DWORD      style;
+	DWORD      exStyle;
+	DWORD      helpId;
+	WORD       nbItems;
+	short      x;
+	short      y;
+	short      cx;
+	short      cy;
+	LPCWSTR    menuName;
+	LPCWSTR    className;
+	LPCWSTR    caption;
+	WORD       pointSize;
+	WORD       weight;
+	BOOL       italic;
+	LPCWSTR    faceName;
+	BOOL       dialogEx;
+} DLG_TEMPLATE;
+
+struct newreswnd
+{
+	HWND hwnd;
+	uae_s16 x, y, w, h;
+};
+
 struct newresource
 {
-    LPCDLGTEMPLATEW resource;
-    HINSTANCE inst;
+	HINSTANCE inst;
+	LPCDLGTEMPLATEW sourceresource;
+	int sourcesize;
+	
+	LPCDLGTEMPLATEW resource;
     int size;
     int tmpl;
-    int width, height;
+    int x, y, width, height;
+	int setparam_id[MAX_GUIIDPARAMS];
+	struct newreswnd hwnds[MAX_DLGID];
+	int hwndcnt;
+	int listviewcnt;
+	int setparamcnt;
+	DIALOGINFO dinfo;
+	DLG_TEMPLATE dtmpl;
+	DLGPROC dlgproc;
+	LPARAM param;
+	HWND hwnd;
+	struct newresource *parent, *child;
+	int unitx, unity;
+	bool fontchanged;
+	int fontsize;
 };
+
+#define MIN_GUI_INTERNAL_WIDTH 512
+#define MIN_GUI_INTERNAL_HEIGHT 400
 
 #define GUI_INTERNAL_WIDTH 800
 #define GUI_INTERNAL_HEIGHT 600
 #define GUI_INTERNAL_FONT 8
 
 extern struct uae_prefs workprefs;
+extern int dialog_inhibit;
 
-extern struct newresource *scaleresource (struct newresource *res, HWND, int, int, DWORD, bool);
+HWND x_CreateDialogIndirectParam(HINSTANCE hInstance, LPCDLGTEMPLATE lpTemplate, HWND hWndParent, DLGPROC lpDialogFunc, LPARAM lParamInit, struct newresource*);
+void getguipos(int *xp, int *yp);
+extern int scaleresource(struct newresource*, struct dlgcontext *dctx, HWND, int, int, DWORD, int);
+extern void rescaleresource(struct newresource*, bool);
 extern void freescaleresource (struct newresource*);
-extern void scaleresource_setmult (HWND hDlg, int w, int h, int fs);
-extern void scaleresource_getmult (int *mx, int *my);
+extern void scaleresource_setsize (int w, int h, int fs);
 extern HWND CustomCreateDialog (int templ, HWND hDlg, DLGPROC proc);
 extern INT_PTR CustomDialogBox (int templ, HWND hDlg, DLGPROC proc);
 extern struct newresource *getresource (int tmpl);
-extern void scaleresource_init (const TCHAR*, int);
+extern void scaleresource_init(const TCHAR*, int);
 extern int scaleresource_choosefont (HWND hDlg, int fonttype);
-extern void scaleresource_setdefaults (void);
-extern void scaleresource_setfont (HWND hDlg);
-extern void scaleresource_getdpimult (double*, double*, int*, int*);
+extern void scaleresource_setdefaults(HWND);
 extern void scalaresource_listview_font_info(int*);
 extern int getscaledfontsize(int size);
-extern bool show_box_art(const TCHAR*);
+extern void scaleresource_modification(HWND);
+extern bool show_box_art(const TCHAR*, const TCHAR*);
 extern void move_box_art_window(void);
 extern void close_box_art_window(void);
 extern LRESULT CALLBACK BoxArtWindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 extern int max_visible_boxart_images;
 extern int stored_boxart_window_width;
+extern int stored_boxart_window_width_fsgui;
+extern int calculated_boxart_window_width;
+void getextendedframebounds(HWND hwnd, RECT *r);
+void reset_box_art_window(void);
 #endif

@@ -99,15 +99,15 @@
 #endif
 #include "ini.h"
 #include "specialmonitors.h"
+#include "gayle.h"
 
 #define GUI_SCALE_DEFAULT 100
-#define MIN_GUI_INTERNAL_WIDTH 512
-#define MIN_GUI_INTERNAL_HEIGHT 400
+
 
 #define ARCHIVE_STRING _T("*.zip;*.7z;*.rar;*.lha;*.lzh;*.lzx")
 
 #define DISK_FORMAT_STRING _T("(*.adf;*.adz;*.gz;*.dms;*.ipf;*.scp;*.fdi;*.exe)\0*.adf;*.adz;*.gz;*.dms;*.ipf;*.scp;*.fdi;*.exe;*.ima;*.wrp;*.dsq;*.st;*.raw;") ARCHIVE_STRING _T("\0")
-#define ROM_FORMAT_STRING _T("(*.rom;*.roz;*.a500;*.a600;*.a1200;*.a4000)\0*.rom;*.roz;*.a500;*.a600;*.a1200;*.a4000;") ARCHIVE_STRING _T("\0")
+#define ROM_FORMAT_STRING _T("(*.rom;*.roz;*.bin;*.a500;*.a600;*.a1200;*.a4000)\0*.rom;*.roz;*.bin;*.a500;*.a600;*.a1200;*.a4000;") ARCHIVE_STRING _T("\0")
 #define USS_FORMAT_STRING_RESTORE _T("(*.uss)\0*.uss;*.gz;") ARCHIVE_STRING _T("\0")
 #define USS_FORMAT_STRING_SAVE _T("(*.uss)\0*.uss\0")
 #define HDF_FORMAT_STRING _T("(*.hdf;*.vhd;*.rdf;*.hdz;*.rdz;*.chd)\0*.hdf;*.vhd;*.rdf;*.hdz;*.rdz;*.chd\0")
@@ -130,6 +130,8 @@ static int currentpage = -1;
 static int qs_request_reset;
 static int qs_override;
 int gui_active, gui_left;
+static struct newresource *panelresource;
+int dialog_inhibit;
 
 #undef HtmlHelp
 #ifndef HH_DISPLAY_TOPIC
@@ -246,6 +248,7 @@ static const int INPUTMAP_ID = MAX_C_PAGES - 1;
 static HWND pages[MAX_C_PAGES];
 #define MAX_IMAGETOOLTIPS 10
 static HWND guiDlg, panelDlg, ToolTipHWND;
+static struct dlgcontext  maindctx;
 static HACCEL hAccelTable;
 static HWND customDlg;
 static int customDlgType;
@@ -321,7 +324,7 @@ static void parsefilepath(TCHAR *path, int maxlen)
 	xfree(tmp);
 }
 
-static int scsiromselect_table[256];
+static int scsiromselect_table[300];
 
 static bool getcomboboxtext(HWND hDlg, int id, TCHAR *out, int maxlen)
 {
@@ -366,9 +369,20 @@ static int gui_get_string_cursor(int *table, HWND hDlg, int item)
 	return table[posn];
 }
 
+static void commonproc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	if (msg == WM_DPICHANGED) {
+		RECT *const r = (RECT *)lParam;
+		SetWindowPos(hDlg, NULL, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+}
+
 static int stringboxdialogactive;
 static INT_PTR CALLBACK StringBoxDialogProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+	if (dialog_inhibit)
+		return 0;
+
 	switch(msg)
 	{
 	case WM_DESTROY:
@@ -394,6 +408,7 @@ static INT_PTR CALLBACK StringBoxDialogProc (HWND hDlg, UINT msg, WPARAM wParam,
 		}
 		break;
 	}
+	commonproc(hDlg, msg, wParam, lParam);
 	return FALSE;
 }
 
@@ -1692,6 +1707,9 @@ static bool infoboxdialogstate;
 static HWND infoboxhwnd;
 static INT_PTR CALLBACK InfoBoxDialogProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+	if (dialog_inhibit)
+		return 0;
+
 	switch(msg)
 	{
 	case WM_DESTROY:
@@ -1728,6 +1746,7 @@ static INT_PTR CALLBACK InfoBoxDialogProc (HWND hDlg, UINT msg, WPARAM wParam, L
 		}
 		break;
 	}
+	commonproc(hDlg, msg, wParam, lParam);
 	return FALSE;
 }
 static bool scan_rom_hook (const TCHAR *name, int line)
@@ -2182,13 +2201,13 @@ end:
 	return ret;
 }
 
-static void box_art_check(struct uae_prefs *p)
+static void box_art_check(struct uae_prefs *p, const TCHAR *config)
 {
 	TCHAR tmp1[MAX_DPATH];
 	if (cfgfile_detect_art(p, tmp1)) {
-		show_box_art(tmp1);
+		show_box_art(tmp1, config);
 	} else {
-		show_box_art(NULL);
+		show_box_art(NULL, NULL);
 	}
 }
 
@@ -2257,6 +2276,7 @@ int target_cfgfile_load (struct uae_prefs *p, const TCHAR *filename, int type, i
 	TCHAR tmp1[MAX_DPATH], tmp2[MAX_DPATH];
 	TCHAR fname[MAX_DPATH], cname[MAX_DPATH];
 
+	error_log(NULL);
 	_tcscpy (fname, filename);
 	cname[0] = 0;
 	if (!zfile_exists (fname)) {
@@ -2304,7 +2324,7 @@ int target_cfgfile_load (struct uae_prefs *p, const TCHAR *filename, int type, i
 		return v;
 	if (cname[0])
 		_tcscpy(config_filename, cname);
-	box_art_check(p);
+	box_art_check(p, fname);
 	for (i = 1; i <= 2; i++) {
 		if (type != i) {
 			size = sizeof (ct);
@@ -2326,7 +2346,8 @@ int target_cfgfile_load (struct uae_prefs *p, const TCHAR *filename, int type, i
 }
 
 static int gui_width, gui_height;
-static int gui_fullscreen;
+int gui_fullscreen;
+static RECT gui_fullscreen_rect;
 static bool gui_resize_enabled;
 static bool gui_resize_allowed;
 
@@ -2447,6 +2468,9 @@ static void gui_to_prefs(void)
 {
 	/* Always copy our prefs to changed_prefs, ... */
 	copy_prefs(&workprefs, &changed_prefs);
+	if (quit_program == -UAE_RESET_HARD) {
+		copy_prefs(&workprefs, &currprefs);
+	}
 	/* filesys hack */
 	currprefs.mountitems = changed_prefs.mountitems;
 	memcpy (&currprefs.mountconfig, &changed_prefs.mountconfig, MOUNT_CONFIG_SIZE * sizeof (struct uaedev_config_info));
@@ -4623,7 +4647,7 @@ static const struct miscentry misclist[] = {
 	{ 0, 1, _T("Native on-screen display"), NULL, &workprefs.leds_on_screen, STATUSLINE_CHIPSET, STATUSLINE_CHIPSET },
 	{ 0, 1, _T("RTG on-screen display"), NULL, &workprefs.leds_on_screen, STATUSLINE_RTG, STATUSLINE_RTG },
 	{ 0, 0, _T("Create winuaelog.txt log"), &workprefs.win32_logfile },
-	{ 0, 0, _T("Log illegal memory accesses"), &workprefs.illegal_mem },
+	{ 0, 1, _T("Log illegal memory accesses"), &workprefs.illegal_mem },
 	{ 0, 0, _T("Blank unused displays"), &workprefs.win32_blankmonitors },
 	{ 0, 0, _T("Start mouse uncaptured"), &workprefs.win32_start_uncaptured  },
 	{ 0, 0, _T("Start minimized"), &workprefs.win32_start_minimized  },
@@ -4637,6 +4661,7 @@ static const struct miscentry misclist[] = {
 	{ 0, 1, _T("Warn when attempting to close window"), &workprefs.win32_warn_exit },
 	{ 0, 1, _T("Power led dims when audio filter is disabled"), NULL, &workprefs.power_led_dim, 128, 0 },
 	{ 0, 1, _T("Automatically capture mouse when window is activated"), &workprefs.win32_capture_always },
+	{ 0, 0, _T("Debug memory space"), &workprefs.debug_mem },
 	{ 0, NULL }
 };
 
@@ -5071,6 +5096,9 @@ static void InitializeListView (HWND hDlg)
 					else if (canbang && (aci->addrbank->flags & ABFLAG_ALLOCINDIRECT))
 						lvstruct.lParam |= 16;
 				}
+				if (aci->rc && aci->ert && (aci->ert->deviceflags & EXPANSIONTYPE_PCMCIA) && !aci->rc->inserted) {
+					lvstruct.lParam |= 2;
+				}
 			}
 			lvstruct.iItem = i;
 			lvstruct.iSubItem = 0;
@@ -5359,18 +5387,20 @@ static void InitializeListView (HWND hDlg)
 				}
 				harddisktype (volname_str, ci);
 				_tcscpy (bootpri_str, _T("n/a"));
-			} else if (ctype == HD_CONTROLLER_TYPE_PCMCIA) {
-				if (ci->controller_type_unit == 0) {
-					_tcscpy (blocksize_str, _T("n/a"));
-					_tcscpy(devname_str, _T("PCMCIA SRAM"));
-					_tcscpy (volname_str, _T("PCMCIA"));
-					_tcscpy (bootpri_str, _T("n/a"));
+			} else if (ctype >= HD_CONTROLLER_TYPE_CUSTOM_FIRST && ctype <= HD_CONTROLLER_TYPE_CUSTOM_LAST) {
+				TCHAR sid[8];
+				const struct expansionromtype *ert = get_unit_expansion_rom(ctype);
+				_stprintf(sid, _T("%d"), ci->controller_unit);
+				if (ert) {
+					if (ci->controller_type_unit == 0)
+						_stprintf(devname_str, _T("%s:%s"), ert->friendlyname, sid);
+					else
+						_stprintf(devname_str, _T("%s:%s/%d"), ert->friendlyname, sid, ci->controller_type_unit + 1);
 				} else {
-					_tcscpy (blocksize_str, _T("n/a"));
-					_tcscpy(devname_str, _T("PCMCIA IDE"));
-					_tcscpy (volname_str, _T("PCMCIA"));
-					_tcscpy (bootpri_str, _T("n/a"));
+					_stprintf(devname_str, _T("PCMCIA"));
 				}
+				harddisktype(volname_str, ci);
+				_tcscpy(bootpri_str, _T("n/a"));
 			} else if (type == FILESYS_HARDFILE) {
 				_stprintf (blocksize_str, _T("%d"), ci->blocksize);
 				_tcscpy (devname_str, ci->devname);
@@ -5627,6 +5657,9 @@ static INT_PTR CALLBACK InfoSettingsProc (HWND hDlg, UINT msg, WPARAM wParam, LP
 {
 	static int recursive = 0;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 	case WM_INITDIALOG:
@@ -5714,6 +5747,7 @@ static INT_PTR CALLBACK InfoSettingsProc (HWND hDlg, UINT msg, WPARAM wParam, LP
 		recursive--;
 		break;
 	}
+	commonproc(hDlg, msg, wParam, lParam);
 	return FALSE;
 }
 
@@ -5933,7 +5967,11 @@ static void InitializeConfig (HWND hDlg, struct ConfigStruct *config)
 	} else {
 		SetDlgItemText (hDlg, IDC_EDITDESCRIPTION, config->Description);
 	}
-	show_box_art(config && config->Artpath[0] ? config->Artpath : NULL);
+	if (config && config->Artpath[0]) {
+		show_box_art(config->Artpath, config->Name);
+	} else {
+		show_box_art(NULL, NULL);
+	}
 }
 
 static void DeleteConfigTree (HWND hDlg)
@@ -6174,12 +6212,14 @@ static INT_PTR CALLBACK LoadSaveDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPA
 	static int recursive;
 	static struct ConfigStruct *config;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 	case WM_INITDIALOG:
 	{
 		recursive++;
-		scaleresource_setfont(hDlg);
 		if (!configstore) {
 			DeleteConfigTree(hDlg);
 			CreateConfigStore(NULL, FALSE);
@@ -6203,7 +6243,11 @@ static INT_PTR CALLBACK LoadSaveDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPA
 
 	case WM_USER + 1:
 		if (config) {
-			show_box_art(config && config->Artpath[0] ? config->Artpath : NULL);
+			if (config->Artpath[0]) {
+				show_box_art(config->Artpath, config->Name);
+			} else {
+				show_box_art(NULL, NULL);
+			}
 		}
 		break;
 
@@ -6299,6 +6343,9 @@ static INT_PTR CALLBACK ErrorLogProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM
 	CHARFORMAT CharFormat;
 	TCHAR *err;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg) {
 	case WM_COMMAND:
 		if (wParam == IDOK) {
@@ -6323,6 +6370,7 @@ static INT_PTR CALLBACK ErrorLogProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM
 		SendDlgItemMessage (hDlg, IDC_ERRORLOGMESSAGE, EM_SETCHARFORMAT, SCF_ALL, (LPARAM) & CharFormat);
 		return TRUE;
 	}
+	commonproc(hDlg, msg, wParam, lParam);
 	return FALSE;
 }
 
@@ -6332,6 +6380,9 @@ static INT_PTR CALLBACK ContributorsProc (HWND hDlg, UINT msg, WPARAM wParam, LP
 	TCHAR szContributors1[MAX_CONTRIBUTORS_LENGTH];
 	TCHAR szContributors2[MAX_CONTRIBUTORS_LENGTH];
 	TCHAR szContributors[MAX_CONTRIBUTORS_LENGTH * 2];
+
+	if (dialog_inhibit)
+		return 0;
 
 	switch (msg) {
 	case WM_COMMAND:
@@ -6356,6 +6407,7 @@ static INT_PTR CALLBACK ContributorsProc (HWND hDlg, UINT msg, WPARAM wParam, LP
 		SendDlgItemMessage (hDlg, IDC_CONTRIBUTORS, EM_SETCHARFORMAT, SCF_ALL, (LPARAM) & CharFormat);
 		return TRUE;
 	}
+	commonproc(hDlg, msg, wParam, lParam);
 	return FALSE;
 }
 
@@ -6392,9 +6444,6 @@ static void SetupRichText(HWND hDlg, urlinfo *url)
 {
 	CHARFORMAT CharFormat;
 	CharFormat.cbSize = sizeof (CharFormat);
-	int my;
-
-	scaleresource_getmult (NULL, &my);
 
 	SetDlgItemText (hDlg, url->id, url->display);
 	SendDlgItemMessage (hDlg, url->id, EM_GETCHARFORMAT, 0, (LPARAM)&CharFormat);
@@ -6726,11 +6775,13 @@ static INT_PTR CALLBACK PathsDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM
 	int val, selpath = 0;
 	TCHAR tmp[MAX_DPATH];
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 	case WM_INITDIALOG:
 		recursive++;
-		scaleresource_setfont (hDlg);
 		pages[PATHS_ID] = hDlg;
 		setac (hDlg, IDC_PATHS_ROM);
 		setac (hDlg, IDC_PATHS_CONFIG);
@@ -7290,11 +7341,13 @@ static INT_PTR CALLBACK QuickstartDlgProc (HWND hDlg, UINT msg, WPARAM wParam, L
 	static int doinit;
 	LRESULT val;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch(msg)
 	{
 	case WM_INITDIALOG:
 		{
-			scaleresource_setfont (hDlg);
 			int ids[] = { IDC_DF0TEXTQ, IDC_DF1TEXTQ, -1 };
 			pages[QUICKSTART_ID] = hDlg;
 			currentpage = QUICKSTART_ID;
@@ -7509,10 +7562,12 @@ static void init_aboutdlg (HWND hDlg)
 
 static INT_PTR CALLBACK AboutDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+	if (dialog_inhibit)
+		return 0;
+
 	switch( msg )
 	{
 	case WM_INITDIALOG:
-		scaleresource_setfont (hDlg);
 		pages[ABOUT_ID] = hDlg;
 		currentpage = ABOUT_ID;
 		init_aboutdlg (hDlg);
@@ -8389,13 +8444,6 @@ static void values_from_displaydlg (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 		SendDlgItemMessage (hDlg, IDC_FRAMERATE2, TBM_SETPOS, TRUE, (LPARAM)cr->rate);
 	}
 
-	gm->gfx_size_win.width = GetDlgItemInt (hDlg, IDC_XSIZE, &success, FALSE);
-	if(!success)
-		gm->gfx_size_win.width = 800;
-	gm->gfx_size_win.height = GetDlgItemInt (hDlg, IDC_YSIZE, &success, FALSE);
-	if(!success)
-		gm->gfx_size_win.height = 600;
-
 	workprefs.gfx_xcenter = ischecked (hDlg, IDC_XCENTER) ? 2 : 0; /* Smart centering */
 	workprefs.gfx_ycenter = ischecked (hDlg, IDC_YCENTER) ? 2 : 0; /* Smart centering */
 	workprefs.gfx_variable_sync = ischecked(hDlg, IDC_DISPLAY_VARSYNC) ? 1 : 0;
@@ -8488,7 +8536,6 @@ static void values_from_displaydlg (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 			SetDlgItemInt (hDlg, IDC_XSIZE, workprefs.gfx_monitor[0].gfx_size_win.width, FALSE);
 			SetDlgItemInt (hDlg, IDC_YSIZE, workprefs.gfx_monitor[0].gfx_size_win.height, FALSE);
 			init_display_mode (hDlg);
-			//init_frequency_combo (hDlg, dmode);
 		} else if (LOWORD (wParam) == IDC_REFRESHRATE && dmode >= 0) {
 			LRESULT posn1;
 			posn1 = SendDlgItemMessage (hDlg, IDC_REFRESHRATE, CB_GETCURSEL, 0, 0);
@@ -8519,10 +8566,12 @@ static INT_PTR CALLBACK DisplayDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPAR
 {
 	static int recursive = 0;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 	case WM_INITDIALOG:
-		scaleresource_setfont (hDlg);
 		pages[DISPLAY_ID] = hDlg;
 		currentpage = DISPLAY_ID;
 		SendDlgItemMessage (hDlg, IDC_FRAMERATE, TBM_SETPAGESIZE, 0, 1);
@@ -8547,20 +8596,44 @@ static INT_PTR CALLBACK DisplayDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPAR
 		if (recursive > 0)
 			break;
 		recursive++;
-		if (LOWORD (wParam) == IDC_DA_RESET) {
-			int *p;
-			da_mode_selected = SendDlgItemMessage (hDlg, IDC_DA_MODE, CB_GETCURSEL, 0, 0);
-			p = getp_da (hDlg);
-			if (p)
-				*p = 0;
-			init_da (hDlg);
-			update_da (hDlg);
-		}
-		handle_da (hDlg);
-		values_from_displaydlg (hDlg, msg, wParam, lParam);
-		enable_for_displaydlg (hDlg);
-		if (LOWORD (wParam) == IDC_RATE2ENABLE || LOWORD(wParam) == IDC_SCREENMODE_NATIVE3 || LOWORD(wParam) == IDC_SCREENMODE_NATIVE2 || LOWORD(wParam) == IDC_SCREENMODE_NATIVE) {
-			values_to_displaydlg (hDlg);
+		switch(LOWORD(wParam))
+		{
+			case IDC_DA_RESET:
+			{
+				int *p;
+				da_mode_selected = SendDlgItemMessage(hDlg, IDC_DA_MODE, CB_GETCURSEL, 0, 0);
+				p = getp_da(hDlg);
+				if (p)
+					*p = 0;
+				init_da(hDlg);
+				update_da(hDlg);
+			}
+			break;
+			case IDC_XSIZE:
+			{
+				BOOL success;
+				struct monconfig *gm = &workprefs.gfx_monitor[0];
+				gm->gfx_size_win.width = GetDlgItemInt(hDlg, IDC_XSIZE, &success, FALSE);
+				if (!success)
+					gm->gfx_size_win.width = 800;
+			}
+			break;
+			case IDC_YSIZE:
+			{
+				BOOL success;
+				struct monconfig *gm = &workprefs.gfx_monitor[0];
+				gm->gfx_size_win.height = GetDlgItemInt(hDlg, IDC_YSIZE, &success, FALSE);
+				if (!success)
+					gm->gfx_size_win.height = 600;
+			}
+			break;
+			default:
+			handle_da (hDlg);
+			values_from_displaydlg (hDlg, msg, wParam, lParam);
+			enable_for_displaydlg (hDlg);
+			if (LOWORD (wParam) == IDC_RATE2ENABLE || LOWORD(wParam) == IDC_SCREENMODE_NATIVE3 || LOWORD(wParam) == IDC_SCREENMODE_NATIVE2 || LOWORD(wParam) == IDC_SCREENMODE_NATIVE) {
+				values_to_displaydlg (hDlg);
+			}
 		}
 		recursive--;
 		break;
@@ -8738,10 +8811,12 @@ static INT_PTR CALLBACK ChipsetDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPAR
 	static int recursive = 0;
 	TCHAR buffer[MAX_DPATH], tmp[MAX_DPATH];
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg) {
 	case WM_INITDIALOG:
 	{
-		scaleresource_setfont(hDlg);
 		pages[CHIPSET_ID] = hDlg;
 		currentpage = CHIPSET_ID;
 
@@ -9125,10 +9200,12 @@ static INT_PTR CALLBACK ChipsetDlgProc2 (HWND hDlg, UINT msg, WPARAM wParam, LPA
 	static int recursive = 0;
 	TCHAR tmp[MAX_DPATH];
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg) {
 	case WM_INITDIALOG:
 	{
-		scaleresource_setfont(hDlg);
 		pages[CHIPSET2_ID] = hDlg;
 		currentpage = CHIPSET2_ID;
 		cs_compatible = workprefs.cs_compatible;
@@ -10169,6 +10246,7 @@ static void values_from_expansion2dlg(HWND hDlg)
 			getromfile(hDlg, IDC_SCSIROMFILE, brc->roms[index].romfile, MAX_DPATH / sizeof(TCHAR));
 		}
 		brc->roms[index].autoboot_disabled = ischecked(hDlg, IDC_SCSIROMFILEAUTOBOOT);
+		brc->roms[index].inserted = ischecked(hDlg, IDC_SCSIROMFILEPCMCIA);
 
 		int v = SendDlgItemMessage(hDlg, IDC_SCSIROMID, CB_GETCURSEL, 0, 0L);
 		if (v != CB_ERR && !isnew)
@@ -10240,6 +10318,7 @@ static void values_to_expansion2_expansion_roms(HWND hDlg, UAEREG *fkey)
 		}
 		ew(hDlg, IDC_SCSIROMFILE, true);
 		ew(hDlg, IDC_SCSIROMCHOOSER, true);
+		hide(hDlg, IDC_SCSIROMFILEAUTOBOOT, 0);
 		if (romtype & ROMTYPE_NOT) {
 			hide(hDlg, IDC_SCSIROMCHOOSER, 1);
 			hide(hDlg, IDC_SCSIROMFILE, 1);
@@ -10253,12 +10332,23 @@ static void values_to_expansion2_expansion_roms(HWND hDlg, UAEREG *fkey)
 			addromfiles(fkey, hDlg, IDC_SCSIROMFILE, brc ? brc->roms[index].romfile : NULL, romtype, romtype_extra);
 			setchecked(hDlg, IDC_SCSIROMFILEAUTOBOOT, brc && brc->roms[index].autoboot_disabled);
 		}
+		if (ert->deviceflags & EXPANSIONTYPE_PCMCIA) {
+			setchecked(hDlg, IDC_SCSIROMFILEPCMCIA, brc && brc->roms[index].inserted);
+			hide(hDlg, IDC_SCSIROMFILEPCMCIA, 0);
+		} else {
+			hide(hDlg, IDC_SCSIROMFILEPCMCIA, 1);
+			if (brc)
+				brc->roms[index].inserted = false;
+		}
 	} else {
 		hide(hDlg, IDC_SCSIROMCHOOSER, 0);
 		hide(hDlg, IDC_SCSIROMFILE, 0);
 		hide(hDlg, IDC_SCSIROMSELECTED, 1);
+		hide(hDlg, IDC_SCSIROMFILEPCMCIA, 1);
+		hide(hDlg, IDC_SCSIROMFILEAUTOBOOT, 1);
 		setchecked(hDlg, IDC_SCSIROMSELECTED, false);
 		setchecked(hDlg, IDC_SCSIROMFILEAUTOBOOT, false);
+		setchecked(hDlg, IDC_SCSIROMFILEPCMCIA, false);
 		SendDlgItemMessage(hDlg, IDC_SCSIROMFILE, CB_RESETCONTENT, 0, 0);
 		ew(hDlg, IDC_SCSIROMFILE, false);
 		ew(hDlg, IDC_SCSIROMCHOOSER, false);		
@@ -10476,12 +10566,14 @@ static INT_PTR CALLBACK Expansion2DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LP
 	TCHAR tmp[MAX_DPATH];
 	static int recursive = 0;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 		case WM_INITDIALOG:
 		{
 			recursive++;
-			scaleresource_setfont (hDlg);
 			pages[EXPANSION2_ID] = hDlg;
 			currentpage = EXPANSION2_ID;
 			int ids[] = { IDC_SCSIROMFILE, IDC_CPUBOARDROMFILE, -1 };
@@ -10563,6 +10655,7 @@ static INT_PTR CALLBACK Expansion2DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LP
 				values_from_expansion2dlg(hDlg);
 				break;
 				case IDC_SCSIROMFILEAUTOBOOT:
+				case IDC_SCSIROMFILEPCMCIA:
 				values_from_expansion2dlg(hDlg);
 				break;
 				case IDC_SOCKETS:
@@ -10619,7 +10712,7 @@ static INT_PTR CALLBACK Expansion2DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LP
 					break;
 					case IDC_SCSIROMSELECTCAT:
 					val = SendDlgItemMessage(hDlg, IDC_SCSIROMSELECTCAT, CB_GETCURSEL, 0, 0);
-					if (val != CB_ERR) {
+					if (val != CB_ERR && val != scsiromselectedcatnum) {
 						scsiromselectedcatnum = val;
 						scsiromselected = 0;
 						init_expansion2(hDlg, false);
@@ -10653,7 +10746,7 @@ static INT_PTR CALLBACK Expansion2DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LP
 						} else if (workprefs.ppc_mode == 2) {
 							workprefs.ppc_mode = 0;
 						}
-						built_in_cpuboard_prefs(&workprefs);
+						cpuboard_set_cpu(&workprefs);
 						setcpuboardmemsize(hDlg);
 						enable_for_expansion2dlg(hDlg);
 						values_to_expansion2dlg(hDlg, 2);
@@ -10670,7 +10763,7 @@ static INT_PTR CALLBACK Expansion2DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LP
 						} else if (workprefs.ppc_mode == 2) {
 							workprefs.ppc_mode = 0;
 						}
-						built_in_cpuboard_prefs(&workprefs);
+						cpuboard_set_cpu(&workprefs);
 						setcpuboardmemsize(hDlg);
 						enable_for_expansion2dlg(hDlg);
 						values_to_expansion2dlg(hDlg, 2);
@@ -10870,10 +10963,12 @@ static INT_PTR CALLBACK ExpansionDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LP
 	static int recursive = 0;
 	static int enumerated;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 	case WM_INITDIALOG:
-		scaleresource_setfont (hDlg);
 		pages[EXPANSION_ID] = hDlg;
 		currentpage = EXPANSION_ID;
 
@@ -11163,11 +11258,13 @@ static INT_PTR CALLBACK BoardsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM
 	static int recursive = 0;
 	static int selected = -1;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 		case WM_INITDIALOG:
 		recursive++;
-		scaleresource_setfont (hDlg);
 		pages[BOARD_ID] = hDlg;
 		currentpage = BOARD_ID;
 		setchecked(hDlg, IDC_AUTOCONFIGCUSTOMSORT, workprefs.autoconfig_custom_sort);
@@ -11291,11 +11388,13 @@ static INT_PTR CALLBACK MemoryDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARA
 	static int recursive = 0;
 	int v;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 	case WM_INITDIALOG:
 		recursive++;
-		scaleresource_setfont (hDlg);
 		pages[MEMORY_ID] = hDlg;
 		currentpage = MEMORY_ID;
 		SendDlgItemMessage (hDlg, IDC_CHIPMEM, TBM_SETRANGE, TRUE, MAKELONG (MIN_CHIP_MEM, MAX_CHIP_MEM));
@@ -11660,11 +11759,13 @@ static INT_PTR CALLBACK KickstartDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LP
 	static int recursive;
 	TCHAR tmp[MAX_DPATH];
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 	case WM_INITDIALOG:
 		{
-			scaleresource_setfont (hDlg);
 			int ids[] = { IDC_ROMFILE, IDC_ROMFILE2, IDC_CARTFILE, -1 };
 			pages[KICKSTART_ID] = hDlg;
 			currentpage = KICKSTART_ID;
@@ -11969,7 +12070,7 @@ static void misc_setlang (int v)
 static void misc_gui_font (HWND hDlg, int fonttype)
 {
 	if (scaleresource_choosefont (hDlg, fonttype))
-		gui_size_changed = 1;
+		gui_size_changed = 10;
 }
 
 static void values_to_miscdlg_dx(HWND hDlg)
@@ -12060,44 +12161,52 @@ static void setstatefilename (HWND hDlg)
 	setchecked (hDlg, IDC_STATECLEAR, workprefs.statefile[0] != 0);
 }
 
-static int previous_dpix, previous_dpiy;
-
-static void setdefaultguisize (void)
+static void setdefaultguisize(int skipdpi)
 {
-	double dpix = 1.0, dpiy = 1.0;
+	int dpi = skipdpi ? 96 : getdpiformonitor(NULL);
 
-	previous_dpix = 0;
-	previous_dpiy = 0;
-	if (isfullscreen() <= 0) {
-		scaleresource_getdpimult(&dpix, &dpiy, &previous_dpix, &previous_dpiy);
-	}
-
-	gui_width = (int)(GUI_INTERNAL_WIDTH * dpix);
-	gui_height = (int)(GUI_INTERNAL_HEIGHT * dpiy);
+	gui_width = MulDiv(GUI_INTERNAL_WIDTH, dpi, 96);
+	gui_height = MulDiv(GUI_INTERNAL_HEIGHT, dpi, 96);
 
 	int w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
 	int h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 
-	if ((dpix > 1 || dpiy > 1) && (gui_width > w || gui_height > h)) {
+	if ((dpi > 96) && (gui_width > w || gui_height > h)) {
 		gui_width = w;
 		gui_height = h;
+	}
+}
+
+static void saveguisize(void)
+{
+	if (gui_fullscreen)
+		return;
+	if (full_property_sheet || isfullscreen() == 0) {
+		regsetint(NULL, _T("GUISizeX"), gui_width);
+		regsetint(NULL, _T("GUISizeY"), gui_height);
+	} else if (isfullscreen() < 0) {
+		regsetint(NULL, _T("GUISizeFWX"), gui_width);
+		regsetint(NULL, _T("GUISizeFWY"), gui_height);
+	} else if (isfullscreen() > 0) {
+		regsetint(NULL, _T("GUISizeFSX"), gui_width);
+		regsetint(NULL, _T("GUISizeFSY"), gui_height);
 	}
 }
 
 static void getstoredguisize(void)
 {
 	if (full_property_sheet || isfullscreen () == 0) {
-		regqueryint (NULL, _T("GUISizeX"), &gui_width);
-		regqueryint (NULL, _T("GUISizeY"), &gui_height);
-		scaleresource_init (gui_fullscreen ? _T("GFS") : _T(""), gui_fullscreen);
+		regqueryint(NULL, _T("GUISizeX"), &gui_width);
+		regqueryint(NULL, _T("GUISizeY"), &gui_height);
+		scaleresource_init(gui_fullscreen ? _T("GFS") : _T(""), gui_fullscreen);
 	} else if (isfullscreen () < 0) {
-		regqueryint (NULL, _T("GUISizeFWX"), &gui_width);
-		regqueryint (NULL, _T("GUISizeFWY"), &gui_height);
-		scaleresource_init (gui_fullscreen ? _T("FW_GFS") : _T("FW"), gui_fullscreen);
+		regqueryint(NULL, _T("GUISizeFWX"), &gui_width);
+		regqueryint(NULL, _T("GUISizeFWY"), &gui_height);
+		scaleresource_init(gui_fullscreen ? _T("FW_GFS") : _T("FW"), gui_fullscreen);
 	} else if (isfullscreen () > 0) {
-		regqueryint (NULL, _T("GUISizeFSX"), &gui_width);
-		regqueryint (NULL, _T("GUISizeFSY"), &gui_height);
-		scaleresource_init (gui_fullscreen ? _T("FS_GFS") : _T("FS"), gui_fullscreen);
+		regqueryint(NULL, _T("GUISizeFSX"), &gui_width);
+		regqueryint(NULL, _T("GUISizeFSY"), &gui_height);
+		scaleresource_init(gui_fullscreen ? _T("FS_GFS") : _T("FS"), gui_fullscreen);
 	}
 }
 
@@ -12113,7 +12222,6 @@ static INT_PTR MiscDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
 	switch (msg)
 	{
 	case WM_INITDIALOG:
-		scaleresource_setfont (hDlg);
 		pages[currentpage] = hDlg;
 		InitializeListView (hDlg);
 		values_to_miscdlg (hDlg);
@@ -12267,48 +12375,43 @@ static INT_PTR MiscDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
 			ResetListViews();
 			break;
 		case IDC_GUI_DEFAULT:
-			scaleresource_setdefaults ();
+			scaleresource_setdefaults(hDlg);
 			v = SendDlgItemMessage (hDlg, IDC_GUI_SIZE, CB_GETCURSEL, 0, 0L);
 			if (v != CB_ERR) {
-				double dpix = 1.0, dpiy = 1.0;
 				if (v == 0) {
 					v = GUI_SCALE_DEFAULT;
 				} else {
 					v--;
 					v = 200 - v * 10;
 				}
-				if (isfullscreen() <= 0)
-					scaleresource_getdpimult(&dpix, &dpiy, &previous_dpix, &previous_dpiy);
-				gui_width = (int)(GUI_INTERNAL_WIDTH * dpix * v / 100);
-				gui_height = (int)(GUI_INTERNAL_HEIGHT * dpiy * v / 100);
+				gui_width = (int)(GUI_INTERNAL_WIDTH * v / 100);
+				gui_height = (int)(GUI_INTERNAL_HEIGHT * v / 100);
+				int dpi = getdpiforwindow(hDlg);
+				gui_width = MulDiv(gui_width, dpi, 96);
+				gui_height = MulDiv(gui_height, dpi, 96);
 				if (gui_width < MIN_GUI_INTERNAL_WIDTH || gui_height < MIN_GUI_INTERNAL_HEIGHT) {
 					gui_width = MIN_GUI_INTERNAL_WIDTH;
 					gui_height = MIN_GUI_INTERNAL_HEIGHT;
 				}
-				scaleresource_setmult (guiDlg, gui_width, gui_height, gui_fullscreen);
-				gui_size_changed = 1;
+				scaleresource_setsize(gui_width, gui_height, gui_fullscreen);
+				gui_size_changed = 10;
 			}
 			break;
 		case IDC_GUI_FONT:
 			misc_gui_font (hDlg, 0);
 			break;
-		case IDC_GUI_LISTFONT:
-			misc_gui_font (hDlg, 1);
-			break;
 		case IDC_GUI_RESIZE:
 			gui_resize_enabled = ischecked (hDlg, IDC_GUI_RESIZE);
 			gui_fullscreen = -1;
-			gui_size_changed = 2;
+			gui_size_changed = 10;
 		break;
 		case IDC_GUI_FULLSCREEN:
 			gui_fullscreen = ischecked (hDlg, IDC_GUI_FULLSCREEN);
 			if (!gui_fullscreen) {
 				gui_fullscreen = -1;
-				gui_resize_enabled = false;
-			} else {
-				gui_resize_enabled = true;
+				getstoredguisize();
 			}
-			gui_size_changed = 2;
+			gui_size_changed = 10;
 		break;
 		case IDC_ASSOCIATE_ON:
 			for (i = 0; exts[i].ext; i++)
@@ -12458,7 +12561,7 @@ static void enable_for_cpudlg (HWND hDlg)
 #if 0
 	ew(hDlg, IDC_CPU_MULTIPLIER, workprefs.cpu_cycle_exact);
 #endif
-	ew(hDlg, IDC_CPU_FREQUENCY, workprefs.cpu_cycle_exact && workprefs.m68k_speed >= 0);
+	ew(hDlg, IDC_CPU_FREQUENCY, (workprefs.cpu_cycle_exact || workprefs.cpu_compatible) && workprefs.m68k_speed >= 0);
 	ew(hDlg, IDC_CPU_FREQUENCY2, workprefs.cpu_cycle_exact && !workprefs.cpu_clock_multiplier && workprefs.m68k_speed >= 0);
 
 	ew(hDlg, IDC_FPU1, workprefs.cpu_model < 68040 && (workprefs.cpu_model >= 68020 || !workprefs.cpu_compatible));
@@ -12483,7 +12586,7 @@ static double getcpufreq (int m)
 	return f * (m >> 8) / 8.0;
 }
 
-static void values_to_cpudlg (HWND hDlg)
+static void values_to_cpudlg(HWND hDlg, WPARAM wParam)
 {
 	TCHAR buffer[8] = _T("");
 	int cpu;
@@ -12541,20 +12644,9 @@ static void values_to_cpudlg (HWND hDlg)
 		workprefs.cachesize == 0;
 	CheckRadioButton (hDlg, IDC_MMUENABLEOFF, IDC_MMUENABLE, mmu == 0 ? IDC_MMUENABLEOFF : (mmu && workprefs.mmu_ec) ? IDC_MMUENABLEEC : IDC_MMUENABLE);
 	CheckDlgButton(hDlg, IDC_CPU_PPC, workprefs.ppc_mode || is_ppc_cpu(&workprefs));
-
-	if (workprefs.cpu_cycle_exact) {
-		if (workprefs.cpu_clock_multiplier) {
-			TCHAR txt[20];
-			double f = getcpufreq (workprefs.cpu_clock_multiplier);
-			_stprintf (txt, _T("%.6f"), f / 1000000.0);
-			SendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY2, WM_SETTEXT, 0, (LPARAM)txt);
-		}
-	} else {
-		SendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY2, WM_SETTEXT, 0, (LPARAM)_T(""));
-	}
 }
 
-static void values_from_cpudlg (HWND hDlg)
+static void values_from_cpudlg(HWND hDlg, WPARAM wParam)
 {
 	int newcpu, oldcpu, newfpu, newtrust, oldcache, jitena, idx;
 	static int cachesize_prev, trust_prev;
@@ -12716,23 +12808,34 @@ static void values_from_cpudlg (HWND hDlg)
 	if (pages[MEMORY_ID])
 		SendMessage (pages[MEMORY_ID], WM_USER, 0, 0);
 
-	idx = SendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY, CB_GETCURSEL, 0, 0);
+	idx = SendDlgItemMessage(hDlg, IDC_CPU_FREQUENCY, CB_GETCURSEL, 0, 0);
 	if (idx != CB_ERR) {
 		int m = workprefs.cpu_clock_multiplier;
 		workprefs.cpu_frequency = 0;
 		workprefs.cpu_clock_multiplier = 0;
 		if (idx < 4) {
 			workprefs.cpu_clock_multiplier = (1 << 8) << idx;
-		} else {
+			if (workprefs.cpu_cycle_exact || workprefs.cpu_compatible) {
+				TCHAR txt[20];
+				double f = getcpufreq(workprefs.cpu_clock_multiplier);
+				_stprintf(txt, _T("%.6f"), f / 1000000.0);
+				SendDlgItemMessage(hDlg, IDC_CPU_FREQUENCY2, WM_SETTEXT, 0, (LPARAM)txt);
+			} else {
+				SendDlgItemMessage(hDlg, IDC_CPU_FREQUENCY2, WM_SETTEXT, 0, (LPARAM)_T(""));
+			}
+		} else if (workprefs.cpu_cycle_exact) {
 			TCHAR txt[20];
 			txt[0] = 0;
-			SendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY2, WM_GETTEXT, (WPARAM)sizeof (txt) / sizeof (TCHAR), (LPARAM)txt);
+			SendDlgItemMessage(hDlg, IDC_CPU_FREQUENCY2, WM_GETTEXT, (WPARAM)sizeof(txt) / sizeof(TCHAR), (LPARAM)txt);
 			workprefs.cpu_clock_multiplier = 0;
-			workprefs.cpu_frequency = (int)(_tstof (txt) * 1000000.0);
+			workprefs.cpu_frequency = (int)(_tstof(txt) * 1000000.0);
 			if (workprefs.cpu_frequency < 1 * 1000000)
 				workprefs.cpu_frequency = 0;
 			if (workprefs.cpu_frequency >= 99 * 1000000)
 				workprefs.cpu_frequency = 0;
+			if (!workprefs.cpu_frequency) {
+				workprefs.cpu_frequency = (int)(getcpufreq(m) * 1000000.0);
+			}
 		}
 	}
 }
@@ -12742,10 +12845,12 @@ static INT_PTR CALLBACK CPUDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 	static int recursive = 0;
 	int idx;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg) {
 	case WM_INITDIALOG:
 		recursive++;
-		scaleresource_setfont (hDlg);
 		pages[CPU_ID] = hDlg;
 		currentpage = CPU_ID;
 		SendDlgItemMessage (hDlg, IDC_CACHE, TBM_SETRANGE, TRUE, MAKELONG (MIN_CACHE_SIZE, MAX_CACHE_SIZE));
@@ -12760,7 +12865,9 @@ static INT_PTR CALLBACK CPUDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 		SendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("2x (A500)"));
 		SendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("4x (A1200)"));
 		SendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("8x"));
-		SendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("Custom"));
+		if (workprefs.cpu_cycle_exact) {
+			SendDlgItemMessage(hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("Custom"));
+		}
 
 		SendDlgItemMessage(hDlg, IDC_FPU_MODE, CB_RESETCONTENT, 0, 0);
 		SendDlgItemMessage(hDlg, IDC_FPU_MODE, CB_ADDSTRING, 0, (LPARAM)_T("Host (64-bit)"));
@@ -12781,12 +12888,14 @@ static INT_PTR CALLBACK CPUDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 			idx = 2; // A1200
 		}
 		if (!workprefs.cpu_cycle_exact) {
-			idx = 3;
-			workprefs.cpu_clock_multiplier = 0;
 			workprefs.cpu_frequency = 0;
-		} else {
-			if (!workprefs.cpu_frequency && (idx == 1 || idx == 2))
+			if (!workprefs.cpu_clock_multiplier && (idx == 1 || idx == 2)) {
 				workprefs.cpu_clock_multiplier = (1 << idx) << 8;
+			}
+		} else {
+			if (!workprefs.cpu_frequency && (idx == 1 || idx == 2)) {
+				workprefs.cpu_clock_multiplier = (1 << idx) << 8;
+			}
 		}
 		SendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY, CB_SETCURSEL, idx, 0);
 		if (!workprefs.cpu_clock_multiplier) {
@@ -12804,7 +12913,7 @@ static INT_PTR CALLBACK CPUDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 	case WM_USER:
 		recursive++;
 		enable_for_cpudlg (hDlg);
-		values_to_cpudlg (hDlg);
+		values_to_cpudlg (hDlg, wParam);
 		recursive--;
 		return TRUE;
 
@@ -12813,9 +12922,9 @@ static INT_PTR CALLBACK CPUDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 			break;
 		if (currentpage == CPU_ID) {
 			recursive++;
-			values_from_cpudlg(hDlg);
+			values_from_cpudlg(hDlg, wParam);
 			enable_for_cpudlg(hDlg);
-			values_to_cpudlg(hDlg);
+			values_to_cpudlg(hDlg, wParam);
 			recursive--;
 		}
 		break;
@@ -12823,9 +12932,9 @@ static INT_PTR CALLBACK CPUDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 	case WM_HSCROLL:
 		if (currentpage == CPU_ID) {
 			recursive++;
-			values_from_cpudlg(hDlg);
+			values_from_cpudlg(hDlg, wParam);
 			enable_for_cpudlg(hDlg);
-			values_to_cpudlg(hDlg);
+			values_to_cpudlg(hDlg, wParam);
 			recursive--;
 		}
 		break;
@@ -13270,11 +13379,13 @@ static INT_PTR CALLBACK SoundDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM
 	int numdevs;
 	int card, i;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg) {
 	case WM_INITDIALOG:
 		{
 			recursive++;
-			scaleresource_setfont (hDlg);
 			sound_loaddrivesamples ();
 			SendDlgItemMessage (hDlg, IDC_SOUNDBUFFERRAM, TBM_SETRANGE, TRUE, MAKELONG (MIN_SOUND_MEM, MAX_SOUND_MEM));
 			SendDlgItemMessage (hDlg, IDC_SOUNDBUFFERRAM, TBM_SETPAGESIZE, 0, 1);
@@ -13411,7 +13522,7 @@ static void hardfile_testrdb (struct hfdlg_vals *hdf)
 		for (i = 0; i < 16; i++) {
 			hdf_read_rdb (&hfd, id, i * 512, 512);
 			if (i == 0 && !memcmp (id + 2, "CIS", 3)) {
-				hdf->ci.controller_type = HD_CONTROLLER_TYPE_PCMCIA;
+				hdf->ci.controller_type = HD_CONTROLLER_TYPE_CUSTOM_FIRST;
 				hdf->ci.controller_type_unit = 0;
 				break;
 			}
@@ -13526,6 +13637,9 @@ static INT_PTR CALLBACK VolumeSettingsProc (HWND hDlg, UINT msg, WPARAM wParam, 
 {
 	static int recursive = 0;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg) {
 	case WM_INITDIALOG:
 		{
@@ -13630,6 +13744,7 @@ static INT_PTR CALLBACK VolumeSettingsProc (HWND hDlg, UINT msg, WPARAM wParam, 
 		recursive--;
 		break;
 	}
+	commonproc(hDlg, msg, wParam, lParam);
 	return FALSE;
 }
 
@@ -13745,7 +13860,7 @@ static void sethardfile (HWND hDlg)
 	hide(hDlg, IDC_RESERVED_TEXT, rdb);
 	hide(hDlg, IDC_CYLINDERS_TEXT, !rdb);
 	gui_set_string_cursor(hdmenutable, hDlg, IDC_HDF_CONTROLLER, current_hfdlg.ci.controller_type +  current_hfdlg.ci.controller_type_unit * HD_CONTROLLER_NEXT_UNIT);
-	SendDlgItemMessage (hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_hfdlg.ci.controller_type != HD_CONTROLLER_TYPE_PCMCIA ? current_hfdlg.ci.controller_unit : current_hfdlg.ci.controller_type_unit, 0);
+	SendDlgItemMessage (hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_hfdlg.ci.controller_unit, 0);
 	sethardfiletypes(hDlg);
 }
 
@@ -13806,12 +13921,23 @@ static void inithdcontroller (HWND hDlg, int ctype, int ctype_unit, int devtype,
 		}
 	}
 
+#if 0
 	gui_add_string(hdmenutable, hDlg, IDC_HDF_CONTROLLER, 0, _T(""));
 	for (int i = 0; expansionroms[i].name; i++) {
 		const struct expansionromtype *erc = &expansionroms[i];
 		if ((erc->romtype & ROMTYPE_MASK) == ROMTYPE_MB_PCMCIA) {
-			addhdcontroller(hDlg, erc, hdmenutable, HD_CONTROLLER_TYPE_PCMCIA, 0);
+			addhdcontroller(hDlg, erc, hdmenutable, HD_CONTROLLER_TYPE_CUSTOM_FIRST + i, 0);
 			ctype_unit = 0;
+		}
+	}
+#endif
+
+	gui_add_string(hdmenutable, hDlg, IDC_HDF_CONTROLLER, 0, _T(""));
+	for (int i = 0; expansionroms[i].name; i++) {
+		const struct expansionromtype *erc = &expansionroms[i];
+		if (erc->deviceflags & EXPANSIONTYPE_CUSTOMDISK) {
+			addhdcontroller(hDlg, erc, hdmenutable, HD_CONTROLLER_TYPE_CUSTOM_FIRST + i, EXPANSIONTYPE_CUSTOMDISK);
+			break;
 		}
 	}
 
@@ -13850,10 +13976,8 @@ static void inithdcontroller (HWND hDlg, int ctype, int ctype_unit, int devtype,
 		}
 		if (media)
 			ew(hDlg, IDC_HDF_CONTROLLER_UNIT, TRUE);
-	} else if (ctype == HD_CONTROLLER_TYPE_PCMCIA) {
-		SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_ADDSTRING, 0, (LPARAM)_T("SRAM"));
-		SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_ADDSTRING, 0, (LPARAM)_T("IDE"));
-		ew(hDlg, IDC_HDF_CONTROLLER_UNIT, TRUE);
+	} else if (ctype >= HD_CONTROLLER_TYPE_CUSTOM_FIRST && ctype <= HD_CONTROLLER_TYPE_CUSTOM_LAST) {
+		ew(hDlg, IDC_HDF_CONTROLLER_UNIT, FALSE);
 	} else if (ctype == HD_CONTROLLER_TYPE_UAE) {
 		for (int i = 0; i < MAX_FILESYSTEM_UNITS; i++) {
 			TCHAR tmp[100];
@@ -13934,6 +14058,7 @@ static void updatehdfinfo (HWND hDlg, bool force, bool defaults)
 	bsize = 0;
 	if (force) {
 		bool open = false;
+		bool gotrdb = false;
 		int blocksize = 512;
 		struct hardfiledata hfd;
 		memset (id, 0, sizeof id);
@@ -13950,6 +14075,7 @@ static void updatehdfinfo (HWND hDlg, bool force, bool defaults)
 				current_hfdlg.size = hfd.virtsize;
 				if (!memcmp (id, "RDSK", 4) || !memcmp (id, "CDSK", 4)) {
 					blocksize = (id[16] << 24)  | (id[17] << 16) | (id[18] << 8) | (id[19] << 0);
+					gotrdb = true;
 					break;
 				}
 			}
@@ -13976,6 +14102,10 @@ static void updatehdfinfo (HWND hDlg, bool force, bool defaults)
 			} else {
 				getchspgeometry (bsize, &current_hfdlg.ci.pcyls, &current_hfdlg.ci.pheads, &current_hfdlg.ci.psecs, false);
 			}
+			if (defaults && !gotrdb) {
+				gethdfgeometry(bsize, &current_hfdlg.ci);
+				phys = false;
+			}
 		} else {
 			current_hfdlg.forcedcylinders = current_hfdlg.ci.pcyls;
 		}
@@ -14000,7 +14130,7 @@ static void updatehdfinfo (HWND hDlg, bool force, bool defaults)
 	int heads = phys ? current_hfdlg.ci.pheads : current_hfdlg.ci.surfaces;
 	int secs = phys ? current_hfdlg.ci.psecs : current_hfdlg.ci.sectors;
 	if (!cyls && current_hfdlg.ci.blocksize && secs && heads) {
-		cyls = bsize / (current_hfdlg.ci.blocksize * secs * heads);
+		cyls = bsize / ((uae_u64)current_hfdlg.ci.blocksize * secs * heads);
 	}
 	blocks = cyls * (secs * heads);
 	if (!blocks && current_hfdlg.ci.blocksize)
@@ -14033,7 +14163,7 @@ static void updatehdfinfo (HWND hDlg, bool force, bool defaults)
 				blocks, (int)(bsize / current_hfdlg.ci.blocksize),
 				(double)blocks * 1.0 * current_hfdlg.ci.blocksize / (1024.0 * 1024.0),
 				(double)bsize / (1024.0 * 1024.0));
-			if (cyls * heads * secs > bsize / current_hfdlg.ci.blocksize) {
+			if ((uae_u64)cyls * heads * secs > bsize / current_hfdlg.ci.blocksize) {
 				_tcscat (tmp2, _T(" [Geometry larger than drive!]"));
 			} else if (cyls > 65535) {
 				_tcscat (tmp2, _T(" [Too many cyls]"));
@@ -14093,12 +14223,15 @@ static INT_PTR CALLBACK TapeDriveSettingsProc (HWND hDlg, UINT msg, WPARAM wPara
 	int posn, readonly;
 	TCHAR tmp[MAX_DPATH];
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg) {
 
 	case WM_INITDIALOG:
 		recursive++;
 		inithdcontroller(hDlg, current_tapedlg.ci.controller_type, current_tapedlg.ci.controller_type_unit, UAEDEV_TAPE, current_tapedlg.ci.rootdir[0] != 0);
-		SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_tapedlg.ci.controller_type != HD_CONTROLLER_TYPE_PCMCIA ? current_tapedlg.ci.controller_unit : current_tapedlg.ci.controller_type_unit, 0);
+		SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_tapedlg.ci.controller_unit, 0);
 		setautocomplete (hDlg, IDC_PATH_NAME);
 		addhistorymenu(hDlg, current_tapedlg.ci.rootdir, IDC_PATH_NAME, HISTORY_TAPE, false);
 		readonly = !tape_can_write(current_tapedlg.ci.rootdir);
@@ -14128,19 +14261,14 @@ static INT_PTR CALLBACK TapeDriveSettingsProc (HWND hDlg, UINT msg, WPARAM wPara
 				if (posn != CB_ERR) {
 					current_tapedlg.ci.controller_type = posn % HD_CONTROLLER_NEXT_UNIT;
 					current_tapedlg.ci.controller_type_unit = posn / HD_CONTROLLER_NEXT_UNIT;
-					if (current_tapedlg.ci.controller_type == HD_CONTROLLER_TYPE_PCMCIA)
-						current_tapedlg.ci.controller_type_unit = 1;
 					inithdcontroller(hDlg, current_tapedlg.ci.controller_type, current_tapedlg.ci.controller_type_unit, UAEDEV_TAPE, current_tapedlg.ci.rootdir);
-					SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_tapedlg.ci.controller_type != HD_CONTROLLER_TYPE_PCMCIA ? current_tapedlg.ci.controller_unit : current_tapedlg.ci.controller_type_unit, 0);
+					SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_tapedlg.ci.controller_unit, 0);
 				}
 				break;
 			case IDC_HDF_CONTROLLER_UNIT:
 				posn = SendDlgItemMessage (hDlg, IDC_HDF_CONTROLLER_UNIT, CB_GETCURSEL, 0, 0);
 				if (posn != CB_ERR) {
-					if (current_tapedlg.ci.controller_type == HD_CONTROLLER_TYPE_PCMCIA)
-						current_tapedlg.ci.controller_type_unit = posn;
-					else
-						current_tapedlg.ci.controller_unit = posn;
+					current_tapedlg.ci.controller_unit = posn;
 				}
 				break;
 			}
@@ -14196,6 +14324,7 @@ static INT_PTR CALLBACK TapeDriveSettingsProc (HWND hDlg, UINT msg, WPARAM wPara
 		recursive--;
 		break;
 	}
+	commonproc(hDlg, msg, wParam, lParam);
 	return FALSE;
 }
 
@@ -14203,6 +14332,9 @@ static INT_PTR CALLBACK CDDriveSettingsProc (HWND hDlg, UINT msg, WPARAM wParam,
 {
 	static int recursive = 0;
 	int posn;
+
+	if (dialog_inhibit)
+		return 0;
 
 	switch (msg) {
 
@@ -14213,7 +14345,7 @@ static INT_PTR CALLBACK CDDriveSettingsProc (HWND hDlg, UINT msg, WPARAM wParam,
 				is_board_enabled(&workprefs, ROMTYPE_GVPS2, 0) || is_board_enabled(&workprefs, ROMTYPE_A4091, 0) ||
 			(workprefs.cs_mbdmac & 3)) ? HD_CONTROLLER_TYPE_SCSI_AUTO : HD_CONTROLLER_TYPE_IDE_AUTO;
 		inithdcontroller(hDlg, current_cddlg.ci.controller_type, current_cddlg.ci.controller_type_unit, UAEDEV_CD, current_cddlg.ci.rootdir[0] != 0);
-		SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_cddlg.ci.controller_type != HD_CONTROLLER_TYPE_PCMCIA ? current_cddlg.ci.controller_unit : current_cddlg.ci.controller_type_unit, 0);
+		SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_cddlg.ci.controller_unit, 0);
 		InitializeListView (hDlg);
 		recursive--;
 		customDlgType = IDD_CDDRIVE;
@@ -14243,25 +14375,21 @@ static INT_PTR CALLBACK CDDriveSettingsProc (HWND hDlg, UINT msg, WPARAM wParam,
 			if (posn != CB_ERR) {
 				current_cddlg.ci.controller_type = posn % HD_CONTROLLER_NEXT_UNIT;
 				current_cddlg.ci.controller_type_unit = posn / HD_CONTROLLER_NEXT_UNIT;
-				if (current_cddlg.ci.controller_type == HD_CONTROLLER_TYPE_PCMCIA)
-					current_cddlg.ci.controller_type_unit = 1;
 				inithdcontroller(hDlg, current_cddlg.ci.controller_type, current_cddlg.ci.controller_type_unit, UAEDEV_CD, current_cddlg.ci.rootdir[0] != 0);
-				SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_cddlg.ci.controller_type != HD_CONTROLLER_TYPE_PCMCIA ? current_cddlg.ci.controller_unit : current_cddlg.ci.controller_type_unit, 0);
+				SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_cddlg.ci.controller_unit, 0);
 			}
 			break;
 		case IDC_HDF_CONTROLLER_UNIT:
 			posn = SendDlgItemMessage (hDlg, IDC_HDF_CONTROLLER_UNIT, CB_GETCURSEL, 0, 0);
 			if (posn != CB_ERR) {
-				if (current_cddlg.ci.controller_type == HD_CONTROLLER_TYPE_PCMCIA)
-					current_cddlg.ci.controller_type_unit = posn;
-				else
-					current_cddlg.ci.controller_unit = posn;
+				current_cddlg.ci.controller_unit = posn;
 			}
 			break;
 		}
 		recursive--;
 		break;
 	}
+	commonproc(hDlg, msg, wParam, lParam);
 	return FALSE;
 }
 
@@ -14302,6 +14430,9 @@ static INT_PTR CALLBACK HardfileSettingsProc (HWND hDlg, UINT msg, WPARAM wParam
 	TCHAR tmp[MAX_DPATH];
 	int v;
 	int *p;
+
+	if (dialog_inhibit)
+		return 0;
 
 	switch (msg) {
 	case WM_DROPFILES:
@@ -14401,8 +14532,6 @@ static INT_PTR CALLBACK HardfileSettingsProc (HWND hDlg, UINT msg, WPARAM wParam
 				if (posn != CB_ERR) {
 					current_hfdlg.ci.controller_type = posn % HD_CONTROLLER_NEXT_UNIT;
 					current_hfdlg.ci.controller_type_unit = posn / HD_CONTROLLER_NEXT_UNIT;
-					if (current_hfdlg.ci.controller_type == HD_CONTROLLER_TYPE_PCMCIA)
-						current_hfdlg.ci.controller_type_unit = 1;
 					inithdcontroller(hDlg, current_hfdlg.ci.controller_type, current_hfdlg.ci.controller_type_unit, UAEDEV_HDF, current_hfdlg.ci.rootdir[0] != 0);
 					sethardfile(hDlg);
 				}
@@ -14410,10 +14539,7 @@ static INT_PTR CALLBACK HardfileSettingsProc (HWND hDlg, UINT msg, WPARAM wParam
 			case IDC_HDF_CONTROLLER_UNIT:
 				posn = SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_GETCURSEL, 0, 0);
 				if (posn != CB_ERR) {
-					if (current_hfdlg.ci.controller_type == HD_CONTROLLER_TYPE_PCMCIA)
-						current_hfdlg.ci.controller_type_unit = posn;
-					else
-						current_hfdlg.ci.controller_unit = posn;
+					current_hfdlg.ci.controller_unit = posn;
 					sethardfile(hDlg);
 				}
 				break;
@@ -14567,6 +14693,7 @@ static INT_PTR CALLBACK HardfileSettingsProc (HWND hDlg, UINT msg, WPARAM wParam
 
 		break;
 	}
+	commonproc(hDlg, msg, wParam, lParam);
 	return FALSE;
 }
 
@@ -14578,6 +14705,9 @@ static INT_PTR CALLBACK HarddriveSettingsProc (HWND hDlg, UINT msg, WPARAM wPara
 	int *p;
 	LRESULT posn;
 	static int oposn;
+
+	if (dialog_inhibit)
+		return 0;
 
 	switch (msg) {
 	case WM_INITDIALOG:
@@ -14608,7 +14738,7 @@ static INT_PTR CALLBACK HarddriveSettingsProc (HWND hDlg, UINT msg, WPARAM wPara
 			if (index >= 0) {
 				SendDlgItemMessage (hDlg, IDC_HARDDRIVE, CB_SETCURSEL, index, 0);
 				gui_set_string_cursor(hdmenutable, hDlg, IDC_HDF_CONTROLLER, current_hfdlg.ci.controller_type + current_hfdlg.ci.controller_type_unit * HD_CONTROLLER_NEXT_UNIT);
-				SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_hfdlg.ci.controller_type != HD_CONTROLLER_TYPE_PCMCIA ? current_hfdlg.ci.controller_unit : current_hfdlg.ci.controller_type_unit, 0);
+				SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_hfdlg.ci.controller_unit, 0);
 				SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_TYPE, CB_SETCURSEL, current_hfdlg.ci.controller_media_type, 0);
 				SendDlgItemMessage(hDlg, IDC_HDF_FEATURE_LEVEL, CB_SETCURSEL, current_hfdlg.ci.unit_feature_level, 0);
 			}
@@ -14720,7 +14850,7 @@ static INT_PTR CALLBACK HarddriveSettingsProc (HWND hDlg, UINT msg, WPARAM wPara
 						if (!(flags & 1))
 							current_hfdlg.ci.loadidentity = false;
 						gui_set_string_cursor(hdmenutable, hDlg, IDC_HDF_CONTROLLER, current_hfdlg.ci.controller_type + current_hfdlg.ci.controller_type_unit * MAX_DUPLICATE_EXPANSION_BOARDS);
-						SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_hfdlg.ci.controller_type != HD_CONTROLLER_TYPE_PCMCIA ? current_hfdlg.ci.controller_unit : current_hfdlg.ci.controller_type_unit, 0);
+						SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_hfdlg.ci.controller_unit, 0);
 						CheckDlgButton(hDlg, IDC_HDF_RW, !current_hfdlg.ci.readonly);
 						_tcscpy (current_hfdlg.ci.rootdir, hdf_getnameharddrive ((int)posn, 4, &current_hfdlg.ci.blocksize, NULL, NULL));
 						setharddrive(hDlg);
@@ -14739,17 +14869,14 @@ static INT_PTR CALLBACK HarddriveSettingsProc (HWND hDlg, UINT msg, WPARAM wPara
 					SetDlgItemText(hDlg, IDC_HDFINFO3, _T(""));
 					updatehdfinfo (hDlg, true, true);
 					inithdcontroller(hDlg, current_hfdlg.ci.controller_type, current_hfdlg.ci.controller_type_unit, UAEDEV_HDF, current_hfdlg.ci.rootdir[0] != 0);
-					SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_hfdlg.ci.controller_type != HD_CONTROLLER_TYPE_PCMCIA ? current_hfdlg.ci.controller_unit : current_hfdlg.ci.controller_type_unit, 0);
+					SendDlgItemMessage(hDlg, IDC_HDF_CONTROLLER_UNIT, CB_SETCURSEL, current_hfdlg.ci.controller_unit, 0);
 					sethardfiletypes(hDlg);
 				}
 				break;
 			case IDC_HDF_CONTROLLER_UNIT:
 				posn = SendDlgItemMessage (hDlg, IDC_HDF_CONTROLLER_UNIT, CB_GETCURSEL, 0, 0);
 				if (posn != CB_ERR) {
-					if (current_hfdlg.ci.controller_type == HD_CONTROLLER_TYPE_PCMCIA)
-						current_hfdlg.ci.controller_type_unit = posn;
-					else
-						current_hfdlg.ci.controller_unit = posn;
+					current_hfdlg.ci.controller_unit = posn;
 				}
 				break;
 			case IDC_HDF_CONTROLLER_TYPE:
@@ -14808,6 +14935,7 @@ static INT_PTR CALLBACK HarddriveSettingsProc (HWND hDlg, UINT msg, WPARAM wPara
 		recursive--;
 		break;
 	}
+	commonproc(hDlg, msg, wParam, lParam);
 	return FALSE;
 }
 
@@ -14863,8 +14991,7 @@ static void new_hardfile (HWND hDlg, int entry)
 		struct hardfiledata *hfd = get_hardfile_data (uci->configoffset);
 		if (hfd)
 			hardfile_media_change (hfd, &ci, true, false);
-		else
-			hardfile_added(&ci);
+		pcmcia_disk_reinsert(&workprefs, &uci->ci, false);
 	}
 }
 
@@ -14877,8 +15004,7 @@ static void new_harddrive (HWND hDlg, int entry)
 		struct hardfiledata *hfd = get_hardfile_data (uci->configoffset);
 		if (hfd)
 			hardfile_media_change (hfd, &current_hfdlg.ci, true, false);
-		else
-			hardfile_added(&current_hfdlg.ci);
+		pcmcia_disk_reinsert(&workprefs, &uci->ci, false);
 	}
 }
 
@@ -15125,9 +15251,11 @@ static void harddiskdlg_volume_notify (HWND hDlg, NM_LISTVIEW *nmlistview)
 /* harddisk parent view */
 static INT_PTR CALLBACK HarddiskDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg) {
 	case WM_INITDIALOG:
-		scaleresource_setfont (hDlg);
 		clicked_entry = 0;
 		pages[HARDDISK_ID] = hDlg;
 		currentpage = HARDDISK_ID;
@@ -15681,7 +15809,13 @@ static void deletesaveimage (HWND hDlg, int num)
 		return;
 	p = DISK_get_saveimagepath(workprefs.floppyslots[num].df, -2);
 	if (zfile_exists (p)) {
-		DeleteFile (p);
+		if (!DeleteFile(p)) {
+			struct mystat st;
+			if (my_stat(p, &st)) {
+				my_chmod(p, st.mode | FILEFLAG_WRITE);
+				DeleteFile(p);
+			}
+		}
 		if (!full_property_sheet)
 			DISK_reinsert (num);
 		addfloppytype (hDlg, num);
@@ -15745,6 +15879,9 @@ static INT_PTR CALLBACK FloppyDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARA
 	static TCHAR diskname[40] = { _T("") };
 	static int dropopen;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 	case WM_INITDIALOG:
@@ -15752,7 +15889,6 @@ static INT_PTR CALLBACK FloppyDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARA
 			TCHAR ft35dd[20], ft35hd[20], ft35ddpc[20], ft35hdpc[20],  ft525sd[20], ftdis[20], ft35ddescom[20];
 			int df0texts[] = { IDC_DF0TEXT, IDC_DF1TEXT, IDC_DF2TEXT, IDC_DF3TEXT, -1 };
 
-			scaleresource_setfont (hDlg);
 			WIN32GUI_LoadUIString (IDS_FLOPPYTYPE35DD, ft35dd, sizeof ft35dd / sizeof (TCHAR));
 			WIN32GUI_LoadUIString (IDS_FLOPPYTYPE35HD, ft35hd, sizeof ft35hd / sizeof (TCHAR));
 			WIN32GUI_LoadUIString (IDS_FLOPPYTYPE35DDPC, ft35ddpc, sizeof ft35ddpc / sizeof (TCHAR));
@@ -16084,10 +16220,12 @@ static INT_PTR CALLBACK SwapperDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPAR
 	static int entry;
 	TCHAR tmp[MAX_DPATH];
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 	case WM_INITDIALOG:
-		scaleresource_setfont (hDlg);
 		pages[DISK_ID] = hDlg;
 		currentpage = DISK_ID;
 		InitializeListView (hDlg);
@@ -16387,6 +16525,9 @@ static const int joysm[] = { IDC_PORT0_JOYSMODE, IDC_PORT1_JOYSMODE, -1, -1 };
 static const int joysaf[] = { IDC_PORT0_AF, IDC_PORT1_AF, -1, -1 };
 static const int joyremap[] = { IDC_PORT0_REMAP, IDC_PORT1_REMAP, IDC_PORT2_REMAP, IDC_PORT3_REMAP };
 
+#define MAX_PORTSUBMODES 16
+static int portsubmodes[MAX_PORTSUBMODES];
+
 static void updatejoyport (HWND hDlg, int changedport)
 {
 	int i, j;
@@ -16412,7 +16553,7 @@ static void updatejoyport (HWND hDlg, int changedport)
 		int id = joys[i];
 		int idm = joysm[i];
 		int v = workprefs.jports[i].id;
-		int vm = workprefs.jports[i].mode;
+		int vm = workprefs.jports[i].mode + workprefs.jports[i].submode;
 		TCHAR *p1, *p2;
 
 		if (idm > 0)
@@ -16497,6 +16638,7 @@ static void values_from_gameportsdlg (HWND hDlg, int d, int changedport)
 		int idx = 0;
 		int *port = &workprefs.jports[i].id;
 		int *portm = &workprefs.jports[i].mode;
+		int *portsm = &workprefs.jports[i].submode;
 		int prevport = *port;
 		int id = joys[i];
 		int idm = joysm[i];
@@ -16523,7 +16665,22 @@ static void values_from_gameportsdlg (HWND hDlg, int d, int changedport)
 		if (idm >= 0) {
 			v = SendDlgItemMessage (hDlg, idm, CB_GETCURSEL, 0, 0L);
 			if (v != CB_ERR) {
-				*portm = v;
+				int vcnt = 0;
+				*portsm = 0;
+				for (int j = 0; j < MAX_PORTSUBMODES; j++) {
+					if (v <= 0)
+						break;
+					if (portsubmodes[j] > 0) {
+						if (v <= portsubmodes[j]) {
+							*portsm = v;
+						}
+						v -= portsubmodes[j];
+					} else {
+						v--;
+						vcnt++;
+					}
+				}
+				*portm = vcnt;
 			}
 				
 		}
@@ -16778,6 +16935,9 @@ static void init_portsdlg (HWND hDlg)
 	SendDlgItemMessage(hDlg, IDC_DONGLELIST, CB_ADDSTRING, 0, (LPARAM)_T("Cricket Captain"));
 	SendDlgItemMessage(hDlg, IDC_DONGLELIST, CB_ADDSTRING, 0, (LPARAM)_T("Leviathan"));
 	SendDlgItemMessage(hDlg, IDC_DONGLELIST, CB_ADDSTRING, 0, (LPARAM)_T("Music Master"));
+	SendDlgItemMessage(hDlg, IDC_DONGLELIST, CB_ADDSTRING, 0, (LPARAM)_T("Logistics/SuperBase"));
+	SendDlgItemMessage(hDlg, IDC_DONGLELIST, CB_ADDSTRING, 0, (LPARAM)_T("Scala MM (Red)"));
+	SendDlgItemMessage(hDlg, IDC_DONGLELIST, CB_ADDSTRING, 0, (LPARAM)_T("Scala MM (Green)"));
 
 	SendDlgItemMessage (hDlg, IDC_SERIAL, CB_RESETCONTENT, 0, 0L);
 	SendDlgItemMessage (hDlg, IDC_SERIAL, CB_ADDSTRING, 0, (LPARAM)szNone.c_str());
@@ -16904,12 +17064,14 @@ static INT_PTR CALLBACK GamePortsDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LP
 	static int first;
 	int temp, i;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 	case WM_INITDIALOG:
 		{
 			recursive++;
-			scaleresource_setfont (hDlg);
 			pages[GAMEPORTS_ID] = hDlg;
 			currentpage = GAMEPORTS_ID;
 
@@ -16976,28 +17138,34 @@ static INT_PTR CALLBACK GamePortsDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LP
 			}
 			SendDlgItemMessage(hDlg, IDC_PORT_TABLET_MODE, CB_SETCURSEL, workprefs.input_tablet == TABLET_REAL ? 1 : 0, 0);
 
+			const int joys[] = { IDS_JOYMODE_DEFAULT, IDS_JOYMODE_WHEELMOUSE, IDS_JOYMODE_MOUSE,
+				IDS_JOYMODE_JOYSTICK, IDS_JOYMODE_GAMEPAD, IDS_JOYMODE_JOYSTICKANALOG,
+				IDS_JOYMODE_MOUSE_CDTV, IDS_JOYMODE_JOYSTICK_CD32,
+				IDS_JOYMODE_LIGHTPEN,
+				0 };
+
 			for (i = 0; i < 2; i++) {
 				int id = i == 0 ? IDC_PORT0_JOYSMODE : IDC_PORT1_JOYSMODE;
-				SendDlgItemMessage (hDlg, id, CB_RESETCONTENT, 0, 0L);
-				WIN32GUI_LoadUIString (IDS_JOYMODE_DEFAULT, tmp, MAX_DPATH);
-				SendDlgItemMessage (hDlg, id, CB_ADDSTRING, 0, (LPARAM)tmp);
-				WIN32GUI_LoadUIString (IDS_JOYMODE_WHEELMOUSE, tmp, MAX_DPATH);
-				SendDlgItemMessage (hDlg, id, CB_ADDSTRING, 0, (LPARAM)tmp);
-				WIN32GUI_LoadUIString (IDS_JOYMODE_MOUSE, tmp, MAX_DPATH);
-				SendDlgItemMessage (hDlg, id, CB_ADDSTRING, 0, (LPARAM)tmp);
-				WIN32GUI_LoadUIString (IDS_JOYMODE_JOYSTICK, tmp, MAX_DPATH);
-				SendDlgItemMessage (hDlg, id, CB_ADDSTRING, 0, (LPARAM)tmp);
-				WIN32GUI_LoadUIString (IDS_JOYMODE_GAMEPAD, tmp, MAX_DPATH);
-				SendDlgItemMessage (hDlg, id, CB_ADDSTRING, 0, (LPARAM)tmp);
-				WIN32GUI_LoadUIString (IDS_JOYMODE_JOYSTICKANALOG, tmp, MAX_DPATH);
-				SendDlgItemMessage (hDlg, id, CB_ADDSTRING, 0, (LPARAM)tmp);
-				WIN32GUI_LoadUIString (IDS_JOYMODE_MOUSE_CDTV, tmp, MAX_DPATH);
-				SendDlgItemMessage (hDlg, id, CB_ADDSTRING, 0, (LPARAM)tmp);
-				WIN32GUI_LoadUIString (IDS_JOYMODE_JOYSTICK_CD32, tmp, MAX_DPATH);
-				SendDlgItemMessage (hDlg, id, CB_ADDSTRING, 0, (LPARAM)tmp);
-				WIN32GUI_LoadUIString (IDS_JOYMODE_LIGHTPEN, tmp, MAX_DPATH);
-				SendDlgItemMessage(hDlg, id, CB_ADDSTRING, 0, (LPARAM)tmp);
+				SendDlgItemMessage(hDlg, id, CB_RESETCONTENT, 0, 0L);
+				for (int j = 0; joys[j]; j++) {
+					WIN32GUI_LoadUIString(joys[j], tmp, MAX_DPATH);
+					p1 = tmp;
+					_tcscat(p1, _T("\n"));
+					for (;;) {
+						TCHAR *p2 = _tcschr(p1, '\n');
+						if (!p2)
+							break;
+						*p2++ = 0;
+						SendDlgItemMessage(hDlg, id, CB_ADDSTRING, 0, (LPARAM)p1);
+						p1 = p2;
+					}
+				}
 			}
+			for (int i = 0; i < MAX_PORTSUBMODES; i++) {
+				portsubmodes[i] = 0;
+			}
+			portsubmodes[8] = 2;
+			portsubmodes[9] = -1;
 
 			inputdevice_updateconfig (NULL, &workprefs);
 			enable_for_gameportsdlg (hDlg);
@@ -17088,11 +17256,13 @@ static INT_PTR CALLBACK IOPortsDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPAR
 {
 	static int recursive = 0;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 	case WM_INITDIALOG:
 		recursive++;
-		scaleresource_setfont (hDlg);
 		pages[IOPORTS_ID] = hDlg;
 		currentpage = IOPORTS_ID;
 		init_portsdlg (hDlg);
@@ -17838,9 +18008,11 @@ static void CALLBACK timerfunc (HWND hDlg, UINT uMsg, UINT_PTR idEvent, DWORD dw
 					inputdevice_set_device_status (devnum, TRUE);
 					values_to_inputdlg (hDlg);
 				}
-				ListView_EnsureVisible (GetDlgItem (hDlg, IDC_INPUTLIST), input_selected_widget, FALSE);
-				ListView_SetItemState (GetDlgItem (hDlg, IDC_INPUTLIST), -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
-				ListView_SetItemState (GetDlgItem (hDlg, IDC_INPUTLIST), input_selected_widget, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+				HWND list = GetDlgItem(hDlg, IDC_INPUTLIST);
+				int itemindex = input_get_lv_index(list, input_selected_widget);
+				ListView_EnsureVisible (list, itemindex, FALSE);
+				ListView_SetItemState (list, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
+				ListView_SetItemState (list, itemindex, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
 				if (rawmode == 1) {
 					input_find (hDlg, myDlg, 0, FALSE, false);
 					if (IsWindowEnabled (GetDlgItem (hDlg, IDC_INPUTAMIGA))) {
@@ -18078,6 +18250,8 @@ static INT_PTR CALLBACK RemapSpecialsProc(HWND hDlg, UINT msg, WPARAM wParam, LP
 	static int recursive = 0;
 	HWND list = GetDlgItem(hDlg, IDC_LISTDIALOG_LIST);
 
+	if (dialog_inhibit)
+		return 0;
 
 	switch (msg)
 	{
@@ -18165,6 +18339,9 @@ static void input_remapspecials(HWND hDlg)
 
 static INT_PTR CALLBACK InputMapDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+	if (dialog_inhibit)
+		return 0;
+
 	static int recursive;
 	HWND h = GetDlgItem (hDlg, IDC_INPUTMAPLIST);
 	TCHAR tmp[256];
@@ -18178,7 +18355,6 @@ static INT_PTR CALLBACK InputMapDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPA
 		return TRUE;
 	case WM_INITDIALOG:
 	{
-		scaleresource_setfont (hDlg);
 		inputmap_port_remap = -1;
 		inputmap_remap_counter = -1;
 		inputmap_view_offset = 0;
@@ -18316,6 +18492,7 @@ static INT_PTR CALLBACK InputMapDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPA
 	break;
 	}
 	handlerawinput (hDlg, msg, wParam, lParam);
+	commonproc(hDlg, msg, wParam, lParam);
 	return FALSE;
 }
 
@@ -18470,6 +18647,9 @@ static void qualifierlistview (HWND list)
 
 static INT_PTR CALLBACK QualifierProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+	if (dialog_inhibit)
+		return 0;
+
 	static int recursive = 0;
 	HWND list = GetDlgItem (hDlg, IDC_LISTDIALOG_LIST);
 
@@ -18573,6 +18753,7 @@ static INT_PTR CALLBACK QualifierProc (HWND hDlg, UINT msg, WPARAM wParam, LPARA
 		recursive--;
 		break;
 	}
+	commonproc(hDlg, msg, wParam, lParam);
 	return FALSE;
 }
 
@@ -18663,11 +18844,13 @@ static INT_PTR CALLBACK InputDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM
 	int items = 0, entry = 0;
 	static int recursive;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 	case WM_INITDIALOG:
 		recursive++;
-		scaleresource_setfont (hDlg);
 		pages[INPUT_ID] = hDlg;
 		currentpage = INPUT_ID;
 		inputdevice_updateconfig (NULL, &workprefs);
@@ -19542,6 +19725,9 @@ static INT_PTR CALLBACK hw3dDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM 
 	int i;
 	static int filteroverlaypos = -1;
 	static bool firstinit;
+	
+	if (dialog_inhibit)
+		return 0;
 
 	switch (msg)
 	{
@@ -19569,7 +19755,6 @@ static INT_PTR CALLBACK hw3dDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM 
 			}
 			firstinit = true;
 		}
-		scaleresource_setfont (hDlg);
 		pages[HW3D_ID] = hDlg;
 		currentpage = HW3D_ID;
 		SendDlgItemMessage (hDlg, IDC_FILTERASPECT, CB_RESETCONTENT, 0, 0);
@@ -19954,10 +20139,12 @@ static INT_PTR CALLBACK AVIOutputDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LP
 	static int recursive = 0;
 	TCHAR tmp[1000];
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch(msg)
 	{
 	case WM_INITDIALOG:
-		scaleresource_setfont (hDlg);
 		pages[AVIOUTPUT_ID] = hDlg;
 		currentpage = AVIOUTPUT_ID;
 		AVIOutput_GetSettings ();
@@ -20430,10 +20617,7 @@ static HWND updatePanel (int id, UINT action)
 	HWND hDlg = guiDlg;
 	static HWND hwndTT;
 	static bool first = true;
-	RECT r1c, r1w, r2c, r2w, r3c, r3w;
-	int w, h, x , y, i, pw, ph;
 	int fullpanel;
-	struct newresource *tres;
 
 	SaveListView(panelDlg, false);
 	listview_id = 0;
@@ -20466,7 +20650,7 @@ static HWND updatePanel (int id, UINT action)
 		DestroyWindow (ToolTipHWND);
 		ToolTipHWND = NULL;
 	}
-	for (i = 0; ToolTipHWNDS2[i].hwnd; i++) {
+	for (int i = 0; ToolTipHWNDS2[i].hwnd; i++) {
 		DestroyWindow (ToolTipHWNDS2[i].hwnd);
 		ToolTipHWNDS2[i].hwnd = NULL;
 	}
@@ -20494,34 +20678,16 @@ static HWND updatePanel (int id, UINT action)
 		return NULL;
 	}
 
-	GetWindowRect (GetDlgItem (hDlg, IDC_PANEL_FRAME), &r1w);
-	GetClientRect (GetDlgItem (hDlg, IDC_PANEL_FRAME), &r1c);
-	GetWindowRect (hDlg, &r2w);
-	GetClientRect (hDlg, &r2c);
-	gui_width = r2c.right;
-	gui_height = r2c.bottom;
-
 	fullpanel = ppage[id].fullpanel;
-	tres = scaleresource (ppage[id].nres, hDlg, -1, 0, 0, false);
-	panelDlg = CreateDialogIndirectParam (tres->inst, tres->resource, hDlg, ppage[id].dlgproc, id);
-	freescaleresource(tres);
-	
-	GetWindowRect (hDlg, &r3w);
-	GetClientRect (panelDlg, &r3c);
-	x = r1w.left - r2w.left;
-	y = r1w.top - r2w.top;
-	w = r3c.right - r3c.left + 1;
-	h = r3c.bottom - r3c.top + 1;
-	pw = r1w.right - r1w.left + 1;
-	ph = r1w.bottom - r1w.top + 1;
-	SetWindowPos (panelDlg, HWND_TOP, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOOWNERZORDER);
-	GetWindowRect (panelDlg, &r3w);
-	GetClientRect (panelDlg, &r3c);
-	x -= r3w.left - r2w.left - 1;
-	y -= r3w.top - r2w.top - 1;
-	if (!fullpanel) {
-		SetWindowPos (panelDlg, HWND_TOP, x + (pw - w) / 2, y + (ph - h) / 2, 0, 0, SWP_NOSIZE | SWP_NOOWNERZORDER);
-	}
+	struct newresource *res = ppage[id].nres;
+	scaleresource (res, &maindctx, hDlg, -1, 0, 0, id + 1);
+	res->parent = panelresource;
+	panelresource->child = res;
+	panelDlg = x_CreateDialogIndirectParam(res->inst, res->resource, hDlg, ppage[id].dlgproc, id, res);
+
+	rescaleresource(panelresource, false);
+
+	freescaleresource(res);
 
 	ShowWindow (GetDlgItem (hDlg, IDC_PANEL_FRAME), SW_HIDE);
 	ShowWindow (GetDlgItem (hDlg, IDC_PANEL_FRAME_OUTER), !fullpanel ? SW_SHOW : SW_HIDE);
@@ -20711,6 +20877,33 @@ static bool dodialogmousemove(void)
 	return true;
 }
 
+void getguipos(int *xp, int *yp)
+{
+	int x = 10, y = 10;
+	if (gui_fullscreen) {
+		x = gui_fullscreen_rect.left;
+		y = gui_fullscreen_rect.top;
+	} else {
+		if (isfullscreen() == 0) {
+			regqueryint(NULL, _T("GUIPosX"), &x);
+			regqueryint(NULL, _T("GUIPosY"), &y);
+		} else if (isfullscreen() < 0) {
+			regqueryint(NULL, _T("GUIPosFWX"), &x);
+			regqueryint(NULL, _T("GUIPosFWY"), &y);
+		} else if (isfullscreen() > 0) {
+			regqueryint(NULL, _T("GUIPosFSX"), &x);
+			regqueryint(NULL, _T("GUIPosFSY"), &y);
+			if (dodialogmousemove()) {
+				struct MultiDisplay *mdc = getdisplay(&currprefs, 0);
+				x = mdc->rect.left;
+				y = mdc->rect.top;
+			}
+		}
+	}
+	*xp = x;
+	*yp = y;
+}
+
 static void centerWindow (HWND hDlg)
 {
 	RECT rc, rcDlg, rcOwner;
@@ -20722,24 +20915,7 @@ static void centerWindow (HWND hDlg)
 	if (owner == NULL)
 		owner = GetDesktopWindow ();
 
-	if (gui_fullscreen) {
-		x = y = 0;
-	} else {
-		if (isfullscreen () == 0) {
-			regqueryint (NULL, _T("GUIPosX"), &x);
-			regqueryint (NULL, _T("GUIPosY"), &y);
-		} else if (isfullscreen () < 0) {
-			regqueryint (NULL, _T("GUIPosFWX"), &x);
-			regqueryint (NULL, _T("GUIPosFWY"), &y);
-		} else if (isfullscreen () > 0) {
-			regqueryint (NULL, _T("GUIPosFSX"), &x);
-			regqueryint (NULL, _T("GUIPosFSY"), &y);
-			if (dodialogmousemove ()) {
-				x = mdc->rect.left;
-				y = mdc->rect.top;
-			}
-		}
-	}
+	getguipos(&x, &y);
 	pt1.x = x + 100;
 	pt1.y = y + (GetSystemMetrics (SM_CYMENU) + GetSystemMetrics (SM_CYBORDER)) / 2;
 	pt2.x = x + gui_width - 100;
@@ -20809,11 +20985,15 @@ static int floppyslot_addfile (struct uae_prefs *prefs, const TCHAR *file, int d
 	return drv;
 }
 
-static int do_filesys_insert (const TCHAR *root)
+static int do_filesys_insert (const TCHAR *root, int total)
 {
-	if (filesys_insert (-1, NULL, root, 0, 0) == 0)
-		return filesys_media_change (root, 2, NULL);
-	return 0;
+	if (total <= 1) {
+		if (filesys_insert(-1, NULL, root, 0, 0))
+			return 1;
+		return filesys_media_change(root, 2, NULL);
+	}
+	filesys_media_change_queue(root, total);
+	return 1;
 }
 
 static bool draghit(DWORD id, POINT pt)
@@ -20842,6 +21022,7 @@ int dragdrop (HWND hDlg, HDROP hd, struct uae_prefs *prefs, int	currentpage)
 	TCHAR *dragrompath = NULL;
 	int corner = -1;
 
+	filesys_media_change_queue(NULL, -1);
 	DragQueryPoint (hd, &pt);
 	pt.y += GetSystemMetrics (SM_CYMENU) + GetSystemMetrics (SM_CYBORDER);
 	cnt = DragQueryFile (hd, 0xffffffff, NULL, 0);
@@ -20966,7 +21147,7 @@ int dragdrop (HWND hDlg, HDROP hd, struct uae_prefs *prefs, int	currentpage)
 		if (drvdrag) {
 			type = ZFILE_DISKIMAGE;
 		} else if ((zip || harddrive) && type != ZFILE_DISKIMAGE) {
-			if (do_filesys_insert (file))
+			if (do_filesys_insert (file, cnt))
 				continue;
 			if (zip) {
 				struct zfile *z2 = zfile_fopen (file, _T("rb"), mask);
@@ -20991,7 +21172,7 @@ int dragdrop (HWND hDlg, HDROP hd, struct uae_prefs *prefs, int	currentpage)
 				_tcscpy (current_fsvdlg.ci.rootdir, file);
 				add_filesys_config (&workprefs, -1, &current_fsvdlg.ci);
 			} else if (harddrive) {
-				do_filesys_insert (file);
+				do_filesys_insert (file, cnt);
 			} else {
 				drv = floppyslot_addfile (prefs, file, drv, firstdrv, i);
 				if (drv < 0)
@@ -21013,7 +21194,7 @@ int dragdrop (HWND hDlg, HDROP hd, struct uae_prefs *prefs, int	currentpage)
 		case ZFILE_HDF:
 			if (flags & FILE_ATTRIBUTE_DIRECTORY) {
 				if (!full_property_sheet && currentpage < 0) {
-					do_filesys_insert (file);
+					do_filesys_insert (file, cnt);
 				} else {
 					default_fsvdlg (&current_fsvdlg);
 					_tcscpy (current_fsvdlg.ci.rootdir, file);
@@ -21057,14 +21238,14 @@ int dragdrop (HWND hDlg, HDROP hd, struct uae_prefs *prefs, int	currentpage)
 			break;
 		default:
 			if (currentpage < 0 && !full_property_sheet) {
-				do_filesys_insert (file);
+				do_filesys_insert (file, cnt);
 			} else if (currentpage == HARDDISK_ID) {
 				default_fsvdlg (&current_fsvdlg);
 				_tcscpy (current_fsvdlg.ci.rootdir, file);
 				_tcscpy (current_fsvdlg.ci.volname, filepart);
 				add_filesys_config (&workprefs, -1, &current_fsvdlg.ci);
 				if (!full_property_sheet)
-					do_filesys_insert (file);
+					do_filesys_insert (file, cnt);
 			} else {
 				rd = scan_arcadia_rom (file, 0);
 				if (rd) {
@@ -21078,13 +21259,10 @@ int dragdrop (HWND hDlg, HDROP hd, struct uae_prefs *prefs, int	currentpage)
 		}
 	}
 	DragFinish (hd);
+	filesys_media_change_queue(NULL, 0);
 	set_config_changed ();
 	return ret;
 }
-
-#ifndef WM_DPICHANGED
-#define WM_DPICHANGED       0x02E0
-#endif
 
 static int dialogreturn;
 static int devicechangetimer = -1;
@@ -21093,21 +21271,25 @@ static INT_PTR CALLBACK DialogProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 	static int recursive = 0;
 	static int oldwidth, oldheight;
 
+	if (dialog_inhibit)
+		return 0;
+
 	switch (msg)
 	{
 	case  WM_DPICHANGED:
 	{
-		if (!gui_size_changed && hGUIWnd != NULL) {
+		if (gui_size_changed <= 1 && hGUIWnd) {
 			int dx = LOWORD(wParam);
 			int dy = HIWORD(wParam);
-			if (dx != previous_dpix || dy != previous_dpiy) {
-				RECT *r = (RECT*)lParam;
-				previous_dpix = dx;
-				previous_dpiy = dy;
-				gui_width = (r->right - r->left);
-				gui_height = (r->bottom - r->top);
-				gui_size_changed = 1;
-			}
+			RECT *const r = (RECT*)lParam;
+			gui_size_changed = 0;
+			gui_width = (r->right - r->left);
+			gui_height = (r->bottom - r->top);
+			oldwidth = gui_width;
+			oldheight = gui_height;
+			saveguisize();
+			SetWindowPos(hDlg, NULL, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+			scaleresource_setsize(gui_width, gui_height, 0);
 		}
 	}
 	break;
@@ -21117,9 +21299,18 @@ static INT_PTR CALLBACK DialogProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 	case WM_MOVE:
 		move_box_art_window();
 		return TRUE;
+	case WM_SIZE:
+		if (!gui_size_changed && hGUIWnd && (wParam == SIZE_MAXIMIZED || wParam == SIZE_RESTORED)) {
+			getguisize(hDlg, &gui_width, &gui_height);
+			oldwidth = gui_width;
+			oldheight = gui_height;
+			saveguisize();
+			gui_size_changed = 1;
+			return 0;
+		}
+		break;
 	case WM_SIZING:
 	{
-		close_box_art_window();
 		if (!recursive && gui_resize_enabled) {
 			RECT *r = (RECT*)lParam;
 			if (r->right - r->left < MIN_GUI_INTERNAL_WIDTH)
@@ -21196,7 +21387,7 @@ static INT_PTR CALLBACK DialogProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 		devicechangetimer = 0;
 		addnotifications (hDlg, TRUE, TRUE);
 		updatePanel (-1, 0);
-		show_box_art(NULL);
+		show_box_art(NULL, NULL);
 		DestroyWindow(hDlg);
 		if (dialogreturn < 0) {
 			dialogreturn = 0;
@@ -21208,7 +21399,6 @@ static INT_PTR CALLBACK DialogProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 		return TRUE;
 	case WM_INITDIALOG:
 		guiDlg = hDlg;
-		scaleresource_setfont (hDlg);
 		SendMessage (hDlg, WM_SETICON, ICON_SMALL, (LPARAM)LoadIcon (GetModuleHandle (NULL), MAKEINTRESOURCE(IDI_APPICON)));
 		if (full_property_sheet) {
 			TCHAR tmp[100];
@@ -21345,8 +21535,8 @@ struct newresource *getresource (int tmpl)
 	if (!newres)
 		return NULL;
 	memcpy ((void*)newres, resdata, size);
-	nr->resource = newres;
-	nr->size = size;
+	nr->sourceresource = newres;
+	nr->sourcesize = size;
 	nr->tmpl = tmpl;
 	nr->inst = inst;
 	return nr;
@@ -21354,16 +21544,16 @@ struct newresource *getresource (int tmpl)
 
 INT_PTR CustomDialogBox (int templ, HWND hDlg, DLGPROC proc)
 {
-	struct newresource *res, *r;
+	struct newresource *res;
+	struct dlgcontext dctx;
 	INT_PTR h = -1;
 
 	res = getresource (templ);
 	if (!res)
 		return h;
-	r = scaleresource (res, hDlg, -1, 0, 0, false);
-	if (r) {
-		h = DialogBoxIndirect (r->inst, r->resource, hDlg, proc);
-		freescaleresource (r);
+	if (scaleresource (res, &dctx, hDlg, -1, 0, 0, -1)) {
+		res->parent = panelresource;
+		h = DialogBoxIndirect (res->inst, res->resource, hDlg, proc);
 	}
 	customDlgType = 0;
 	customDlg = NULL;
@@ -21373,16 +21563,16 @@ INT_PTR CustomDialogBox (int templ, HWND hDlg, DLGPROC proc)
 
 HWND CustomCreateDialog (int templ, HWND hDlg, DLGPROC proc)
 {
-	struct newresource *res, *r;
+	struct newresource *res;
+	struct dlgcontext dctx;
 	HWND h = NULL;
 
 	res = getresource (templ);
 	if (!res)
 		return h;
-	r = scaleresource (res, hDlg, -1, 0, 0, false);
-	if (r) {
-		h = CreateDialogIndirect (r->inst, r->resource, hDlg, proc);
-		freescaleresource (r);
+	if (scaleresource (res, &dctx, hDlg, -1, 0, 0, -1)) {
+		res->parent = panelresource;
+		h = x_CreateDialogIndirectParam(res->inst, res->resource, hDlg, proc, NULL, res);
 	}
 	freescaleresource (res);
 	return h;
@@ -21516,8 +21706,6 @@ static int GetSettings (int all_options, HWND hwnd)
 	int psresult;
 	HWND dhwnd;
 	int first = 0;
-	static struct newresource *panelresource;
-	struct newresource *tres;
 	bool closed = false;
 
 	gui_active++;
@@ -21576,13 +21764,16 @@ static int GetSettings (int all_options, HWND hwnd)
 	}
 
 	int fmultx = 0, fmulty = 0;
-	setdefaultguisize ();
+	int resetcount = 0;
+	bool boxart_reopen = false;
+	setdefaultguisize(0);
 	getstoredguisize();
+	scaleresource_setsize(-1, -1, -1);
 	for (;;) {
 		int v = 0;
 		int regexists;
 		regexists = regqueryint (NULL, _T("GUIResize"), &v);
-		gui_fullscreen = false;
+		gui_fullscreen = 0;
 		gui_resize_allowed = true;
 		gui_resize_enabled = v != 0;
 		v = 0;
@@ -21590,22 +21781,24 @@ static int GetSettings (int all_options, HWND hwnd)
 		if (v) {
 			gui_resize_allowed = false;
 			gui_resize_enabled = true;
-			gui_fullscreen = true;
+			gui_fullscreen = 1;
 		}
-		if (!gui_fullscreen) {
-			setdefaultguisize ();
+		if (!gui_fullscreen && !gui_size_changed) {
+			setdefaultguisize(0);
 			getstoredguisize();
 		}
+		gui_size_changed = 0;
 		if (!regexists) {
-			scaleresource_setdefaults ();
+			scaleresource_setdefaults(hwnd);
 			fmultx = 0;
 			write_log (_T("GUI default size\n"));
 			regsetint (NULL, _T("GUIResize"), 0);
 			regsetint (NULL, _T("GUIFullscreen"), 0);
 		} else {
 			if (gui_width < MIN_GUI_INTERNAL_WIDTH || gui_width > 4096 || gui_height < MIN_GUI_INTERNAL_HEIGHT || gui_height > 4096) {
-				scaleresource_setdefaults ();
-				setdefaultguisize ();
+				scaleresource_setdefaults(hwnd);
+				setdefaultguisize(resetcount > 0);
+				resetcount++;
 				fmultx = 0;
 				write_log (_T("GUI size reset\n"));
 			}
@@ -21619,6 +21812,7 @@ static int GetSettings (int all_options, HWND hwnd)
 		if (first)
 			write_log (_T("Entering GUI idle loop\n"));
 
+		memset(&gui_fullscreen_rect, 0, sizeof(RECT));
 		if (gui_fullscreen) {
 			gui_width = GetSystemMetrics(SM_CXSCREEN);
 			gui_height = GetSystemMetrics(SM_CYSCREEN);
@@ -21639,19 +21833,34 @@ static int GetSettings (int all_options, HWND hwnd)
 					gui_height = h;
 					write_log(_T("GUI Fullscreen %dx%d\n"), gui_width, gui_height);
 				}
+			} else {
+				int x = 0, y = 0, w = 0, h = 0;
+				regqueryint(NULL, _T("GUIPosX"), &x);
+				regqueryint(NULL, _T("GUIPosY"), &y);
+				regqueryint(NULL, _T("GUISizeX"), &w);
+				regqueryint(NULL, _T("GUISizeY"), &h);
+				POINT pt;
+				pt.x = x + w / 2;
+				pt.y = y + h / 2;
+				HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
+				MONITORINFO mi;
+				mi.cbSize = sizeof(mi);
+				if (GetMonitorInfo(mon, &mi)) {
+					RECT *r = &mi.rcWork;
+					gui_fullscreen_rect = *r;
+					gui_width = r->right - r->left;
+					gui_height = r->bottom - r->top;
+				}
 			}
-			scaleresource_setmult (hwnd, gui_width, gui_height, 1);
+			scaleresource_setsize(gui_width, gui_height, 1);
 			int gw = gui_width;
 			int gh = gui_height;
 			getstoredguisize();
 			gui_width = gw;
 			gui_height = gh;
-			scaleresource_setmult (hwnd, gui_width, gui_height, 1);
+			scaleresource_setsize(gui_width, gui_height, 1);
 		} else {
-			if (fmultx > 0)
-				scaleresource_setmult (hwnd, -fmultx, -fmulty, 0);
-			else
-				scaleresource_setmult (hwnd, gui_width, gui_height, 0);
+			scaleresource_setsize(gui_width, gui_height, 0);
 		}
 
 		if (hwnd != NULL)
@@ -21666,17 +21875,19 @@ static int GetSettings (int all_options, HWND hwnd)
 			}
 		}
 
-		tres = scaleresource (panelresource, hwnd, gui_resize_enabled, gui_fullscreen, workprefs.win32_gui_alwaysontop || workprefs.win32_main_alwaysontop ? WS_EX_TOPMOST : 0, true);
+		panelresource->width = gui_width;
+		panelresource->height = gui_height;
+		freescaleresource(panelresource);
+		scaleresource (panelresource, &maindctx, hwnd, gui_resize_enabled && gui_resize_allowed, gui_fullscreen, workprefs.win32_gui_alwaysontop || workprefs.win32_main_alwaysontop ? WS_EX_TOPMOST : 0, 0);
 		HWND phwnd = hwnd;
 		if (isfullscreen() == 0)
 			phwnd = 0;
 		if (isfullscreen() > 0 && currprefs.gfx_api > 1)
 			phwnd = 0;
-		dhwnd = CreateDialogIndirect (tres->inst, tres->resource, phwnd, DialogProc);
+		dhwnd = x_CreateDialogIndirectParam(panelresource->inst, panelresource->resource, phwnd, DialogProc, NULL, panelresource);
 		dialog_rect.top = dialog_rect.left = 0;
-		dialog_rect.right = tres->width;
-		dialog_rect.bottom = tres->height;
-		freescaleresource (tres);
+		dialog_rect.right = panelresource->width;
+		dialog_rect.bottom = panelresource->height;
 		psresult = 0;
 		if (dhwnd != NULL) {
 			int dw = GetSystemMetrics(SM_CXSCREEN);
@@ -21689,11 +21900,12 @@ static int GetSettings (int all_options, HWND hwnd)
 			write_log (_T("Got GUI size = %dx%d\n"), w, h);
 			if (w < 100 || h < 100 || (w > 8192 && w > dw + 500) || (h > 8192 && h > dh + 500)) {
 				write_log (_T("GUI size (%dx%d) out of range!\n"), w, h);
-				scaleresource_setdefaults ();
-				setdefaultguisize ();
+				scaleresource_setdefaults(hwnd);
+				setdefaultguisize(resetcount > 0);
 				SendMessage (dhwnd, WM_COMMAND, IDCANCEL, 0);
 				fmultx = fmulty = 0;
 				gui_size_changed = 10;
+				resetcount++;
 				goto gui_exit;
 			}
 
@@ -21703,6 +21915,7 @@ static int GetSettings (int all_options, HWND hwnd)
 			}
 
 			setguititle (dhwnd);
+			RedrawWindow(dhwnd, NULL, NULL, RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN);
 			ShowWindow (dhwnd, SW_SHOW);
 			MapDialogRect (dhwnd, &dialog_rect);
 
@@ -21710,6 +21923,11 @@ static int GetSettings (int all_options, HWND hwnd)
 			if (currentpage == LOADSAVE_ID) {
 				// update boxart
 				SendMessage(pages[LOADSAVE_ID], WM_USER + 1, 0, 0);
+				boxart_reopen = false;
+			}
+			if (boxart_reopen) {
+				reset_box_art_window();
+				boxart_reopen = false;
 			}
 			if (devicechangetimer < 0)
 				SetTimer(dhwnd, 4, 2000, NULL);
@@ -21756,15 +21974,27 @@ static int GetSettings (int all_options, HWND hwnd)
 				}
 				if (dialogreturn >= 0)
 					break;
-				if (gui_size_changed > 0 && gui_size_changed < 10) {
-					if (gui_size_changed == 2) {
-						getstoredguisize();
-						scaleresource_getmult (&fmultx, &fmulty);
+				if (gui_size_changed > 0) {
+					saveguisize();
+					regsetint(NULL, _T("GUIResize"), gui_resize_enabled ? 1 : 0);
+					regsetint(NULL, _T("GUIFullscreen"), gui_fullscreen > 0 ? 1 : 0);
+					if (gui_size_changed < 10) {
+						scaleresource_setsize(gui_width, gui_height, 0);
+						rescaleresource(panelresource, true);
+						gui_size_changed = 0;
+						reset_box_art_window();
 					} else {
-						fmultx = fmulty = 0;
+						close_box_art_window();
+						boxart_reopen = true;
 					}
-					gui_size_changed = 10;
-					SendMessage (dhwnd, WM_COMMAND, IDCANCEL, 0);
+				}
+				if (gui_size_changed >= 10) {
+					SendMessage(dhwnd, WM_COMMAND, IDCANCEL, 0);
+					scaleresource_setsize(-1, -1, -1);
+				}
+				if (gui_fullscreen < 0) {
+					// reset after IDCANCEL which would save coordinates
+					gui_fullscreen = 0;
 				}
 			}
 			psresult = dialogreturn;
@@ -21775,30 +22005,14 @@ static int GetSettings (int all_options, HWND hwnd)
 				pre_gui_message (_T("GUI failed to open"));
 				abort ();
 			}
-			setdefaultguisize ();
-			scaleresource_setdefaults ();
+			setdefaultguisize(count >= 2);
+			scaleresource_setdefaults(hwnd);
 			gui_size_changed = 10;
 		}
 gui_exit:
+		freescaleresource(panelresource);
 		if (!gui_size_changed)
 			break;
-		if (!gui_fullscreen) {
-			if (full_property_sheet || isfullscreen () == 0) {
-				regsetint (NULL, _T("GUISizeX"), gui_width);
-				regsetint (NULL, _T("GUISizeY"), gui_height);
-			} else if (isfullscreen () < 0) {
-				regsetint (NULL, _T("GUISizeFWX"), gui_width);
-				regsetint (NULL, _T("GUISizeFWY"), gui_height);
-			} else if (isfullscreen () > 0) {
-				regsetint (NULL, _T("GUISizeFSX"), gui_width);
-				regsetint (NULL, _T("GUISizeFSY"), gui_height);
-			}
-		}
-		if (gui_fullscreen < 0)
-			gui_fullscreen = 0;
-		regsetint (NULL, _T("GUIResize"), gui_resize_enabled ? 1 : 0);
-		regsetint (NULL, _T("GUIFullscreen"), gui_fullscreen ? 1 : 0);
-		gui_size_changed = 0;
 		quit_program = 0;
 	}
 
@@ -21957,6 +22171,7 @@ void gui_led (int led, int on, int brightness)
 	TCHAR *ptr, *tt, *p;
 	int pos = -1, j;
 	int writing = 0, playing = 0, active2 = 0;
+	int writeprotected = 0;
 	int center = 0;
 
 	indicator_leds (led, on);
@@ -21966,9 +22181,9 @@ void gui_led (int led, int on, int brightness)
 	if (D3D_led)
 		D3D_led(led, on, brightness);
 #ifdef RETROPLATFORM
-	if (led >= LED_DF0 && led <= LED_DF3 && !gui_data.drive_disabled[led - LED_DF0]) {
-		rp_floppy_track (led - LED_DF0, gui_data.drive_track[led - LED_DF0]);
-		writing = gui_data.drive_writing[led - LED_DF0];
+	if (led >= LED_DF0 && led <= LED_DF3 && !gui_data.drives[led - LED_DF0].drive_disabled) {
+		rp_floppy_track(led - LED_DF0, gui_data.drives[led - LED_DF0].drive_track);
+		writing = gui_data.drives[led - LED_DF0].drive_writing;
 	}
 	rp_update_leds (led, on, brightness, writing);
 #endif
@@ -21978,11 +22193,11 @@ void gui_led (int led, int on, int brightness)
 	if (led >= LED_DF0 && led <= LED_DF3) {
 		pos = 7 + (led - LED_DF0);
 		ptr = drive_text + pos * LED_STRING_WIDTH;
-		if (gui_data.drive_disabled[led - 1])
+		if (gui_data.drives[led - 1].drive_disabled)
 			_tcscpy (ptr, _T(""));
 		else
-			_stprintf (ptr , _T("%02d"), gui_data.drive_track[led - 1]);
-		p = gui_data.df[led - 1];
+			_stprintf (ptr , _T("%02d"), gui_data.drives[led - 1].drive_track);
+		p = gui_data.drives[led - 1].df;
 		j = _tcslen (p) - 1;
 		if (j < 0)
 			j = 0;
@@ -21994,10 +22209,12 @@ void gui_led (int led, int on, int brightness)
 		tt = dfx[led - 1];
 		tt[0] = 0;
 		if (_tcslen (p + j) > 0)
-			_stprintf (tt, _T("%s [CRC=%08X]"), p + j, gui_data.crc32[led - 1]);
+			_stprintf (tt, _T("%s [CRC=%08X]"), p + j, gui_data.drives[led - 1].crc32);
 		center = 1;
-		if (gui_data.drive_writing[led - 1])
+		if (gui_data.drives[led - 1].drive_writing)
 			writing = 1;
+		if (gui_data.drives[led - 1].floppy_protected)
+			writeprotected = 1;
 	} else if (led == LED_POWER) {
 		pos = 3;
 		ptr = _tcscpy(drive_text + pos * LED_STRING_WIDTH, _T("Power"));
@@ -22118,19 +22335,21 @@ void gui_led (int led, int on, int brightness)
 
 	type = SBT_OWNERDRAW;
 	if (pos >= 0) {
-		ptr[_tcslen (ptr) + 1] = 0;
+		ptr[_tcslen(ptr) + 1] = 0;
 		if (center)
-			ptr[_tcslen (ptr) + 1] |= 1;
+			ptr[_tcslen(ptr) + 1] |= 1;
 		if (on) {
-			ptr[_tcslen (ptr) + 1] |= 2;
+			ptr[_tcslen(ptr) + 1] |= 2;
 			type |= SBT_POPOUT;
 		}
 		if (writing)
-			ptr[_tcslen (ptr) + 1] |= 4;
+			ptr[_tcslen(ptr) + 1] |= 4;
 		if (playing)
-			ptr[_tcslen (ptr) + 1] |= 8;
+			ptr[_tcslen(ptr) + 1] |= 8;
 		if (active2)
-			ptr[_tcslen (ptr) + 1] |= 16;
+			ptr[_tcslen(ptr) + 1] |= 16;
+		if (writeprotected)
+			ptr[_tcslen(ptr) + 1] |= 32;
 		pos += window_led_joy_start;
 		PostMessage(mon->hStatusWnd, SB_SETTEXT, (WPARAM)((pos + 1) | type), (LPARAM)ptr);
 		if (tt != NULL)

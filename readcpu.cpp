@@ -16,49 +16,49 @@ int nr_cpuop_funcs;
 
 struct mnemolookup lookuptab[] = {
 	{ i_ILLG, _T("ILLEGAL"), NULL, 0 },
-	{ i_OR, _T("OR"), NULL, 1 },
+	{ i_OR, _T("OR"), NULL, 1 | MNEMOFLAG_LOOPMODE },
 	{ i_CHK, _T("CHK"), NULL, 0 },
 	{ i_CHK2, _T("CHK2"), NULL, 0 },
-	{ i_AND, _T("AND"), NULL, 1 },
-	{ i_EOR, _T("EOR"), NULL, 1 },
-	{ i_ORSR, _T("ORSR"), NULL, 0 },
-	{ i_ANDSR, _T("ANDSR"), NULL, 0 },
-	{ i_EORSR, _T("EORSR"), NULL, 0 },
-	{ i_SUB, _T("SUB"), NULL, 1 },
-	{ i_SUBA, _T("SUBA"), NULL, 1 },
-	{ i_SUBX, _T("SUBX"), NULL, 0 },
-	{ i_SBCD, _T("SBCD"), NULL, 0 },
-	{ i_ADD, _T("ADD"), NULL, 1 },
-	{ i_ADDA, _T("ADDA"), NULL, 1 },
-	{ i_ADDX, _T("ADDX"), NULL, 0 },
-	{ i_ABCD, _T("ABCD"), NULL, 0 },
-	{ i_NEG, _T("NEG"), NULL, 1 },
-	{ i_NEGX, _T("NEGX"), NULL, 1 },
-	{ i_NBCD, _T("NBCD"), NULL, 0 },
-	{ i_CLR, _T("CLR"), NULL, 1 },
-	{ i_NOT, _T("NOT"), NULL, 1 },
-	{ i_TST, _T("TST"), NULL, 1 },
+	{ i_AND, _T("AND"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_EOR, _T("EOR"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_ORSR, _T("ORSR"), _T("OR"), 0 },
+	{ i_ANDSR, _T("ANDSR"), _T("AND"), 0 },
+	{ i_EORSR, _T("EORSR"), _T("EOR"), 0 },
+	{ i_SUB, _T("SUB"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_SUBA, _T("SUBA"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_SUBX, _T("SUBX"), NULL, 0 | MNEMOFLAG_LOOPMODE },
+	{ i_SBCD, _T("SBCD"), NULL, 0 | MNEMOFLAG_LOOPMODE },
+	{ i_ADD, _T("ADD"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_ADDA, _T("ADDA"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_ADDX, _T("ADDX"), NULL, 0 | MNEMOFLAG_LOOPMODE },
+	{ i_ABCD, _T("ABCD"), NULL, 0 | MNEMOFLAG_LOOPMODE },
+	{ i_NEG, _T("NEG"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_NEGX, _T("NEGX"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_NBCD, _T("NBCD"), NULL, 0 | MNEMOFLAG_LOOPMODE },
+	{ i_CLR, _T("CLR"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_NOT, _T("NOT"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_TST, _T("TST"), NULL, 1 | MNEMOFLAG_LOOPMODE },
 	{ i_BTST, _T("BTST"), NULL, 1 },
 	{ i_BCHG, _T("BCHG"), NULL, 1 },
 	{ i_BCLR, _T("BCLR"), NULL, 1 },
 	{ i_BSET, _T("BSET"), NULL, 1 },
-	{ i_CMP, _T("CMP"), NULL, 1 },
-	{ i_CMPM, _T("CMPM"), NULL, 1 },
-	{ i_CMPA, _T("CMPA"), NULL, 1 },
-	{ i_MVPRM, _T("MVPRM"), NULL, 0 },
-	{ i_MVPMR, _T("MVPMR"), NULL, 0 },
-	{ i_MOVE, _T("MOVE"), NULL, 1 },
-	{ i_MOVEA, _T("MOVEA"), NULL, 1 },
-	{ i_MVSR2, _T("MVSR2"), NULL, 0 },
-	{ i_MV2SR, _T("MV2SR"), NULL, 0 },
+	{ i_CMP, _T("CMP"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_CMPM, _T("CMPM"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_CMPA, _T("CMPA"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_MVPRM, _T("MVPRM"), _T("MOVEP"), 0 },
+	{ i_MVPMR, _T("MVPMR"), _T("MOVEP"), 0 },
+	{ i_MOVE, _T("MOVE"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_MOVEA, _T("MOVEA"), NULL, 1 | MNEMOFLAG_LOOPMODE },
+	{ i_MVSR2, _T("MVSR2"), _T("MOVE"), 0 },
+	{ i_MV2SR, _T("MV2SR"), _T("MOVE"), 0 },
 	{ i_SWAP, _T("SWAP"), NULL, 0 },
 	{ i_EXG, _T("EXG"), NULL, 0 },
 	{ i_EXT, _T("EXT"), NULL, 0 },
 	{ i_MVMEL, _T("MVMEL"), _T("MOVEM"), 0 },
 	{ i_MVMLE, _T("MVMLE"), _T("MOVEM"), 0 },
 	{ i_TRAP, _T("TRAP"), NULL, 0 },
-	{ i_MVR2USP, _T("MVR2USP"), NULL, 0 },
-	{ i_MVUSP2R, _T("MVUSP2R"), NULL, 0 },
+	{ i_MVR2USP, _T("MVR2USP"), _T("MOVE"), 0 },
+	{ i_MVUSP2R, _T("MVUSP2R"), _T("MOVE"), 0 },
 	{ i_NOP, _T("NOP"), NULL, 0 },
 	{ i_RESET, _T("RESET"), NULL, 0 },
 	{ i_RTE, _T("RTE"), NULL, 0 },
@@ -89,14 +89,14 @@ struct mnemolookup lookuptab[] = {
 	{ i_ROR, _T("ROR"), NULL, 0 },
 	{ i_ROXL, _T("ROXL"), NULL, 1 },
 	{ i_ROXR, _T("ROXR"), NULL, 1 },
-	{ i_ASRW, _T("ASRW"), NULL, 1 },
-	{ i_ASLW, _T("ASLW"), NULL, 1 },
-	{ i_LSRW, _T("LSRW"), NULL, 1 },
-	{ i_LSLW, _T("LSLW"), NULL, 1 },
-	{ i_ROLW, _T("ROLW"), NULL, 1 },
-	{ i_RORW, _T("RORW"), NULL, 1 },
-	{ i_ROXLW, _T("ROXLW"), NULL, 1 },
-	{ i_ROXRW, _T("ROXRW"), NULL, 1 },
+	{ i_ASRW, _T("ASRW"), _T("ASR"), 1 | MNEMOFLAG_LOOPMODE },
+	{ i_ASLW, _T("ASLW"), _T("ASL"), 1 | MNEMOFLAG_LOOPMODE },
+	{ i_LSRW, _T("LSRW"), _T("LSR"), 1 | MNEMOFLAG_LOOPMODE },
+	{ i_LSLW, _T("LSLW"), _T("LSL"), 1 | MNEMOFLAG_LOOPMODE },
+	{ i_ROLW, _T("ROLW"), _T("ROL"), 1 | MNEMOFLAG_LOOPMODE },
+	{ i_RORW, _T("RORW"), _T("ROR"), 1 | MNEMOFLAG_LOOPMODE },
+	{ i_ROXLW, _T("ROXLW"), _T("ROXL"), 1 | MNEMOFLAG_LOOPMODE },
+	{ i_ROXRW, _T("ROXRW"), _T("ROXR"), 1 | MNEMOFLAG_LOOPMODE },
 
 	{ i_MOVE2C, _T("MOVE2C"), _T("MOVEC"), 0 },
 	{ i_MOVEC2, _T("MOVEC2"), _T("MOVEC"), 0 },
@@ -104,6 +104,7 @@ struct mnemolookup lookuptab[] = {
 	{ i_CAS2, _T("CAS2"), NULL, 1 },
 	{ i_MULL, _T("MULL"), NULL, 0 },
 	{ i_DIVL, _T("DIVL"), NULL, 0 },
+
 	{ i_BFTST, _T("BFTST"), NULL, 0 },
 	{ i_BFEXTU, _T("BFEXTU"), NULL, 0 },
 	{ i_BFCHG, _T("BFCHG"), NULL, 0 },
@@ -112,6 +113,7 @@ struct mnemolookup lookuptab[] = {
 	{ i_BFFFO, _T("BFFFO"), NULL, 0 },
 	{ i_BFSET, _T("BFSET"), NULL, 0 },
 	{ i_BFINS, _T("BFINS"), NULL, 0 },
+
 	{ i_PACK, _T("PACK"), NULL, 0 },
 	{ i_UNPK, _T("UNPK"), NULL, 0 },
 	{ i_TAS, _T("TAS"), NULL, 1 },
@@ -120,11 +122,11 @@ struct mnemolookup lookuptab[] = {
 	{ i_RTM, _T("RTM"), NULL, 0 },
 	{ i_TRAPcc, _T("TRAPcc"), NULL, 0 },
 	{ i_MOVES, _T("MOVES"), NULL, 1 },
+
 	{ i_FPP, _T("FPP"), NULL, 0 },
 	{ i_FDBcc, _T("FDBcc"), NULL, 0 },
 	{ i_FScc, _T("FScc"), NULL, 0 },
 	{ i_FTRAPcc, _T("FTRAPcc"), NULL, 0 },
-	{ i_FBcc, _T("FBcc"), NULL, 0 },
 	{ i_FBcc, _T("FBcc"), NULL, 0 },
 	{ i_FSAVE, _T("FSAVE"), NULL, 0 },
 	{ i_FRESTORE, _T("FRESTORE"), NULL, 0 },
@@ -149,6 +151,8 @@ struct mnemolookup lookuptab[] = {
 	{ i_PTESTW, _T("PTESTW"), NULL, 0 },
 
 	{ i_LPSTOP, _T("LPSTOP"), NULL, 0 },
+	{ i_HALT, _T("HALT"), NULL, 0 },
+	{ i_PULSE, _T("PULSE"), NULL, 0 },
 	{ i_ILLG, _T(""), NULL, 0 },
 };
 
@@ -169,7 +173,7 @@ static amodes mode_from_str (const TCHAR *str)
 	if (_tcsncmp (str, _T("PC8r"), 4) == 0) return PC8r;
 	if (_tcsncmp (str, _T("Immd"), 4) == 0) return imm;
 	abort ();
-	return 0;
+	return Dreg;
 }
 
 STATIC_INLINE amodes mode_from_mr (int mode, int reg)
@@ -195,7 +199,7 @@ STATIC_INLINE amodes mode_from_mr (int mode, int reg)
 		}
 	}
 	abort ();
-	return 0;
+	return Dreg;
 }
 
 static void build_insn (int insn)
@@ -261,12 +265,14 @@ out1:
 		int usesrc = 0, usedst = 0;
 		int srctype = 0;
 		int srcpos = -1, dstpos = -1;
+		int usecc = 0;
 
 		amodes srcmode = am_unknown, destmode = am_unknown;
 		int srcreg = -1, destreg = -1;
 
-		for (i = 0; i < lastbit; i++)
+		for (i = 0; i < lastbit; i++) {
 			bitcnt[i] = bitval[i] = 0;
+		}
 
 		vmsk = 1 << id.n_variable;
 
@@ -282,6 +288,8 @@ out1:
 				bitcnt[currbit]++;
 				bitval[currbit] <<= 1;
 				bitval[currbit] |= bit_set;
+				if (currbit == bitC || currbit == bitc)
+					usecc = 1;
 			}
 		}
 
@@ -714,6 +722,8 @@ endofline:
 			table68k[opc].mnemo = lookuptab[find].mnemo;
 		}
 		table68k[opc].cc = bitval[bitc];
+		table68k[opc].ccuse = usecc != 0;
+
 		mnemo = table68k[opc].mnemo;
 		if (mnemo == i_BTST
 			|| mnemo == i_BSET
@@ -871,4 +881,42 @@ void do_merges (void)
 int get_no_mismatches (void)
 {
 	return imismatch;
+}
+
+static int isreg(amodes mode)
+{
+	if (mode == Dreg || mode == Areg)
+		return 1;
+	return 0;
+}
+
+bool opcode_loop_mode(uae_u16 opcode)
+{
+	struct instr *c = &table68k[opcode];
+	bool loopmode = false;
+	int i;
+	for (i = 0; lookuptab[i].name[0]; i++) {
+		if (c->mnemo == lookuptab[i].mnemo)
+			break;
+	}
+	if (lookuptab[i].flags & MNEMOFLAG_LOOPMODE) {
+		// Source is Dn,An,(An),(An)+,-(An)
+		// Destination is Dn,An,(An),(An)+,-(An)
+		// Both source and destination must not be Dn or An.
+		// RMW instruction must not be Dn or An
+		if (((isreg(c->smode) || c->smode == Aind || c->smode == Apdi || c->smode == Aipi)) &&
+			((!c->duse && !isreg(c->smode)) || (c->duse && (isreg(c->dmode) || c->dmode == Aind || c->dmode == Apdi || c->dmode == Aipi))) &&
+			(!c->duse || (isreg(c->smode) && !isreg(c->dmode)) || (!isreg(c->smode) && isreg(c->dmode)) || (!isreg(c->smode) && !isreg(c->dmode)))) {
+			loopmode = true;
+		}
+		if (c->mnemo == i_MOVE || c->mnemo == i_MOVEA) {
+			// move x,reg: not supported
+			if (isreg(c->dmode))
+				loopmode = false;
+			// move reg,-(an): not supported
+			if (isreg(c->smode) && c->dmode == Apdi)
+				loopmode = false;
+		}
+	}
+	return loopmode;
 }

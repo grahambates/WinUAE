@@ -35,9 +35,11 @@ ENUMDECL {
     i_CINVL, i_CINVP, i_CINVA, i_CPUSHL, i_CPUSHP, i_CPUSHA, i_MOVE16,
     i_MMUOP030, i_PFLUSHN, i_PFLUSH, i_PFLUSHAN, i_PFLUSHA,
     i_PLPAR, i_PLPAW, i_PTESTR, i_PTESTW,
-    i_LPSTOP,
+    i_LPSTOP, i_HALT, i_PULSE,
 	MAX_OPCODE_FAMILY
 } ENUMNAME (instrmnem);
+
+#define MNEMOFLAG_LOOPMODE 2
 
 struct mnemolookup {
     instrmnem mnemo;
@@ -98,14 +100,14 @@ extern struct instr {
     unsigned int mnemo:8;
     unsigned int cc:4;
     unsigned int plev:2;
-    unsigned int size:2;
+    wordsizes size;
 	unsigned int unsized:1;
-    unsigned int smode:5;
+    amodes smode;
     unsigned int stype:3;
-    unsigned int dmode:5;
+    amodes dmode;
     unsigned int suse:1;
     unsigned int duse:1;
-    unsigned int unused1:1;
+    unsigned int ccuse:1;
     unsigned int clev:3, unimpclev:3;
     unsigned int isjmp:1;
     unsigned int unused2:1;
@@ -116,5 +118,6 @@ extern void read_table68k (void);
 extern void do_merges (void);
 extern int get_no_mismatches (void);
 extern int nr_cpuop_funcs;
+extern bool opcode_loop_mode(uae_u16 opcode);
 
 #endif /* UAE_READCPU_H */

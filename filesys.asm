@@ -1629,6 +1629,12 @@ addfsonthefly ; d1 = fs index
 	jsr FreeMem(a6)
 .nomem	move.l a4,a1
 	jsr -414(a6) ; CloseLibrary
+	; reply done
+	moveq #4,d1
+	move.w #$FF48,d0
+	bsr.w getrtbaselocal
+	move.l d6,d0
+	jsr (a0)
 	movem.l (sp)+,d2-d7/a2-a6
 	rts
 
@@ -3397,6 +3403,8 @@ hwtrap_entry:
 	move.l 1*4(sp),TRAP_DATA_DATA+1*4(a0) ;D1
 	move.l 2*4(sp),TRAP_DATA_DATA+8*4(a0) ;A0
 	move.l 3*4(sp),TRAP_DATA_DATA+8*4+1*4(a0) ;A1
+	lea 4*4+2+4(sp),a2
+	move.l a2,TRAP_DATA_DATA+8*4+7*4(a0) ;A7
 
 	move.l a0,a2 ; data
 	move.l a1,a3 ; status

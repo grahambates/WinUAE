@@ -782,8 +782,12 @@ void restore_state (const TCHAR *filename)
 		else if (!_tcsncmp (name, _T("2065"), 4))
 			end = restore_a2065 (chunk);
 #endif
-		else if (!_tcsncmp (name, _T("EXPI"), 4))
-			end = restore_expansion_info(chunk);
+#if 0
+		else if (!_tcsncmp(name, _T("EXPI"), 4))
+			end = restore_expansion_info_old(chunk);
+#endif
+		else if (!_tcsncmp (name, _T("EXPB"), 4))
+			end = restore_expansion_boards(chunk);
 		else if (!_tcsncmp (name, _T("DMWP"), 4))
 			end = restore_debug_memwatch (chunk);
 		else if (!_tcsncmp(name, _T("PIC0"), 4))
@@ -820,16 +824,23 @@ error:
 		zfile_fclose (f);
 }
 
-void savestate_restore_finish (void)
+void savestate_restore_final(void)
+{
+	restore_akiko_final();
+	restore_cdtv_final();
+}
+
+bool savestate_restore_finish(void)
 {
 	if (!isrestore ())
-		return;
+		return false;
 	zfile_fclose (savestate_file);
 	savestate_file = 0;
 	restore_cpu_finish ();
 	restore_audio_finish ();
 	restore_disk_finish ();
 	restore_blitter_finish ();
+	restore_expansion_finish();
 	restore_akiko_finish ();
 #ifdef CDTV
 	restore_cdtv_finish ();
@@ -848,6 +859,7 @@ void savestate_restore_finish (void)
 	savestate_state = 0;
 	init_hz_normal();
 	audio_activate();
+	return true;
 }
 
 /* 1=compressed,2=not compressed,3=ram dump,4=audio dump */
@@ -1001,9 +1013,11 @@ static int save_state_internal (struct zfile *f, const TCHAR *description, int c
 	save_chunk (f, dst, len, _T("CINP"), 0);
 	xfree (dst);
 
-	dst = save_custom_agacolors (&len, 0);
-	save_chunk (f, dst, len, _T("AGAC"), 0);
-	xfree (dst);
+	dst = save_custom_agacolors(&len, 0);
+	if (dst) {
+		save_chunk(f, dst, len, _T("AGAC"), 0);
+		xfree(dst);
+	}
 
 	_tcscpy (name, _T("SPRx"));
 	for (i = 0; i < 8; i++) {
@@ -1034,8 +1048,20 @@ static int save_state_internal (struct zfile *f, const TCHAR *description, int c
 	xfree (dst);
 
 #ifdef AUTOCONFIG
-	dst = save_expansion_info(&len, 0);
+	// new
+	i = 0;
+	for (;;) {
+		dst = save_expansion_boards(&len, 0, i);
+		if (!dst)
+			break;
+		save_chunk(f, dst, len, _T("EXPB"), 0);
+		i++;
+	}
+#if 0
+	// old
+	dst = save_expansion_info_old(&len, 0);
 	save_chunk(f, dst, len, _T("EXPI"), 0);
+#endif
 	dst = save_expansion(&len, 0);
 	save_chunk(f, dst, len, _T("EXPA"), 0);
 #endif
