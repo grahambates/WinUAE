@@ -102,7 +102,8 @@ namespace barto_gdbserver {
 	bool useAck{ true };
 	uint32_t baseText{}, baseData{}, baseBss{};
 	uint32_t sizeText{}, sizeData{}, sizeBss{};
-	std::string profile_filename;
+	std::string profile_outname;
+	std::unique_ptr<uint16_t[]> profile_unwind{};
 
 	enum class state {
 		inited,
@@ -405,12 +406,57 @@ namespace barto_gdbserver {
 									// "monitor" command. used for profiling
 									auto cmd = from_hex(request.substr(strlen("qRcmd,")));
 									write_log("GDBSERVER:   monitor %s\n", cmd.c_str());
+									// syntax: monitor profile <unwind_file> <out_file>
 									if(cmd.substr(0, strlen("profile")) == "profile") {
-										profile_filename = cmd.substr(strlen("profile "));
-										send_ack(ack);
-										debugger_state = state::profile;
-										deactivate_debugger();
-										return; // response is sent when profile is finished (vsync)
+										auto s = cmd.substr(strlen("profile "));
+										std::string profile_unwindname;
+										profile_outname.clear();
+
+										// get profile_unwindname
+										if(s.substr(0, 1) == "\"") {
+											auto last = s.find('\"', 1);
+											if(last != std::string::npos) {
+												profile_unwindname = s.substr(1, last - 1);
+												s = s.substr(last + 1);
+											} else {
+												s.clear();
+											}
+										} else {
+											auto last = s.find(' ', 1);
+											if(last != std::string::npos) {
+												profile_unwindname = s.substr(0, last);
+												s = s.substr(last + 1);
+											} else {
+												s.clear();
+											}
+										}
+
+										s = s.substr(1); // skip space
+
+										// get profile_outname
+										if(s.substr(0, 1) == "\"") {
+											auto last = s.find('\"', 1);
+											if(last != std::string::npos) {
+												profile_outname = s.substr(1, last - 1);
+												s = s.substr(last + 1);
+											} else {
+												s.clear();
+											}
+										} else {
+											profile_unwindname = s.substr(1);
+										}
+
+										if(!profile_unwindname.empty() && !profile_outname.empty()) {
+											if(auto f = fopen(profile_unwindname.c_str(), "rb")) {
+												profile_unwind = std::make_unique<uint16_t[]>(sizeText >> 1);
+												fread(profile_unwind.get(), sizeof(uint16_t), sizeText >> 1, f);
+												fclose(f);
+												send_ack(ack);
+												debugger_state = state::profile;
+												deactivate_debugger();
+												return; // response is sent when profile is finished (vsync)
+											}
+										}
 									}
 									response += "E01";
 								} else if(request.substr(0, strlen("vCont?")) == "vCont?") {
@@ -599,13 +645,13 @@ namespace barto_gdbserver {
 		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
 			return;
 
-		static uae_u32* profile_buffer{};
+		static uae_u32* profile_output_buffer{};
 		static uae_u32 profile_start_cycles{};
 
 		if(debugger_state == state::profile) {
 			// start profiling
-			profile_buffer = new uae_u32[sizeText >> 1]{};
-			start_cpu_profiler(baseText, sizeText, profile_buffer);
+			profile_output_buffer = new uae_u32[sizeText >> 1]{};
+			start_cpu_profiler(baseText, sizeText, profile_unwind.get(), profile_output_buffer);
 			profile_start_cycles = get_cycles() / (CYCLE_UNIT / 2);
 			write_log("GDBSERVER: Start CPU Profiler @ %u cycles\n", get_cycles() / (CYCLE_UNIT / 2));
 			debugger_state = state::profiling;
@@ -615,14 +661,14 @@ namespace barto_gdbserver {
 			uae_u32 profile_end_cycles = get_cycles() / (CYCLE_UNIT / 2);
 			write_log("GDBSERVER: Stop CPU Profiler @ %u cycles => %u cycles\n", profile_end_cycles, profile_end_cycles - profile_start_cycles);
 
-			if(auto f = fopen(profile_filename.c_str(), "wb")) {
-				fwrite(profile_buffer, sizeof(uae_u32), sizeText >> 1, f);
+			if(auto f = fopen(profile_outname.c_str(), "wb")) {
+				fwrite(profile_output_buffer, sizeof(uae_u32), sizeText >> 1, f);
 				fclose(f);
 				send_response("$OK");
 			} else {
 				send_response("$E01");
 			}
-			delete[] profile_buffer;
+			delete[] profile_output_buffer;
 
 			debugger_state = state::debugging;
 			activate_debugger();

@@ -828,7 +828,7 @@ extern bool set_cpu_tracer (bool force);
 extern bool can_cpu_tracer (void);
 
 // BARTO
-extern void start_cpu_profiler(uae_u32 start_addr, uae_u32 size, uae_u32* buffer);
+extern void start_cpu_profiler(uae_u32 start_addr, uae_u32 size, uae_u16* unwind_buffer, uae_u32* output_buffer);
 extern void stop_cpu_profiler();
 
 #define CPU_HALT_PPC_ONLY -1

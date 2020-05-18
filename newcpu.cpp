@@ -107,21 +107,24 @@ int cpu_tracer;
 // BARTO
 uae_u32 cpu_profiler_start_addr = 0;
 uae_u32 cpu_profiler_size = 0;
-uae_u32* cpu_profiler_buffer = nullptr;
+uae_u16* cpu_profiler_unwind_buffer = nullptr;
+uae_u32* cpu_profiler_output_buffer = nullptr;
 //uae_u32 cpu_profiler_cycles = 0;
 
-void start_cpu_profiler(uae_u32 start_addr, uae_u32 size, uae_u32* buffer)
+extern void start_cpu_profiler(uae_u32 start_addr, uae_u32 size, uae_u16* unwind_buffer, uae_u32* output_buffer)
 {
 	cpu_profiler_start_addr = start_addr;
 	cpu_profiler_size = size;
-	cpu_profiler_buffer = buffer;
+	cpu_profiler_unwind_buffer = unwind_buffer;
+	cpu_profiler_output_buffer = output_buffer;
 }
 
 void stop_cpu_profiler()
 {
 	cpu_profiler_start_addr = 0;
 	cpu_profiler_size = 0;
-	cpu_profiler_buffer = nullptr;
+	cpu_profiler_unwind_buffer = nullptr;
+	cpu_profiler_output_buffer = nullptr;
 }
 // BARTO-END
 
@@ -4762,26 +4765,40 @@ static void m68k_run_1_ce (void)
 					debug_trainer_match();
 				}
 
-				// BARTO
-				uae_u32 cpu_profiler_cycles = get_cycles();
-
 				r->instruction_pc = m68k_getpc ();
+
+				// BARTO
+				uae_u32 cpu_profiler_cycles = 0;
+				if(cpu_profiler_start_addr) {
+					auto pc = r->instruction_pc;
+					while(pc >= cpu_profiler_start_addr && pc <= cpu_profiler_start_addr + cpu_profiler_size) {
+						cpu_profiler_cycles = get_cycles();
+						auto unwind = cpu_profiler_unwind_buffer[(pc - cpu_profiler_start_addr) >> 1];
+						//if(unwind == ~0) __debugbreak();
+						// TODO!!! split CFA, return address
+						auto new_pc = get_long_debug(regs.regs[15] + unwind);
+						if(new_pc == pc)
+							break;
+						pc = new_pc;
+					}
+				}
+
 				(*cpufunctbl[r->opcode])(r->opcode);
 				if (!regs.loop_mode)
 					regs.ird = regs.opcode;
 				regs.instruction_cnt++;
+
+				// BARTO
+				if(cpu_profiler_cycles) { // profiling may have been switched on in vsync (which is called from 'r->opcode' above)
+					auto cycles_for_instr = (get_cycles() - cpu_profiler_cycles) / (CYCLE_UNIT / 2);
+					cpu_profiler_output_buffer[(r->instruction_pc - cpu_profiler_start_addr) >> 1] += cycles_for_instr;
+				}
+
 				wait_memory_cycles();
 				if (cpu_tracer) {
 					cputrace.state = 0;
 				}
 
-				// BARTO
-				if(cpu_profiler_start_addr) {
-					if(r->instruction_pc >= cpu_profiler_start_addr && r->instruction_pc <= cpu_profiler_start_addr + cpu_profiler_size) {
-						auto cycles_for_instr = (get_cycles() - cpu_profiler_cycles) / (CYCLE_UNIT / 2);
-						cpu_profiler_buffer[(r->instruction_pc - cpu_profiler_start_addr) >> 1] += cycles_for_instr;
-					}
-				}
 cont:
 				if (cputrace.needendcycles) {
 					cputrace.needendcycles = 0;
