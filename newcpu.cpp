@@ -105,26 +105,33 @@ int cpucycleunit;
 int cpu_tracer;
 
 // BARTO
-uae_u32 cpu_profiler_start_addr = 0;
-uae_u32 cpu_profiler_size = 0;
-uae_u16* cpu_profiler_unwind_buffer = nullptr;
-uae_u32* cpu_profiler_output_buffer = nullptr;
-//uae_u32 cpu_profiler_cycles = 0;
+uaecptr cpu_profiler_start_addr = 0;
+uaecptr cpu_profiler_end_addr = 0;
+cpu_profiler_unwind* cpu_profiler_unwind_buffer = nullptr; // for each possible code location (every 2 bytes) 2 s16: cfa, return address
+#include <vector>
+std::vector<uint32_t> cpu_profiler_output;
 
-extern void start_cpu_profiler(uae_u32 start_addr, uae_u32 size, uae_u16* unwind_buffer, uae_u32* output_buffer)
+void start_cpu_profiler(uaecptr start_addr, uaecptr end_addr, cpu_profiler_unwind* unwind_buffer)
 {
 	cpu_profiler_start_addr = start_addr;
-	cpu_profiler_size = size;
+	cpu_profiler_end_addr = end_addr;
 	cpu_profiler_unwind_buffer = unwind_buffer;
-	cpu_profiler_output_buffer = output_buffer;
+	cpu_profiler_output.clear();
+}
+
+uint32_t get_cpu_profiler_output_count() {
+	return cpu_profiler_output.size();
+}
+
+const uint32_t* get_cpu_profiler_output() {
+	return cpu_profiler_output.data();
 }
 
 void stop_cpu_profiler()
 {
 	cpu_profiler_start_addr = 0;
-	cpu_profiler_size = 0;
+	cpu_profiler_end_addr = 0;
 	cpu_profiler_unwind_buffer = nullptr;
-	cpu_profiler_output_buffer = nullptr;
 }
 // BARTO-END
 
@@ -4769,16 +4776,28 @@ static void m68k_run_1_ce (void)
 
 				// BARTO
 				uae_u32 cpu_profiler_cycles = 0;
+				uae_u32 cpu_profiler_callstack[16];
+				uae_u32 cpu_profiler_callstack_depth = 0;
 				if(cpu_profiler_start_addr) {
 					auto pc = r->instruction_pc;
-					while(pc >= cpu_profiler_start_addr && pc <= cpu_profiler_start_addr + cpu_profiler_size) {
+					auto r13 = regs.regs[13] /* a5 = fp */, r15 = regs.regs[15] /* a7 = sp */;
+					while(pc >= cpu_profiler_start_addr && pc < cpu_profiler_end_addr) {
 						cpu_profiler_cycles = get_cycles();
-						auto unwind = cpu_profiler_unwind_buffer[(pc - cpu_profiler_start_addr) >> 1];
-						//if(unwind == ~0) __debugbreak();
-						// TODO!!! split CFA, return address
-						auto new_pc = get_long_debug(regs.regs[15] + unwind);
-						if(new_pc == pc)
-							break;
+						cpu_profiler_callstack[cpu_profiler_callstack_depth++] = pc - cpu_profiler_start_addr;
+						const auto& unwind = cpu_profiler_unwind_buffer[(pc - cpu_profiler_start_addr) >> 1];
+						if(unwind.cfa == ~0 || unwind.ra == ~0) break; // should not happen
+						uae_u32 new_cfa;
+						switch(unwind.cfa >> 12) {
+						case 13: new_cfa = r13; break;
+						case 15: new_cfa = r15; break;
+						default: break; // should not happen
+						}
+						new_cfa += unwind.cfa & ((1 << 12) - 1);
+						auto new_pc = get_long_debug(new_cfa + unwind.ra);
+						if(unwind.r13 != -1)
+							r13 = get_long_debug(new_cfa + unwind.r13);
+						if(new_cfa == r15 || new_pc == pc) break; // should not happen
+						r15 = new_cfa;
 						pc = new_pc;
 					}
 				}
@@ -4788,15 +4807,22 @@ static void m68k_run_1_ce (void)
 					regs.ird = regs.opcode;
 				regs.instruction_cnt++;
 
-				// BARTO
-				if(cpu_profiler_cycles) { // profiling may have been switched on in vsync (which is called from 'r->opcode' above)
-					auto cycles_for_instr = (get_cycles() - cpu_profiler_cycles) / (CYCLE_UNIT / 2);
-					cpu_profiler_output_buffer[(r->instruction_pc - cpu_profiler_start_addr) >> 1] += cycles_for_instr;
-				}
-
 				wait_memory_cycles();
 				if (cpu_tracer) {
 					cputrace.state = 0;
+				}
+
+				// BARTO
+				if(cpu_profiler_start_addr && cpu_profiler_cycles) { // profiling may have been switched on or off in vsync (which is called from 'r->opcode' above)
+					auto cycles_for_instr = (get_cycles() - cpu_profiler_cycles) / (CYCLE_UNIT / 2);
+					if(r->opcode == 0x4e75 /* rts */) {
+						if(!cpu_profiler_output.empty())
+							cpu_profiler_output.back() -= cycles_for_instr;
+					} else {
+						for(int i = 0; i < cpu_profiler_callstack_depth; i++)
+							cpu_profiler_output.push_back(cpu_profiler_callstack[i]);
+						cpu_profiler_output.push_back(~0 - cycles_for_instr);
+					}
 				}
 
 cont:

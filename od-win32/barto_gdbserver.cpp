@@ -103,7 +103,7 @@ namespace barto_gdbserver {
 	uint32_t baseText{}, baseData{}, baseBss{};
 	uint32_t sizeText{}, sizeData{}, sizeBss{};
 	std::string profile_outname;
-	std::unique_ptr<uint16_t[]> profile_unwind{};
+	std::unique_ptr<cpu_profiler_unwind[]> profile_unwind{};
 
 	enum class state {
 		inited,
@@ -448,8 +448,8 @@ namespace barto_gdbserver {
 
 										if(!profile_unwindname.empty() && !profile_outname.empty()) {
 											if(auto f = fopen(profile_unwindname.c_str(), "rb")) {
-												profile_unwind = std::make_unique<uint16_t[]>(sizeText >> 1);
-												fread(profile_unwind.get(), sizeof(uint16_t), sizeText >> 1, f);
+												profile_unwind = std::make_unique<cpu_profiler_unwind[]>(sizeText >> 1);
+												fread(profile_unwind.get(), sizeof(cpu_profiler_unwind), sizeText >> 1, f);
 												fclose(f);
 												send_ack(ack);
 												debugger_state = state::profile;
@@ -645,13 +645,11 @@ namespace barto_gdbserver {
 		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
 			return;
 
-		static uae_u32* profile_output_buffer{};
 		static uae_u32 profile_start_cycles{};
 
 		if(debugger_state == state::profile) {
 			// start profiling
-			profile_output_buffer = new uae_u32[sizeText >> 1]{};
-			start_cpu_profiler(baseText, sizeText, profile_unwind.get(), profile_output_buffer);
+			start_cpu_profiler(baseText, baseText + sizeText, profile_unwind.get());
 			profile_start_cycles = get_cycles() / (CYCLE_UNIT / 2);
 			write_log("GDBSERVER: Start CPU Profiler @ %u cycles\n", get_cycles() / (CYCLE_UNIT / 2));
 			debugger_state = state::profiling;
@@ -662,13 +660,12 @@ namespace barto_gdbserver {
 			write_log("GDBSERVER: Stop CPU Profiler @ %u cycles => %u cycles\n", profile_end_cycles, profile_end_cycles - profile_start_cycles);
 
 			if(auto f = fopen(profile_outname.c_str(), "wb")) {
-				fwrite(profile_output_buffer, sizeof(uae_u32), sizeText >> 1, f);
+				fwrite(get_cpu_profiler_output(), sizeof(uae_u32), get_cpu_profiler_output_count(), f);
 				fclose(f);
 				send_response("$OK");
 			} else {
 				send_response("$E01");
 			}
-			delete[] profile_output_buffer;
 
 			debugger_state = state::debugging;
 			activate_debugger();
