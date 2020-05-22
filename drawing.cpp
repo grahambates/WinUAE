@@ -3943,7 +3943,7 @@ static void draw_frame_extras(struct vidbuffer *vb, int y_start, int y_end)
 			draw_status_line(vb->monitor_id, line, i);
 		}
 	}
-	if (debug_dma > 1 || debug_heatmap > 1) {
+	if (debug_barto > 0 || debug_dma > 1 || debug_heatmap > 1) {
 		for (int i = 0; i < vb->outheight; i++) {
 			int line = i;
 			draw_debug_status_line(vb->monitor_id, line);

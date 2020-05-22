@@ -38,12 +38,6 @@ extern uae_u8 *get_real_address_debug(uaecptr addr);
 // -s input.config=1 -s input.1.keyboard.0.button.41.GRAVE=SPC_SINGLESTEP.0    -s use_gui=no -s quickstart=a500,1 -s debugging_features=gdbserver -s filesystem=rw,dh0:c:\Users\bwodok\Documents\Visual_Studio_Code\amiga-debug\bin\dh0
 // c:\Users\bwodok\Documents\Visual_Studio_Code\amiga-debug\bin\opt\bin> m68k-amiga-elf-gdb.exe -ex "set debug remote 1" -ex "target remote :2345" -ex "monitor profile xxx" ..\..\..\template\a.mingw.elf
 
-// /opt/amiga/8.2.0/bin/m68k-amiga-elf-gdb -ex 'set debug remote 1' -ex 'target remote :2345' test.elf
-// /opt/amiga/8.2.0/bin/m68k-amiga-elf-gdb -ex 'set debug remote 1' -ex 'set remotetimeout 100' -ex 'target remote :2345' test.elf
-// /opt/amiga/8.2.0/bin/m68k-amiga-elf-gdb -ex 'set debug remote 1' -ex 'set remotetimeout 100' -ex 'target extended-remote :2345' test.elf
-// https://www.embecosm.com/appnotes/ean4/embecosm-howto-rsp-server-ean4-issue-2.html
-// Visual Studio command window: Debug.MIDebugLog /on:c:\amiga\log
-
 namespace barto_gdbserver {
 	bool is_connected();
 	bool data_available();
