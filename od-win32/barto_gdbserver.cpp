@@ -635,7 +635,12 @@ namespace barto_gdbserver {
 		}
 	}
 
-	void vsync() {
+	void vsync_pre() {
+		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
+			return;
+	}
+
+	void vsync_post() {
 		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
 			return;
 
@@ -718,6 +723,7 @@ namespace barto_gdbserver {
 			debugger_state = state::debugging;
 			debugmem_enable_stackframe(true);
 			debugmem_trace = true;
+			debug_dma = 3; // TEST
 		}
 
 		// something stopped execution and entered debugger

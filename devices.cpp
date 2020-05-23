@@ -237,11 +237,12 @@ void devices_vsync_pre(void)
 	statusline_vsync();
 
 	execute_device_items(device_vsyncs_pre, device_vsync_pre_cnt);
-	barto_gdbserver::vsync();
+	barto_gdbserver::vsync_pre();
 }
 
 void devices_vsync_post(void)
 {
+	barto_gdbserver::vsync_post();
 	execute_device_items(device_vsyncs_post, device_vsync_post_cnt);
 }
 
