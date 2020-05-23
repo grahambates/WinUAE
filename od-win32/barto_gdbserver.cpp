@@ -638,27 +638,36 @@ namespace barto_gdbserver {
 	void vsync_pre() {
 		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
 			return;
-	}
-
-	void vsync_post() {
-		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
-			return;
 
 		static uae_u32 profile_start_cycles{};
 
 		if(debugger_state == state::profile) {
 			// start profiling
 			start_cpu_profiler(baseText, baseText + sizeText, profile_unwind.get());
+			debug_dma = 1;
 			profile_start_cycles = get_cycles() / (CYCLE_UNIT / 2);
 			write_log("GDBSERVER: Start CPU Profiler @ %u cycles\n", get_cycles() / (CYCLE_UNIT / 2));
 			debugger_state = state::profiling;
 		} else if(debugger_state == state::profiling) {
 			// end profiling
 			stop_cpu_profiler();
+			debug_dma = 0;
 			uae_u32 profile_end_cycles = get_cycles() / (CYCLE_UNIT / 2);
 			write_log("GDBSERVER: Stop CPU Profiler @ %u cycles => %u cycles\n", profile_end_cycles, profile_end_cycles - profile_start_cycles);
 
+			// process dma records
+			static constexpr int NR_DMA_REC_HPOS_IN = 256, NR_DMA_REC_VPOS_IN = 1000;
+			static constexpr int NR_DMA_REC_HPOS_OUT = 228, NR_DMA_REC_VPOS_OUT = 313;
+			auto dma_in = get_dma_records();
+			auto dma_out = std::make_unique<uint8_t[]>(NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT);
+			for(int y = 0; y < NR_DMA_REC_VPOS_OUT; y++) {
+				for(int x = 0; x < NR_DMA_REC_HPOS_OUT; x++) {
+					dma_out[y * NR_DMA_REC_HPOS_OUT + x] = dma_in[y * NR_DMA_REC_HPOS_IN + x].reg != 0xffff ? dma_in[y * NR_DMA_REC_HPOS_IN + x].type : 0;
+				}
+			}
+
 			if(auto f = fopen(profile_outname.c_str(), "wb")) {
+				fwrite(dma_out.get(), sizeof(uint8_t), NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT, f);
 				fwrite(get_cpu_profiler_output(), sizeof(uae_u32), get_cpu_profiler_output_count(), f);
 				fclose(f);
 				send_response("$OK");
@@ -673,6 +682,11 @@ namespace barto_gdbserver {
 		if(debugger_state == state::connected && data_available()) {
 			handle_packet();
 		}
+	}
+
+	void vsync_post() {
+		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
+			return;
 	}
 
 	uaecptr KPutCharX{};
@@ -723,7 +737,6 @@ namespace barto_gdbserver {
 			debugger_state = state::debugging;
 			debugmem_enable_stackframe(true);
 			debugmem_trace = true;
-			debug_dma = 3; // TEST
 		}
 
 		// something stopped execution and entered debugger

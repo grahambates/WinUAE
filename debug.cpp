@@ -1319,6 +1319,9 @@ static int nr_cop_records[2], curr_cop_set;
 static struct dma_rec *dma_record[2];
 static int dma_record_toggle, dma_record_frame[2];
 
+// BARTO
+struct dma_rec* get_dma_records() { return dma_record[dma_record_toggle]; }
+
 void record_dma_reset (void)
 {
 	int v, h;

@@ -229,6 +229,7 @@ extern struct dma_rec *record_dma(uae_u16 reg, uae_u16 dat, uae_u32 addr, int hp
 extern void record_dma_replace(int hpos, int vpos, int type, int extra);
 extern void record_dma_reset(void);
 extern void record_dma_event(int evt, int hpos, int vpos);
+extern struct dma_rec* get_dma_records(); // BARTO
 extern void debug_draw(uae_u8 *buf, int bpp, int line, int width, int height, uae_u32 *xredcolors, uae_u32 *xgreencolors, uae_u32 *xbluescolors);
 
 #else
