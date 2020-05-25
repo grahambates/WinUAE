@@ -662,7 +662,7 @@ namespace barto_gdbserver {
 			auto dma_out = std::make_unique<uint8_t[]>(NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT);
 			for(int y = 0; y < NR_DMA_REC_VPOS_OUT; y++) {
 				for(int x = 0; x < NR_DMA_REC_HPOS_OUT; x++) {
-					dma_out[y * NR_DMA_REC_HPOS_OUT + x] = dma_in[y * NR_DMA_REC_HPOS_IN + x].reg != 0xffff ? dma_in[y * NR_DMA_REC_HPOS_IN + x].type : 0;
+					dma_out[y * NR_DMA_REC_HPOS_OUT + x] = dma_in[y * NR_DMA_REC_HPOS_IN + x].reg != 0xffff ? (dma_in[y * NR_DMA_REC_HPOS_IN + x].type | (dma_in[y * NR_DMA_REC_HPOS_IN + x].extra << 4)) : 0;
 				}
 			}
 
