@@ -1564,6 +1564,10 @@ static const uint8_t barto_font[] = {
 void barto_buf_text(int left, int top, const unsigned char* text, uint32_t color)
 {
 	while(int c = *text++) {
+		if(c == ' ') {
+			left += 8;
+			continue;
+		}
 		if(c <= barto_font_first_char || c >= barto_font_first_char + barto_font_width)
 			continue;
 
