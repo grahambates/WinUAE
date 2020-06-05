@@ -640,9 +640,14 @@ namespace barto_gdbserver {
 			return;
 
 		static uae_u32 profile_start_cycles{};
+		static std::unique_ptr<uint8_t[]> profile_chipmem{};
+		static uae_u32 profile_chipmem_size{};
 
 		if(debugger_state == state::profile) {
 			// start profiling
+			profile_chipmem_size = chipmem_bank.allocated_size;
+			profile_chipmem = std::make_unique<uint8_t[]>(profile_chipmem_size);
+			memcpy(profile_chipmem.get(), chipmem_bank.baseaddr, profile_chipmem_size);
 			start_cpu_profiler(baseText, baseText + sizeText, profile_unwind.get());
 			debug_dma = 1;
 			profile_start_cycles = get_cycles() / (CYCLE_UNIT / 2);
@@ -659,15 +664,21 @@ namespace barto_gdbserver {
 			static constexpr int NR_DMA_REC_HPOS_IN = 256, NR_DMA_REC_VPOS_IN = 1000;
 			static constexpr int NR_DMA_REC_HPOS_OUT = 228, NR_DMA_REC_VPOS_OUT = 313;
 			auto dma_in = get_dma_records();
-			auto dma_out = std::make_unique<uint8_t[]>(NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT);
-			for(int y = 0; y < NR_DMA_REC_VPOS_OUT; y++) {
-				for(int x = 0; x < NR_DMA_REC_HPOS_OUT; x++) {
-					dma_out[y * NR_DMA_REC_HPOS_OUT + x] = dma_in[y * NR_DMA_REC_HPOS_IN + x].reg != 0xffff ? (dma_in[y * NR_DMA_REC_HPOS_IN + x].type | (dma_in[y * NR_DMA_REC_HPOS_IN + x].extra << 4)) : 0;
+			auto dma_out = std::make_unique<dma_rec[]>(NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT);
+			for(size_t y = 0; y < NR_DMA_REC_VPOS_OUT; y++) {
+				for(size_t x = 0; x < NR_DMA_REC_HPOS_OUT; x++) {
+					dma_out[y * NR_DMA_REC_HPOS_OUT + x] = dma_in[y * NR_DMA_REC_HPOS_IN + x];
 				}
 			}
 
 			if(auto f = fopen(profile_outname.c_str(), "wb")) {
-				fwrite(dma_out.get(), sizeof(uint8_t), NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT, f);
+				int dmarec_size = sizeof(dma_rec);
+				int dmarec_count = NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT;
+				fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, f);
+				fwrite(profile_chipmem.get(), 1, profile_chipmem_size, f);
+				fwrite(&dmarec_size, sizeof(int), 1, f);
+				fwrite(&dmarec_count, sizeof(int), 1, f);
+				fwrite(dma_out.get(), sizeof(dma_rec), NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT, f);
 				fwrite(get_cpu_profiler_output(), sizeof(uae_u32), get_cpu_profiler_output_count(), f);
 				fclose(f);
 				send_response("$OK");
