@@ -212,8 +212,7 @@ namespace barto_gdbserver {
 			processptr = 0;
 			xfree(processname);
 			processname = nullptr;
-			constexpr TCHAR name[]{ _T(":runme.exe") };
-			processname = ua(name);
+			processname = ua(currprefs.debugging_trigger);
 			trace_mode = TRACE_CHECKONLY;
 
 			// call as early as possible to avoid delays with GDB having to retry to connect...
