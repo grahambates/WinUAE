@@ -5380,7 +5380,7 @@ static int cfgfile_parse_hardware (struct uae_prefs *p, const TCHAR *option, TCH
 		return 1;
 	if (cfgfile_string(option, value, _T("ne2000_pcmcia"), p->ne2000pcmcianame, sizeof p->ne2000pcmcianame / sizeof(TCHAR)))
 		return 1;
-	if (cfgfile_string(option, value, _T("debugging_trigger"), p->debuging_trigger, sizeof p->debuging_trigger / sizeof(TCHAR)))
+	if (cfgfile_string(option, value, _T("debugging_trigger"), p->debugging_trigger, sizeof p->debugging_trigger / sizeof(TCHAR)))
 		return 1;
 
 	if (cfgfile_yesno(option, value, _T("immediate_blits"), &p->immediate_blits)
