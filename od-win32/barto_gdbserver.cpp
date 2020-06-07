@@ -12,10 +12,10 @@
 #include "uae.h"
 #include "debugmem.h"
 #include "dxwrap.h" // AmigaMonitor
+#include "custom.h"
 
 // from main.cpp
 extern struct uae_prefs currprefs;
-
 
 // from debug.cpp
 extern uae_u8 *get_real_address_debug(uaecptr addr);
@@ -642,12 +642,15 @@ namespace barto_gdbserver {
 		static uae_u32 profile_start_cycles{};
 		static std::unique_ptr<uint8_t[]> profile_chipmem{};
 		static uae_u32 profile_chipmem_size{};
+		static uae_u16 profile_custom_regs[256]{};
 
 		if(debugger_state == state::profile) {
 			// start profiling
 			profile_chipmem_size = chipmem_bank.allocated_size;
 			profile_chipmem = std::make_unique<uint8_t[]>(profile_chipmem_size);
 			memcpy(profile_chipmem.get(), chipmem_bank.baseaddr, profile_chipmem_size);
+			for(int i = 0; i < _countof(custom_storage); i++)
+				profile_custom_regs[i] = custom_storage[i].value;
 			start_cpu_profiler(baseText, baseText + sizeText, profile_unwind.get());
 			debug_dma = 1;
 			profile_start_cycles = get_cycles() / (CYCLE_UNIT / 2);
@@ -674,6 +677,7 @@ namespace barto_gdbserver {
 			if(auto f = fopen(profile_outname.c_str(), "wb")) {
 				int dmarec_size = sizeof(dma_rec);
 				int dmarec_count = NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT;
+				fwrite(&profile_custom_regs, sizeof(uae_u16), _countof(profile_custom_regs), f);
 				fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, f);
 				fwrite(profile_chipmem.get(), 1, profile_chipmem_size, f);
 				fwrite(&dmarec_size, sizeof(int), 1, f);
