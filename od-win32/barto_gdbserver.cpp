@@ -676,13 +676,20 @@ namespace barto_gdbserver {
 			if(auto f = fopen(profile_outname.c_str(), "wb")) {
 				int dmarec_size = sizeof(dma_rec);
 				int dmarec_count = NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT;
+				int resource_size = sizeof(barto_debug_resource);
+				int resource_count = barto_debug_resources_count;
+				int profile_count = get_cpu_profiler_output_count();
 				fwrite(&profile_custom_regs, sizeof(uae_u16), _countof(profile_custom_regs), f);
 				fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, f);
 				fwrite(profile_chipmem.get(), 1, profile_chipmem_size, f);
 				fwrite(&dmarec_size, sizeof(int), 1, f);
 				fwrite(&dmarec_count, sizeof(int), 1, f);
 				fwrite(dma_out.get(), sizeof(dma_rec), NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT, f);
-				fwrite(get_cpu_profiler_output(), sizeof(uae_u32), get_cpu_profiler_output_count(), f);
+				fwrite(&resource_size, sizeof(int), 1, f);
+				fwrite(&resource_count, sizeof(int), 1, f);
+				fwrite(barto_debug_resources, resource_size, resource_count, f);
+				fwrite(&profile_count, sizeof(int), 1, f);
+				fwrite(get_cpu_profiler_output(), sizeof(uae_u32), profile_count, f);
 				fclose(f);
 				send_response("$OK");
 			} else {

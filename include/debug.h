@@ -17,6 +17,28 @@
 #define	MAX_HIST 500
 #define MAX_LINEWIDTH 10000
 
+// BARTO
+struct barto_debug_resource {
+	unsigned int address;
+	unsigned int size;
+	char name[32];
+	unsigned short /*enum debug_resource_type*/ type;
+	unsigned short /*enum debug_resource_flags*/ flags;
+
+	union {
+		struct bitmap {
+			short width;
+			short height;
+			short numPlanes;
+		} bitmap;
+		struct palette {
+			short numEntries;
+		} palette;
+	};
+};
+extern unsigned int barto_debug_resources_count;
+extern barto_debug_resource barto_debug_resources[1024];
+
 extern int debugging;
 extern int memwatch_enabled;
 extern int exception_debugging;

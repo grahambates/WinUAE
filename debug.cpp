@@ -1604,8 +1604,22 @@ enum barto_cmd {
 	barto_cmd_clear,
 	barto_cmd_rect,
 	barto_cmd_filled_rect,
-	barto_cmd_text
+	barto_cmd_text,
+	barto_cmd_register_resource,
 };
+
+enum debug_resource_type {
+	debug_resource_type_bitmap,
+	debug_resource_type_palette,
+	debug_resource_type_copperlist,
+};
+
+enum debug_resource_flags {
+	debug_resource_bitmap_interleaved = 1 << 0,
+};
+
+unsigned int barto_debug_resources_count{ 0 };
+barto_debug_resource barto_debug_resources[1024];
 
 extern int debug_barto_cmd(TrapContext* ctx, uae_u32 arg1, uae_u32 arg2, uae_u32 arg3, uae_u32 arg4, uae_u32 arg5)
 {
@@ -1638,6 +1652,30 @@ extern int debug_barto_cmd(TrapContext* ctx, uae_u32 arg1, uae_u32 arg2, uae_u32
 		trap_get_string(ctx, text, arg3, sizeof(text));
 		uint32_t color = arg4;
 		barto_buf_text(left, top, text, color);
+		return 1;
+	}
+	case barto_cmd_register_resource: {
+		if(barto_debug_resources_count >= _countof(barto_debug_resources))
+			return 1;
+
+		auto& resource = barto_debug_resources[barto_debug_resources_count++];
+		resource = {};
+		trap_get_bytes(ctx, &resource, arg2, sizeof(resource));
+		resource.address = _byteswap_ulong(resource.address);
+		resource.size = _byteswap_ulong(resource.size);
+		resource.type = _byteswap_ushort(resource.type);
+		resource.flags = _byteswap_ushort(resource.flags);
+		switch(resource.type) {
+		case debug_resource_type_bitmap:
+			resource.bitmap.width = _byteswap_ushort(resource.bitmap.width);
+			resource.bitmap.height = _byteswap_ushort(resource.bitmap.height);
+			resource.bitmap.numPlanes = _byteswap_ushort(resource.bitmap.numPlanes);
+			break;
+		case debug_resource_type_palette:
+			resource.palette.numEntries = _byteswap_ushort(resource.palette.numEntries);
+			break;
+		}
+
 		return 1;
 	}
 	}
