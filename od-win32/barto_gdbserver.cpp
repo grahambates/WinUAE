@@ -679,6 +679,7 @@ namespace barto_gdbserver {
 				int resource_size = sizeof(barto_debug_resource);
 				int resource_count = barto_debug_resources_count;
 				int profile_count = get_cpu_profiler_output_count();
+				fwrite(&dmacon, sizeof(dmacon), 1, f);
 				fwrite(&profile_custom_regs, sizeof(uae_u16), _countof(profile_custom_regs), f);
 				fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, f);
 				fwrite(profile_chipmem.get(), 1, profile_chipmem_size, f);
