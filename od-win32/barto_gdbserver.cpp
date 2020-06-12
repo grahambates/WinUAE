@@ -639,15 +639,17 @@ namespace barto_gdbserver {
 			return;
 
 		static uae_u32 profile_start_cycles{};
-		static std::unique_ptr<uint8_t[]> profile_chipmem{};
+		static std::unique_ptr<uint8_t[]> profile_chipmem{}; // at start of profile
 		static uae_u32 profile_chipmem_size{};
-		static uae_u16 profile_custom_regs[256]{};
+		static uae_u16 profile_custom_regs[256]{}; // at start of profile
+		static uae_u16 profile_dmacon{}; // at start of profile
 
 		if(debugger_state == state::profile) {
 			// start profiling
 			profile_chipmem_size = chipmem_bank.allocated_size;
 			profile_chipmem = std::make_unique<uint8_t[]>(profile_chipmem_size);
 			memcpy(profile_chipmem.get(), chipmem_bank.baseaddr, profile_chipmem_size);
+			profile_dmacon = dmacon;
 			for(int i = 0; i < _countof(custom_storage); i++)
 				profile_custom_regs[i] = custom_storage[i].value;
 			start_cpu_profiler(baseText, baseText + sizeText, profile_unwind.get());
@@ -679,7 +681,7 @@ namespace barto_gdbserver {
 				int resource_size = sizeof(barto_debug_resource);
 				int resource_count = barto_debug_resources_count;
 				int profile_count = get_cpu_profiler_output_count();
-				fwrite(&dmacon, sizeof(dmacon), 1, f);
+				fwrite(&profile_dmacon, sizeof(profile_dmacon), 1, f);
 				fwrite(&profile_custom_regs, sizeof(uae_u16), _countof(profile_custom_regs), f);
 				fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, f);
 				fwrite(profile_chipmem.get(), 1, profile_chipmem_size, f);

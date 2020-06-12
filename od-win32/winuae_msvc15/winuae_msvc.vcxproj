@@ -138,9 +138,9 @@
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">false</LinkIncremental>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='ReleaseXP|Win32'">false</LinkIncremental>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Test|Win32'">false</LinkIncremental>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">c:\Users\Chuck\Documents\Visual_Studio_Code\amiga-debug\bin\</OutDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">c:\Users\bwodok\Documents\Visual_Studio_Code\amiga-debug\bin\</OutDir>
     <OutDir Condition="'$(Configuration)|$(Platform)'=='ReleaseXP|x64'">c:\Users\Chuck\Documents\Visual_Studio_Code\amiga-debug\bin\</OutDir>
-    <OutDir Condition="'$(Configuration)|$(Platform)'=='Test|x64'">c:\Users\Chuck\Documents\Visual_Studio_Code\amiga-debug\bin\</OutDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Test|x64'">c:\Users\bwodok\Documents\Visual_Studio_Code\amiga-debug\bin\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(Platform)\$(Configuration)\</IntDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='ReleaseXP|x64'">$(Platform)\$(Configuration)\</IntDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Test|x64'">$(Platform)\$(Configuration)\</IntDir>
