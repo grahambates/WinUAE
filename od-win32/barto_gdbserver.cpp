@@ -639,19 +639,34 @@ namespace barto_gdbserver {
 			return;
 
 		static uae_u32 profile_start_cycles{};
+		static uae_u16 profile_dmacon{};
 		static std::unique_ptr<uint8_t[]> profile_chipmem{}; // at start of profile
 		static uae_u32 profile_chipmem_size{};
-		static uae_u16 profile_custom_regs[256]{}; // at start of profile
-		static uae_u16 profile_dmacon{}; // at start of profile
+		static std::unique_ptr<uint8_t[]> profile_bogomem{}; // at start of profile
+		static uae_u32 profile_bogomem_size{};
+		static uae_u16 profile_custom_regs[256]{}; // at start of profile 
 
 		if(debugger_state == state::profile) {
 			// start profiling
+
+			// store DMACON
+			profile_dmacon = dmacon;
+
+			// store chipmem
 			profile_chipmem_size = chipmem_bank.allocated_size;
 			profile_chipmem = std::make_unique<uint8_t[]>(profile_chipmem_size);
 			memcpy(profile_chipmem.get(), chipmem_bank.baseaddr, profile_chipmem_size);
-			profile_dmacon = dmacon;
+
+			// store bogomem
+			profile_bogomem_size = bogomem_bank.allocated_size;
+			profile_bogomem = std::make_unique<uint8_t[]>(profile_bogomem_size);
+			memcpy(profile_bogomem.get(), bogomem_bank.baseaddr, profile_bogomem_size);
+
+			// store custom registers
 			for(int i = 0; i < _countof(custom_storage); i++)
 				profile_custom_regs[i] = custom_storage[i].value;
+
+			// start profiler
 			start_cpu_profiler(baseText, baseText + sizeText, profile_unwind.get());
 			debug_dma = 1;
 			profile_start_cycles = get_cycles() / (CYCLE_UNIT / 2);
@@ -685,6 +700,8 @@ namespace barto_gdbserver {
 				fwrite(&profile_custom_regs, sizeof(uae_u16), _countof(profile_custom_regs), f);
 				fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, f);
 				fwrite(profile_chipmem.get(), 1, profile_chipmem_size, f);
+				fwrite(&profile_bogomem_size, sizeof(profile_bogomem_size), 1, f);
+				fwrite(profile_bogomem.get(), 1, profile_bogomem_size, f);
 				fwrite(&dmarec_size, sizeof(int), 1, f);
 				fwrite(&dmarec_count, sizeof(int), 1, f);
 				fwrite(dma_out.get(), sizeof(dma_rec), NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT, f);
