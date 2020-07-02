@@ -19,6 +19,8 @@ extern struct uae_prefs currprefs;
 
 // from debug.cpp
 extern uae_u8 *get_real_address_debug(uaecptr addr);
+extern void initialize_memwatch(int mode);
+extern void memwatch_setup(void);
 #define TRACE_SKIP_INS 1
 #define TRACE_MATCH_PC 2
 #define TRACE_MATCH_INS 3
@@ -32,6 +34,8 @@ extern uae_u8 *get_real_address_debug(uaecptr addr);
 /*static*/ extern uae_u32 trace_param2;
 /*static*/ extern uaecptr processptr;
 /*static*/ extern uae_char *processname;
+/*static*/ extern int memwatch_triggered;
+/*static*/ extern struct memwatch_node mwhit;
 
 #include "barto_gdbserver.h"
 
@@ -208,6 +212,8 @@ namespace barto_gdbserver {
 			setconsolemode(empty, 1);
 
 			activate_debugger();
+			initialize_memwatch(0);
+
 			// from debug.cpp@process_breakpoint()
 			processptr = 0;
 			xfree(processname);
@@ -278,6 +284,15 @@ namespace barto_gdbserver {
 		for(auto& bpn : bpnodes) {
 			if(bpn.enabled) {
 				write_log("GDBSERVER: - %d, 0x%x, 0x%x\n", bpn.type, bpn.value1, bpn.value2);
+			}
+		}
+	}
+
+	void print_watchpoints() {
+		write_log("GDBSERVER: Watchpoints:\n");
+		for(auto& mwn : mwnodes) {
+			if(mwn.size) {
+				write_log("GDBSERVER: - 0x%x, 0x%x\n", mwn.addr, mwn.size);
 			}
 		}
 	}
@@ -583,6 +598,63 @@ namespace barto_gdbserver {
 										}
 									} else
 										response += "E01";
+								} else if(request.substr(0, 2) == "Z2" || request.substr(0, 2) == "Z3" || request.substr(0, 2) == "Z4") { // Z2: write watchpoint, Z3: read watchpoint, Z4: access watchpoint
+									int rwi = 0;
+									if(request[1] == '2')
+										rwi = 2; // write
+									else if(request[1] == '3')
+										rwi = 1; // read
+									else
+										rwi = 1 | 2; // read + write
+									auto comma = request.find(',', strlen("Z2"));
+									auto comma2 = request.find(',', strlen("Z2,"));
+									if(comma != std::string::npos && comma2 != std::string::npos) {
+										uaecptr adr = strtoul(request.data() + strlen("Z2,"), nullptr, 16);
+										int size = strtoul(request.data() + comma2 + 1, nullptr, 16);
+										write_log("GDBSERVER: write watchpoint at 0x%x, size 0x%x\n", adr, size);
+										for(auto& mwn : mwnodes) {
+											if(mwn.size)
+												continue;
+											mwn.addr = adr;
+											mwn.size = size;
+											mwn.rwi = rwi;
+											// defaults from debug.cpp@memwatch()
+											mwn.val_enabled = 0;
+											mwn.val_mask = 0xffffffff;
+											mwn.val = 0;
+											mwn.access_mask = MW_MASK_ALL;
+											mwn.reg = 0xffffffff;
+											mwn.frozen = 0;
+											mwn.modval_written = 0;
+											mwn.mustchange = 0;
+											mwn.bus_error = 0;
+											mwn.reportonly = false;
+											mwn.nobreak = false;
+											print_watchpoints();
+											response += "OK";
+											break;
+										}
+										memwatch_setup();
+										// TODO: error when too many watchpoints!
+									} else
+										response += "E01";
+								} else if(request.substr(0, 2) == "z2" || request.substr(0, 2) == "z3" || request.substr(0, 2) == "z4") { // Z2: clear write watchpoint, Z3: clear read watchpoint, Z4: clear access watchpoint
+									auto comma = request.find(',', strlen("z2"));
+									if(comma != std::string::npos) {
+										uaecptr adr = strtoul(request.data() + strlen("z2,"), nullptr, 16);
+										for(auto& mwn : mwnodes) {
+											if(mwn.size && mwn.addr == adr) {
+												mwn.size = 0;
+												trace_mode = 0;
+												print_watchpoints();
+												response += "OK";
+												break;
+											}
+											// TODO: error when watchpoint not found
+										}
+										memwatch_setup();
+									} else
+										response += "E01";
 								} else if(request[0] == 'g') { // get registers
 									response += get_registers();
 								} else if(request[0] == 'm') { // read memory
@@ -798,6 +870,25 @@ namespace barto_gdbserver {
 			}
 
 			std::string response{ "S05" };
+			//if(memwatch_triggered) // can't use, debug() will reset it, so just check mwhit
+			for(const auto& mwn : mwnodes) {
+				if(mwn.size && mwn.addr == mwhit.addr) {
+					response = "T05";
+					if(mwhit.rwi == 2)
+						response += "watch";
+					else if(mwhit.rwi == 1)
+						response += "rwatch";
+					else
+						response += "awatch";
+					response += ":";
+					response += hex32(mwn.addr);
+					response += ";";
+					// so we don't trigger again
+					mwhit.size = 0;
+					mwhit.addr = 0;
+					break;
+				}
+			}
 			for(const auto& bpn : bpnodes) {
 				if(bpn.enabled && bpn.type == BREAKPOINT_REG_PC && bpn.value1 == pc) {
 					response = "T05swbreak:;";

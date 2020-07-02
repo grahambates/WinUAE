@@ -72,7 +72,7 @@ int debug_barto = 0;
 
 int debugger_active;
 static int debug_rewind;
-static int memwatch_triggered;
+/*static*/ int memwatch_triggered; // BARTO
 static int inside_debugger;
 int memwatch_access_validator;
 int memwatch_enabled;
@@ -2693,7 +2693,7 @@ static addrbank **debug_mem_banks;
 static addrbank *debug_mem_area;
 struct memwatch_node mwnodes[MEMWATCH_TOTAL];
 static int mwnodes_start, mwnodes_end;
-static struct memwatch_node mwhit;
+/*static*/ struct memwatch_node mwhit; // BARTO
 
 #define MUNGWALL_SLOTS 16
 struct mungwall_data
@@ -2860,7 +2860,8 @@ static void smc_free (void)
 	smc_table = NULL;
 }
 
-static void initialize_memwatch (int mode);
+// BARTO
+/*static*/ void initialize_memwatch (int mode);
 static void smc_detect_init (TCHAR **c)
 {
 	int v, i;
@@ -3616,7 +3617,8 @@ static void memwatch_remap (uaecptr addr)
 	}
 }
 
-static void memwatch_setup (void)
+// BARTO
+/*static*/ void memwatch_setup (void)
 {
 	memwatch_reset ();
 	mwnodes_start = MEMWATCH_TOTAL - 1;
@@ -3658,7 +3660,8 @@ static int deinitialize_memwatch (void)
 	return oldmode;
 }
 
-static void initialize_memwatch (int mode)
+// BARTO
+/*static*/ void initialize_memwatch (int mode)
 {
 	membank_total = currprefs.address_space_24 ? 256 : 65536;
 	deinitialize_memwatch ();
