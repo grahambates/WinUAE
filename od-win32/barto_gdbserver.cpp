@@ -387,10 +387,13 @@ namespace barto_gdbserver {
 											case 1: baseData = base; sizeData = size; break;
 											case 2: baseBss  = base; sizeBss  = size; break;
 											}
+											if(i != 0)
+												response += ";";
+											response += hex32(base);
 											write_log("GDBSERVER:   base=%x; size=%x\n", base, size);
 											segList = BADDR(get_long_debug(segList));
 										}
-										response += "Text=" + hex32(baseText) + ";Data=" + hex32(baseData) + ";Bss=" + hex32(baseBss);
+										//response += "Text=" + hex32(baseText) + ";Data=" + hex32(baseData) + ";Bss=" + hex32(baseBss);
 										// test.hunk: elf2hunk says #0 HUNK_CODE: 0x158 bytes; segList says 0x15c bytes
 										//                          #1 HUNK_DATA: 0x050 bytes; segList says 0x054 bytes
 										//                          #2 HUNK_BSS:  0x044 bytes; segList says 0x048 bytes
