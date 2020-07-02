@@ -94,8 +94,8 @@ namespace barto_gdbserver {
 	SOCKET gdbconn{ INVALID_SOCKET };
 	char socketaddr[sizeof SOCKADDR_INET];
 	bool useAck{ true };
-	uint32_t baseText{}, baseData{}, baseBss{};
-	uint32_t sizeText{}, sizeData{}, sizeBss{};
+	uint32_t baseText{};
+	uint32_t sizeText{};
 	std::string profile_outname;
 	std::unique_ptr<cpu_profiler_unwind[]> profile_unwind{};
 
@@ -378,25 +378,21 @@ namespace barto_gdbserver {
 											write_log("GDBSERVER: cli_CommandName = %s\n", cli_CommandName.c_str());
 											segList = BADDR(get_long_debug(pr_CLI + 60));
 										}
-										baseText = baseData = baseBss = 0;
+										baseText = 0;
 										for(int i = 0; segList; i++) {
 											auto size = get_long_debug(segList - 4) - 4;
 											auto base = segList + 4;
-											switch(i) {
-											case 0: baseText = base; sizeText = size; break;
-											case 1: baseData = base; sizeData = size; break;
-											case 2: baseBss  = base; sizeBss  = size; break;
+											if(i == 0) {
+												baseText = base; 
+												sizeText = size;
 											}
 											if(i != 0)
 												response += ";";
+											// this is non-standard (we report addresses of all segments), works only with modified gdb
 											response += hex32(base);
 											write_log("GDBSERVER:   base=%x; size=%x\n", base, size);
 											segList = BADDR(get_long_debug(segList));
 										}
-										//response += "Text=" + hex32(baseText) + ";Data=" + hex32(baseData) + ";Bss=" + hex32(baseBss);
-										// test.hunk: elf2hunk says #0 HUNK_CODE: 0x158 bytes; segList says 0x15c bytes
-										//                          #1 HUNK_DATA: 0x050 bytes; segList says 0x054 bytes
-										//                          #2 HUNK_BSS:  0x044 bytes; segList says 0x048 bytes
 									}
 								} else if(request.substr(0, strlen("qRcmd,")) == "qRcmd,") {
 									// "monitor" command. used for profiling
