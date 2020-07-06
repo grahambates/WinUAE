@@ -752,7 +752,7 @@ namespace barto_gdbserver {
 
 			// process dma records
 			static constexpr int NR_DMA_REC_HPOS_IN = 256, NR_DMA_REC_VPOS_IN = 1000;
-			static constexpr int NR_DMA_REC_HPOS_OUT = 228, NR_DMA_REC_VPOS_OUT = 313;
+			static constexpr int NR_DMA_REC_HPOS_OUT = 227, NR_DMA_REC_VPOS_OUT = 313;
 			auto dma_in = get_dma_records();
 			auto dma_out = std::make_unique<dma_rec[]>(NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT);
 			for(size_t y = 0; y < NR_DMA_REC_VPOS_OUT; y++) {

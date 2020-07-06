@@ -4779,10 +4779,10 @@ static void m68k_run_1_ce (void)
 				uae_u32 cpu_profiler_callstack[16];
 				uae_u32 cpu_profiler_callstack_depth = 0;
 				if(cpu_profiler_start_addr) {
+					cpu_profiler_cycles = get_cycles();
 					auto pc = r->instruction_pc;
 					auto r13 = regs.regs[13] /* a5 = fp */, r15 = regs.regs[15] /* a7 = sp */;
 					while(pc >= cpu_profiler_start_addr && pc < cpu_profiler_end_addr) {
-						cpu_profiler_cycles = get_cycles();
 						cpu_profiler_callstack[cpu_profiler_callstack_depth++] = pc - cpu_profiler_start_addr;
 						const auto& unwind = cpu_profiler_unwind_buffer[(pc - cpu_profiler_start_addr) >> 1];
 						if(unwind.cfa == ~0 || unwind.ra == ~0) break; // should not happen
@@ -4815,9 +4815,9 @@ static void m68k_run_1_ce (void)
 				// BARTO
 				if(cpu_profiler_start_addr && cpu_profiler_cycles) { // profiling may have been switched on or off in vsync (which is called from 'r->opcode' above)
 					auto cycles_for_instr = (get_cycles() - cpu_profiler_cycles) / (CYCLE_UNIT / 2);
-					if(r->opcode == 0x4e75 /* rts */) {
+					if(r->opcode == 0x4e75) { // rts - callstack's not good
 						if(!cpu_profiler_output.empty())
-							cpu_profiler_output.back() -= cycles_for_instr;
+							cpu_profiler_output.back() -= cycles_for_instr; // add cycles to last valid callstack
 					} else {
 						for(int i = 0; i < cpu_profiler_callstack_depth; i++)
 							cpu_profiler_output.push_back(cpu_profiler_callstack[i]);
