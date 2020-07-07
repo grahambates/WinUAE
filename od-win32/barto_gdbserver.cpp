@@ -3,6 +3,7 @@
 #include "sysdeps.h"
 
 #include <thread>
+#include <vector>
 
 #include "options.h"
 #include "memory.h"
@@ -100,6 +101,7 @@ namespace barto_gdbserver {
 	bool useAck{ true };
 	uint32_t baseText{};
 	uint32_t sizeText{};
+	std::vector<uint32_t> sections; // base for every section
 	std::string profile_outname;
 	std::unique_ptr<cpu_profiler_unwind[]> profile_unwind{};
 
@@ -249,34 +251,48 @@ namespace barto_gdbserver {
 		write_log(_T("GDBSERVER: disconnect\n"));
 	}
 
-	static std::string get_registers() {
-		enum regnames {
-			D0, D1, D2, D3, D4, D5, D6, D7,
-			A0, A1, A2, A3, A4, A5, A6, A7,
-			SR, PC
-		};
+	// from binutils-gdb/gdb/m68k-tdep.c
+/*	static const char* m68k_register_names[] = {
+		"d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7",
+		"a0", "a1", "a2", "a3", "a4", "a5", "a6", "sp", //BARTO
+		"sr", "pc", //BARTO
+		"fp0", "fp1", "fp2", "fp3", "fp4", "fp5", "fp6", "fp7",
+		"fpcontrol", "fpstatus", "fpiaddr"
+	}*/
+	enum regnames {
+		D0, D1, D2, D3, D4, D5, D6, D7,
+		A0, A1, A2, A3, A4, A5, A6, A7,
+		SR, PC
+	};
 
-		//debugmem_list_stackframe_test(false); // TEST
-
+	static std::string get_register(int reg) {
+		uint32_t regvalue{};
 		// need to byteswap because GDB expects 68k big-endian
-		uint32_t registers[18];
-		registers[SR] = _byteswap_ulong(regs.sr);
-		registers[PC] = _byteswap_ulong(M68K_GETPC);
-		for(int i = 0; i < 8; i++) {
-			registers[D0 + i] = _byteswap_ulong(m68k_dreg(regs, i));
-			registers[A0 + i] = _byteswap_ulong(m68k_areg(regs, i));
+		switch(reg) {
+		case SR: 
+			regvalue = regs.sr; 
+			break;
+		case PC: 
+			regvalue = M68K_GETPC; 
+			break;
+		case D0: case D1: case D2: case D3: case D4: case D5: case D6: case D7:
+			regvalue = m68k_dreg(regs, reg - D0);
+			break;
+		case A0: case A1: case A2: case A3: case A4: case A5: case A6: case A7:
+			regvalue = m68k_areg(regs, reg - A0);
+			break;
+		default:
+			return "xxxxxxxx";
 		}
-		write_log("GDBSERVER: PC=%x\n", M68K_GETPC);
+		return hex32(regvalue);
+	}
 
-		auto mem2hex = [](const void* data, size_t length) -> std::string {
-			std::string ret;
-			for(auto u8data = reinterpret_cast<const uint8_t*>(data); length; length--, u8data++) {
-				ret += hex[*u8data >> 4];
-				ret += hex[*u8data & 0xf];
-			}
-			return ret;
-		};
-		return mem2hex(registers, sizeof(registers));
+	static std::string get_registers() {
+		write_log("GDBSERVER: PC=%x\n", M68K_GETPC);
+		std::string ret;
+		for(int reg = 0; reg < 18; reg++)
+			ret += get_register(reg);
+		return ret;
 	}
 
 	void print_breakpoints() {
@@ -382,6 +398,7 @@ namespace barto_gdbserver {
 									write_log("GDBSERVER: ln_Name = %s\n", ln_Name);
 									auto ln_Type = get_byte_debug(ThisTask + 8);
 									bool process = ln_Type == 13; // NT_PROCESS
+									sections.clear();
 									if(process) {
 										auto pr_SegList = BADDR(get_long_debug(ThisTask + 128));
 										auto numSegLists = get_long_debug(pr_SegList + 0);
@@ -405,6 +422,7 @@ namespace barto_gdbserver {
 												response += ";";
 											// this is non-standard (we report addresses of all segments), works only with modified gdb
 											response += hex32(base);
+											sections.push_back(base);
 											write_log("GDBSERVER:   base=%x; size=%x\n", base, size);
 											segList = BADDR(get_long_debug(segList));
 										}
@@ -657,6 +675,8 @@ namespace barto_gdbserver {
 										response += "E01";
 								} else if(request[0] == 'g') { // get registers
 									response += get_registers();
+								} else if(request[0] == 'p') { // get register
+									response += get_register(strtoul(request.data() + 1, nullptr, 16));
 								} else if(request[0] == 'm') { // read memory
 									auto comma = request.find(',');
 									if(comma != std::string::npos) {
@@ -665,7 +685,15 @@ namespace barto_gdbserver {
 										int len = strtoul(request.data() + comma + 1, nullptr, 16);
 										write_log("GDBSERVER: want 0x%x bytes at 0x%x\n", len, adr);
 										while(len-- > 0) {
-											auto data = debug_read_memory_8(adr);
+											auto debug_read_memory_8_no_custom = [](uaecptr addr) -> int {
+												addrbank* ad;
+												ad = &get_mem_bank(addr);
+												if(ad && ad != &custom_bank)
+													return ad->bget(addr);
+												return -1;
+											};
+
+											auto data = debug_read_memory_8_no_custom(adr);
 											if(data == -1) {
 												write_log("GDBSERVER: error reading memory at 0x%x\n", len, adr);
 												response += "E01";
@@ -767,6 +795,7 @@ namespace barto_gdbserver {
 				int resource_size = sizeof(barto_debug_resource);
 				int resource_count = barto_debug_resources_count;
 				int profile_count = get_cpu_profiler_output_count();
+				int section_count = sections.size();
 				fwrite(&profile_dmacon, sizeof(profile_dmacon), 1, f);
 				fwrite(&profile_custom_regs, sizeof(uae_u16), _countof(profile_custom_regs), f);
 				fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, f);
@@ -779,6 +808,8 @@ namespace barto_gdbserver {
 				fwrite(&resource_size, sizeof(int), 1, f);
 				fwrite(&resource_count, sizeof(int), 1, f);
 				fwrite(barto_debug_resources, resource_size, resource_count, f);
+				fwrite(&section_count, sizeof(int), 1, f);
+				fwrite(sections.data(), sizeof(uint32_t), section_count, f);
 				fwrite(&profile_count, sizeof(int), 1, f);
 				fwrite(get_cpu_profiler_output(), sizeof(uae_u32), profile_count, f);
 				fclose(f);
