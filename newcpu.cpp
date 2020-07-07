@@ -4779,6 +4779,12 @@ static void m68k_run_1_ce (void)
 				uae_u32 cpu_profiler_callstack[16];
 				uae_u32 cpu_profiler_callstack_depth = 0;
 				if(cpu_profiler_start_addr) {
+					auto get_long_debug_no_custom = [](uaecptr addr) -> int {
+						if(&get_mem_bank(addr) == &custom_bank)
+							return -1;
+						return get_long_debug(addr);
+					};
+
 					cpu_profiler_cycles = get_cycles();
 					auto pc = r->instruction_pc;
 					auto r13 = regs.regs[13] /* a5 = fp */, r15 = regs.regs[15] /* a7 = sp */;
@@ -4793,9 +4799,9 @@ static void m68k_run_1_ce (void)
 						default: break; // should not happen
 						}
 						new_cfa += unwind.cfa & ((1 << 12) - 1);
-						auto new_pc = get_long_debug(new_cfa + unwind.ra);
+						auto new_pc = get_long_debug_no_custom(new_cfa + unwind.ra);
 						if(unwind.r13 != -1)
-							r13 = get_long_debug(new_cfa + unwind.r13);
+							r13 = get_long_debug_no_custom(new_cfa + unwind.r13);
 						if(new_cfa == r15 || new_pc == pc) break; // should not happen
 						r15 = new_cfa;
 						pc = new_pc;
