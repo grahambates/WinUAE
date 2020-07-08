@@ -101,6 +101,8 @@ namespace barto_gdbserver {
 	bool useAck{ true };
 	uint32_t baseText{};
 	uint32_t sizeText{};
+	uint32_t systemStackLower{}, systemStackUpper{};
+	uint32_t stackLower{}, stackUpper{};
 	std::vector<uint32_t> sections; // base for every section
 	std::string profile_outname;
 	std::unique_ptr<cpu_profiler_unwind[]> profile_unwind{};
@@ -393,14 +395,25 @@ namespace barto_gdbserver {
 									// from debug.cpp@show_exec_tasks
 									auto execbase = get_long_debug(4);
 									auto ThisTask = get_long_debug(execbase + 276);
-
 									auto ln_Name = reinterpret_cast<char*>(get_real_address_debug(get_long_debug(ThisTask + 10)));
 									write_log("GDBSERVER: ln_Name = %s\n", ln_Name);
 									auto ln_Type = get_byte_debug(ThisTask + 8);
 									bool process = ln_Type == 13; // NT_PROCESS
 									sections.clear();
 									if(process) {
+										constexpr auto sizeofLN = 14;
+										// not correct when started from CLI
+										auto tc_SPLower = get_long_debug(ThisTask + sizeofLN + 44);
+										auto tc_SPUpper = get_long_debug(ThisTask + sizeofLN + 48) - 2;
+										stackLower = tc_SPLower;
+										stackUpper = tc_SPUpper;
+										//auto pr_StackBase = BADDR(get_long_debug(ThisTask + 144));
+										//stackUpper = pr_StackBase;
+
+										systemStackLower = get_long_debug(execbase + 58);
+										systemStackUpper = get_long_debug(execbase + 54);
 										auto pr_SegList = BADDR(get_long_debug(ThisTask + 128));
+										// not correct when started from CLI
 										auto numSegLists = get_long_debug(pr_SegList + 0);
 										auto segList = BADDR(get_long_debug(pr_SegList + 12)); // from debug.cpp@debug()
 										auto pr_CLI = BADDR(get_long_debug(ThisTask + 172));
@@ -409,6 +422,10 @@ namespace barto_gdbserver {
 											auto cli_CommandName = BSTR(get_real_address_debug(BADDR(get_long_debug(pr_CLI + 16))));
 											write_log("GDBSERVER: cli_CommandName = %s\n", cli_CommandName.c_str());
 											segList = BADDR(get_long_debug(pr_CLI + 60));
+											// don't know how to get the real stack except reading current stack pointer
+											auto pr_StackSize = get_long_debug(ThisTask + 132);
+											stackUpper = m68k_areg(regs, A7 - A0);
+											stackLower = stackUpper - pr_StackSize;
 										}
 										baseText = 0;
 										for(int i = 0; segList; i++) {
@@ -810,6 +827,10 @@ namespace barto_gdbserver {
 				fwrite(barto_debug_resources, resource_size, resource_count, f);
 				fwrite(&section_count, sizeof(int), 1, f);
 				fwrite(sections.data(), sizeof(uint32_t), section_count, f);
+				fwrite(&systemStackLower, sizeof(uint32_t), 1, f);
+				fwrite(&systemStackUpper, sizeof(uint32_t), 1, f);
+				fwrite(&stackLower, sizeof(uint32_t), 1, f);
+				fwrite(&stackUpper, sizeof(uint32_t), 1, f);
 				fwrite(&profile_count, sizeof(int), 1, f);
 				fwrite(get_cpu_profiler_output(), sizeof(uae_u32), profile_count, f);
 				fclose(f);

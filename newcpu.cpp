@@ -107,6 +107,7 @@ int cpu_tracer;
 // BARTO
 uaecptr cpu_profiler_start_addr = 0;
 uaecptr cpu_profiler_end_addr = 0;
+uint32_t cpu_profiler_last_cycles = 0;
 cpu_profiler_unwind* cpu_profiler_unwind_buffer = nullptr; // for each possible code location (every 2 bytes) 2 s16: cfa, return address
 #include <vector>
 std::vector<uint32_t> cpu_profiler_output;
@@ -115,6 +116,7 @@ void start_cpu_profiler(uaecptr start_addr, uaecptr end_addr, cpu_profiler_unwin
 {
 	cpu_profiler_start_addr = start_addr;
 	cpu_profiler_end_addr = end_addr;
+	cpu_profiler_last_cycles = get_cycles();
 	cpu_profiler_unwind_buffer = unwind_buffer;
 	cpu_profiler_output.clear();
 }
@@ -131,6 +133,7 @@ void stop_cpu_profiler()
 {
 	cpu_profiler_start_addr = 0;
 	cpu_profiler_end_addr = 0;
+	cpu_profiler_last_cycles = 0;
 	cpu_profiler_unwind_buffer = nullptr;
 }
 // BARTO-END
@@ -4786,6 +4789,12 @@ static void m68k_run_1_ce (void)
 					};
 
 					cpu_profiler_cycles = get_cycles();
+					// some cycles burned by IRQ, etc.
+					if(cpu_profiler_cycles > cpu_profiler_last_cycles) {
+						auto cycles_for_instr = (cpu_profiler_cycles - cpu_profiler_last_cycles) / (CYCLE_UNIT / 2);
+						cpu_profiler_output.push_back(0x7fffffff);
+						cpu_profiler_output.push_back(~0 - cycles_for_instr);
+					}
 					auto pc = r->instruction_pc;
 					auto r13 = regs.regs[13] /* a5 = fp */, r15 = regs.regs[15] /* a7 = sp */;
 					while(pc >= cpu_profiler_start_addr && pc < cpu_profiler_end_addr) {
@@ -4820,7 +4829,8 @@ static void m68k_run_1_ce (void)
 
 				// BARTO
 				if(cpu_profiler_start_addr && cpu_profiler_cycles) { // profiling may have been switched on or off in vsync (which is called from 'r->opcode' above)
-					auto cycles_for_instr = (get_cycles() - cpu_profiler_cycles) / (CYCLE_UNIT / 2);
+					cpu_profiler_last_cycles = get_cycles();
+					auto cycles_for_instr = (cpu_profiler_last_cycles - cpu_profiler_cycles) / (CYCLE_UNIT / 2);
 					if(r->opcode == 0x4e75) { // rts - callstack's not good
 						if(!cpu_profiler_output.empty())
 							cpu_profiler_output.back() -= cycles_for_instr; // add cycles to last valid callstack
