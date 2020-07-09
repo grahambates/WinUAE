@@ -14,6 +14,10 @@
 #include "debugmem.h"
 #include "dxwrap.h" // AmigaMonitor
 #include "custom.h"
+#include "win32.h"
+
+extern BITMAPINFO* screenshot_get_bi();
+extern void* screenshot_get_bits();
 
 // from main.cpp
 extern struct uae_prefs currprefs;
@@ -39,6 +43,9 @@ extern void memwatch_setup(void);
 /*static*/ extern struct memwatch_node mwhit;
 
 #include "barto_gdbserver.h"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 
 // -s input.config=1 -s input.1.keyboard.0.button.41.GRAVE=SPC_SINGLESTEP.0    -s use_gui=no -s quickstart=a500,1 -s debugging_features=gdbserver -s filesystem=rw,dh0:c:\Users\bwodok\Documents\Visual_Studio_Code\amiga-debug\bin\dh0
 // c:\Users\bwodok\Documents\Visual_Studio_Code\amiga-debug\bin\opt\bin> m68k-amiga-elf-gdb.exe -ex "set debug remote 1" -ex "target remote :2345" -ex "monitor profile xxx" ..\..\..\template\a.mingw.elf
@@ -105,6 +112,8 @@ namespace barto_gdbserver {
 	uint32_t stackLower{}, stackUpper{};
 	std::vector<uint32_t> sections; // base for every section
 	std::string profile_outname;
+	int profile_num_frames{};
+	int profile_frame_count{};
 	std::unique_ptr<cpu_profiler_unwind[]> profile_unwind{};
 
 	enum class state {
@@ -183,7 +192,7 @@ namespace barto_gdbserver {
 			write_log(_T("GDBSERVER: socket() failed, %s:%s: %d\n"), name, port, WSAGetLastError());
 			return false;
 		}
-		err = ::bind(gdbsocket, socketinfo->ai_addr, socketinfo->ai_addrlen);
+		err = ::bind(gdbsocket, socketinfo->ai_addr, (int)socketinfo->ai_addrlen);
 		if(err < 0) {
 			write_log(_T("GDBSERVER: bind() failed, %s:%s: %d\n"), name, port, WSAGetLastError());
 			return false;
@@ -318,7 +327,7 @@ namespace barto_gdbserver {
 	void send_ack(const std::string& ack) {
 		if(useAck && !ack.empty()) {
 			write_log("GDBSERVER: <- %s\n", ack.c_str());
-			int result = send(gdbconn, ack.data(), ack.length(), 0);
+			int result = send(gdbconn, ack.data(), (int)ack.length(), 0);
 			if(result == SOCKET_ERROR)
 				write_log(_T("GDBSERVER: error sending ack: %d\n"), WSAGetLastError());
 		}
@@ -333,7 +342,7 @@ namespace barto_gdbserver {
 			response += '#';
 			response += hex[cksum >> 4];
 			response += hex[cksum & 0xf];
-			int result = send(gdbconn, response.data(), response.length(), 0);
+			int result = send(gdbconn, response.data(), (int)response.length(), 0);
 			if(result == SOCKET_ERROR)
 				write_log(_T("GDBSERVER: error sending data: %d\n"), WSAGetLastError());
 		}
@@ -448,11 +457,20 @@ namespace barto_gdbserver {
 									// "monitor" command. used for profiling
 									auto cmd = from_hex(request.substr(strlen("qRcmd,")));
 									write_log("GDBSERVER:   monitor %s\n", cmd.c_str());
-									// syntax: monitor profile <unwind_file> <out_file>
+									// syntax: monitor profile <num_frames> <unwind_file> <out_file>
 									if(cmd.substr(0, strlen("profile")) == "profile") {
 										auto s = cmd.substr(strlen("profile "));
 										std::string profile_unwindname;
+										profile_num_frames = 0;
 										profile_outname.clear();
+
+										// get num_frames
+										while(s[0] >= '0' && s[0] <= '9') {
+											profile_num_frames = profile_num_frames * 10 + s[0] - '0';
+											s = s.substr(1);
+										}
+										profile_num_frames = max(1, min(100, profile_num_frames));
+										s = s.substr(1); // skip space
 
 										// get profile_unwindname
 										if(s.substr(0, 1) == "\"") {
@@ -494,6 +512,7 @@ namespace barto_gdbserver {
 												fread(profile_unwind.get(), sizeof(cpu_profiler_unwind), sizeText >> 1, f);
 												fclose(f);
 												send_ack(ack);
+												profile_frame_count = 0;
 												debugger_state = state::profile;
 												deactivate_debugger();
 												return; // response is sent when profile is finished (vsync)
@@ -761,9 +780,26 @@ namespace barto_gdbserver {
 		static std::unique_ptr<uint8_t[]> profile_bogomem{}; // at start of profile
 		static uae_u32 profile_bogomem_size{};
 		static uae_u16 profile_custom_regs[256]{}; // at start of profile 
+		static FILE* profile_outfile{};
 
 		if(debugger_state == state::profile) {
 			// start profiling
+			if(profile_frame_count == 0) {
+				profile_outfile = fopen(profile_outname.c_str(), "wb");
+				if(!profile_outfile) {
+					send_response("$E01");
+					debugger_state = state::debugging;
+					activate_debugger();
+				}
+				int section_count = (int)sections.size();
+				fwrite(&profile_num_frames, sizeof(int), 1, profile_outfile);
+				fwrite(&section_count, sizeof(int), 1, profile_outfile);
+				fwrite(sections.data(), sizeof(uint32_t), section_count, profile_outfile);
+				fwrite(&systemStackLower, sizeof(uint32_t), 1, profile_outfile);
+				fwrite(&systemStackUpper, sizeof(uint32_t), 1, profile_outfile);
+				fwrite(&stackLower, sizeof(uint32_t), 1, profile_outfile);
+				fwrite(&stackUpper, sizeof(uint32_t), 1, profile_outfile);
+			}
 
 			// store DMACON
 			profile_dmacon = dmacon;
@@ -789,6 +825,7 @@ namespace barto_gdbserver {
 			write_log("GDBSERVER: Start CPU Profiler @ %u cycles\n", get_cycles() / (CYCLE_UNIT / 2));
 			debugger_state = state::profiling;
 		} else if(debugger_state == state::profiling) {
+			profile_frame_count++;
 			// end profiling
 			stop_cpu_profiler();
 			debug_dma = 0;
@@ -806,41 +843,74 @@ namespace barto_gdbserver {
 				}
 			}
 
-			if(auto f = fopen(profile_outname.c_str(), "wb")) {
-				int dmarec_size = sizeof(dma_rec);
-				int dmarec_count = NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT;
-				int resource_size = sizeof(barto_debug_resource);
-				int resource_count = barto_debug_resources_count;
-				int profile_count = get_cpu_profiler_output_count();
-				int section_count = sections.size();
-				fwrite(&profile_dmacon, sizeof(profile_dmacon), 1, f);
-				fwrite(&profile_custom_regs, sizeof(uae_u16), _countof(profile_custom_regs), f);
-				fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, f);
-				fwrite(profile_chipmem.get(), 1, profile_chipmem_size, f);
-				fwrite(&profile_bogomem_size, sizeof(profile_bogomem_size), 1, f);
-				fwrite(profile_bogomem.get(), 1, profile_bogomem_size, f);
-				fwrite(&dmarec_size, sizeof(int), 1, f);
-				fwrite(&dmarec_count, sizeof(int), 1, f);
-				fwrite(dma_out.get(), sizeof(dma_rec), NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT, f);
-				fwrite(&resource_size, sizeof(int), 1, f);
-				fwrite(&resource_count, sizeof(int), 1, f);
-				fwrite(barto_debug_resources, resource_size, resource_count, f);
-				fwrite(&section_count, sizeof(int), 1, f);
-				fwrite(sections.data(), sizeof(uint32_t), section_count, f);
-				fwrite(&systemStackLower, sizeof(uint32_t), 1, f);
-				fwrite(&systemStackUpper, sizeof(uint32_t), 1, f);
-				fwrite(&stackLower, sizeof(uint32_t), 1, f);
-				fwrite(&stackUpper, sizeof(uint32_t), 1, f);
-				fwrite(&profile_count, sizeof(int), 1, f);
-				fwrite(get_cpu_profiler_output(), sizeof(uae_u32), profile_count, f);
-				fclose(f);
-				send_response("$OK");
+			int dmarec_size = sizeof(dma_rec);
+			int dmarec_count = NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT;
+			int resource_size = sizeof(barto_debug_resource);
+			int resource_count = barto_debug_resources_count;
+			int profile_count = get_cpu_profiler_output_count();
+			fwrite(&profile_dmacon, sizeof(profile_dmacon), 1, profile_outfile);
+			fwrite(&profile_custom_regs, sizeof(uae_u16), _countof(profile_custom_regs), profile_outfile);
+			fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, profile_outfile);
+			fwrite(profile_chipmem.get(), 1, profile_chipmem_size, profile_outfile);
+			fwrite(&profile_bogomem_size, sizeof(profile_bogomem_size), 1, profile_outfile);
+			fwrite(profile_bogomem.get(), 1, profile_bogomem_size, profile_outfile);
+			fwrite(&dmarec_size, sizeof(int), 1, profile_outfile);
+			fwrite(&dmarec_count, sizeof(int), 1, profile_outfile);
+			fwrite(dma_out.get(), sizeof(dma_rec), NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT, profile_outfile);
+			fwrite(&resource_size, sizeof(int), 1, profile_outfile);
+			fwrite(&resource_count, sizeof(int), 1, profile_outfile);
+			fwrite(barto_debug_resources, resource_size, resource_count, profile_outfile);
+			fwrite(&profile_count, sizeof(int), 1, profile_outfile);
+			fwrite(get_cpu_profiler_output(), sizeof(uae_u32), profile_count, profile_outfile);
+			// write JPEG screenshot
+			if(profile_num_frames > 1) {
+				int monid = getfocusedmonitor();
+				int imagemode = 1;
+				if(screenshot_prepare(monid, imagemode) == 1) {
+					auto bi = screenshot_get_bi();
+					auto bi_bits = (const uint8_t*)screenshot_get_bits();
+					if(bi->bmiHeader.biBitCount == 24) {
+						// need to flip bits and swap rgb channels
+						const auto w = bi->bmiHeader.biWidth;
+						const auto h = bi->bmiHeader.biHeight;
+						auto bits = std::make_unique<uint8_t[]>(w * 3 * h);
+						for(int y = 0; y < bi->bmiHeader.biHeight; y++) {
+							for(int x = 0; x < bi->bmiHeader.biWidth; x++) {
+								bits[y * w * 3 + x * 3 + 0] = bi_bits[(h - 1 - y) * w * 3 + x * 3 + 2];
+								bits[y * w * 3 + x * 3 + 1] = bi_bits[(h - 1 - y) * w * 3 + x * 3 + 1];
+								bits[y * w * 3 + x * 3 + 2] = bi_bits[(h - 1 - y) * w * 3 + x * 3 + 0];
+							}
+						}
+						struct write_context_t {
+							uint8_t data[1'000'000]{};
+							int size = 0;
+						};
+						auto write_context = std::make_unique<write_context_t>();
+						auto write_func = [](void* _context, void* data, int size) {
+							auto context = (write_context_t*)_context;
+							memcpy(&context->data[context->size], data, size);
+							context->size += size;
+						};
+						stbi_write_jpg_to_func(write_func, write_context.get(), w, h, 3, bits.get(), 50);
+						write_context->size = (write_context->size + 3) & ~3; // pad to 32bit
+						fwrite(&write_context->size, sizeof(int), 1, profile_outfile);
+						fwrite(write_context->data, 1, write_context->size, profile_outfile);
+					}
+				}
 			} else {
-				send_response("$E01");
+				int screenshot_size = 0;
+				fwrite(&screenshot_size, sizeof(int), 1, profile_outfile);
 			}
 
-			debugger_state = state::debugging;
-			activate_debugger();
+			if(profile_frame_count == profile_num_frames) {
+				fclose(profile_outfile);
+				send_response("$OK");
+
+				debugger_state = state::debugging;
+				activate_debugger();
+			} else {
+				debugger_state = state::profile;
+			}
 		}
 
 		if(debugger_state == state::connected && data_available()) {
