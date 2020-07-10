@@ -924,6 +924,7 @@ namespace barto_gdbserver {
 	}
 
 	uaecptr KPutCharX{};
+	uaecptr Trap7{};
 	std::string KPutCharOutput;
 
 	void output(const char* string) {
@@ -952,7 +953,44 @@ namespace barto_gdbserver {
 				bpn.type = BREAKPOINT_REG_PC;
 				bpn.oper = BREAKPOINT_CMP_EQUAL;
 				bpn.enabled = 1;
-				write_log("GDBSERVER: Breakpoint for KPutCharX at 0x%x installed\n", KPutCharX);
+				write_log("GDBSERVER: Breakpoint for KPutCharX at 0x%x installed\n", bpn.value1);
+				break;
+			}
+
+			// TRAP#7 breakpoint (GCC generates this opcode when it encounters undefined behavior)
+			Trap7 = get_long_debug(regs.vbr + 0x9c);
+			for(auto& bpn : bpnodes) {
+				if(bpn.enabled)
+					continue;
+				bpn.value1 = Trap7;
+				bpn.type = BREAKPOINT_REG_PC;
+				bpn.oper = BREAKPOINT_CMP_EQUAL;
+				bpn.enabled = 1;
+				write_log("GDBSERVER: Breakpoint for TRAP#7 at 0x%x installed\n", bpn.value1);
+				break;
+			}
+
+			// watchpoint for NULL (GCC sees this as undefined behavior)
+			for(auto& mwn : mwnodes) {
+				if(mwn.size)
+					continue;
+				mwn.addr = 0;
+				mwn.size = 4;
+				mwn.rwi = 1 | 2; // read + write
+				// defaults from debug.cpp@memwatch()
+				mwn.val_enabled = 0;
+				mwn.val_mask = 0xffffffff;
+				mwn.val = 0;
+				mwn.access_mask = MW_MASK_ALL;
+				mwn.reg = 0xffffffff;
+				mwn.frozen = 0;
+				mwn.modval_written = 0;
+				mwn.mustchange = 0;
+				mwn.bus_error = 0;
+				mwn.reportonly = false;
+				mwn.nobreak = false;
+				memwatch_setup();
+				write_log("GDBSERVER: Watchpoint for NULL installed\n");
 				break;
 			}
 
@@ -975,6 +1013,7 @@ namespace barto_gdbserver {
 
 		// something stopped execution and entered debugger
 		if(debugger_state == state::connected) {
+//while(!IsDebuggerPresent()) Sleep(100);
 			auto pc = munge24(m68k_getpc());
 			if (pc == KPutCharX) {
 				// if this is too slow, hook uaelib trap#86
@@ -994,17 +1033,21 @@ namespace barto_gdbserver {
 			std::string response{ "S05" };
 			//if(memwatch_triggered) // can't use, debug() will reset it, so just check mwhit
 			for(const auto& mwn : mwnodes) {
-				if(mwn.size && mwn.addr == mwhit.addr) {
-					response = "T05";
-					if(mwhit.rwi == 2)
-						response += "watch";
-					else if(mwhit.rwi == 1)
-						response += "rwatch";
-					else
-						response += "awatch";
-					response += ":";
-					response += hex32(mwn.addr);
-					response += ";";
+				if(mwn.size && mwhit.addr >= mwn.addr && mwhit.addr < mwn.addr + mwn.size) {
+					if(mwn.addr == 0) {
+						response = "S0B"; // undefined behavior -> SIGSEGV
+					} else {
+						response = "T05";
+						if(mwhit.rwi == 2)
+							response += "watch";
+						else if(mwhit.rwi == 1)
+							response += "rwatch";
+						else
+							response += "awatch";
+						response += ":";
+						response += hex32(mwhit.addr);
+						response += ";";
+					}
 					// so we don't trigger again
 					mwhit.size = 0;
 					mwhit.addr = 0;
@@ -1013,7 +1056,14 @@ namespace barto_gdbserver {
 			}
 			for(const auto& bpn : bpnodes) {
 				if(bpn.enabled && bpn.type == BREAKPOINT_REG_PC && bpn.value1 == pc) {
-					response = "T05swbreak:;";
+					if(pc == Trap7) {
+						response = "S07"; // TRAP#7 -> SIGEMT
+						// unwind PC & stack for better debugging experience (otherwise we're probably just somewhere in Kickstart)
+						regs.pc = regs.instruction_pc_user_exception - 2;
+						m68k_areg(regs, A7 - A0) = regs.usp;
+					} else {
+						response = "T05swbreak:;";
+					}
 					break;
 				}
 			}
