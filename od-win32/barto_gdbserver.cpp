@@ -41,6 +41,8 @@ extern void memwatch_setup(void);
 /*static*/ extern uae_char *processname;
 /*static*/ extern int memwatch_triggered;
 /*static*/ extern struct memwatch_node mwhit;
+extern int debug_illegal;
+extern uae_u64 debug_illegal_mask;
 
 #include "barto_gdbserver.h"
 
@@ -925,6 +927,7 @@ namespace barto_gdbserver {
 
 	uaecptr KPutCharX{};
 	uaecptr Trap7{};
+	uaecptr AddressError{};
 	std::string KPutCharOutput;
 
 	void output(const char* string) {
@@ -970,6 +973,18 @@ namespace barto_gdbserver {
 				break;
 			}
 
+			AddressError = get_long_debug(regs.vbr + 0xc);
+			for(auto& bpn : bpnodes) {
+				if(bpn.enabled)
+					continue;
+				bpn.value1 = AddressError;
+				bpn.type = BREAKPOINT_REG_PC;
+				bpn.oper = BREAKPOINT_CMP_EQUAL;
+				bpn.enabled = 1;
+				write_log("GDBSERVER: Breakpoint for AddressError at 0x%x installed\n", bpn.value1);
+				break;
+			}
+
 			// watchpoint for NULL (GCC sees this as undefined behavior)
 			for(auto& mwn : mwnodes) {
 				if(mwn.size)
@@ -994,6 +1009,10 @@ namespace barto_gdbserver {
 				break;
 			}
 
+			// enable break at exceptions
+			debug_illegal = 1;
+			debug_illegal_mask = 1 << 3; // 3 = address error
+
 			warpmode(0);
 			// from debug.cpp@process_breakpoint()
 			processptr = 0;
@@ -1013,7 +1032,7 @@ namespace barto_gdbserver {
 
 		// something stopped execution and entered debugger
 		if(debugger_state == state::connected) {
-//while(!IsDebuggerPresent()) Sleep(100);
+//while(!IsDebuggerPresent()) Sleep(100); __debugbreak();
 			auto pc = munge24(m68k_getpc());
 			if (pc == KPutCharX) {
 				// if this is too slow, hook uaelib trap#86
@@ -1031,27 +1050,30 @@ namespace barto_gdbserver {
 			}
 
 			std::string response{ "S05" };
+
 			//if(memwatch_triggered) // can't use, debug() will reset it, so just check mwhit
-			for(const auto& mwn : mwnodes) {
-				if(mwn.size && mwhit.addr >= mwn.addr && mwhit.addr < mwn.addr + mwn.size) {
-					if(mwn.addr == 0) {
-						response = "S0B"; // undefined behavior -> SIGSEGV
-					} else {
-						response = "T05";
-						if(mwhit.rwi == 2)
-							response += "watch";
-						else if(mwhit.rwi == 1)
-							response += "rwatch";
-						else
-							response += "awatch";
-						response += ":";
-						response += hex32(mwhit.addr);
-						response += ";";
+			if(mwhit.size) {
+				for(const auto& mwn : mwnodes) {
+					if(mwn.size && mwhit.addr >= mwn.addr && mwhit.addr < mwn.addr + mwn.size) {
+						if(mwn.addr == 0) {
+							response = "S0B"; // undefined behavior -> SIGSEGV
+						} else {
+							response = "T05";
+							if(mwhit.rwi == 2)
+								response += "watch";
+							else if(mwhit.rwi == 1)
+								response += "rwatch";
+							else
+								response += "awatch";
+							response += ":";
+							response += hex32(mwhit.addr);
+							response += ";";
+						}
+						// so we don't trigger again
+						mwhit.size = 0;
+						mwhit.addr = 0;
+						goto send_response;
 					}
-					// so we don't trigger again
-					mwhit.size = 0;
-					mwhit.addr = 0;
-					break;
 				}
 			}
 			for(const auto& bpn : bpnodes) {
@@ -1061,12 +1083,18 @@ namespace barto_gdbserver {
 						// unwind PC & stack for better debugging experience (otherwise we're probably just somewhere in Kickstart)
 						regs.pc = regs.instruction_pc_user_exception - 2;
 						m68k_areg(regs, A7 - A0) = regs.usp;
+					} else if(pc == AddressError) {
+						response = "S0A"; // AddressError -> SIGBUS
+						// unwind PC & stack for better debugging experience (otherwise we're probably just somewhere in Kickstart)
+						regs.pc = regs.instruction_pc_user_exception; // don't know size of opcode that caused exception
+						m68k_areg(regs, A7 - A0) = regs.usp;
 					} else {
 						response = "T05swbreak:;";
 					}
-					break;
+					goto send_response;
 				}
 			}
+send_response:
 			send_response("$" + response);
 			trace_mode = 0;
 			debugger_state = state::debugging;
