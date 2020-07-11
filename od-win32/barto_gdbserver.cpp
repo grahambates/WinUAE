@@ -996,7 +996,7 @@ namespace barto_gdbserver {
 				mwn.val_enabled = 0;
 				mwn.val_mask = 0xffffffff;
 				mwn.val = 0;
-				mwn.access_mask = MW_MASK_ALL;
+				mwn.access_mask = MW_MASK_CPU_D_R | MW_MASK_CPU_D_W; // CPU data read/write only
 				mwn.reg = 0xffffffff;
 				mwn.frozen = 0;
 				mwn.modval_written = 0;
