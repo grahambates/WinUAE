@@ -6360,29 +6360,31 @@ void debug (void)
 				if ((processptr || processname) && notinrom()) {
 					uaecptr execbase = get_long_debug (4);
 					uaecptr activetask = get_long_debug (execbase + 276);
-					int process = get_byte_debug (activetask + 8) == 13 ? 1 : 0;
-					char *name = (char*)get_real_address_debug(get_long_debug (activetask + 10));
-					if (process) {
-						uaecptr cli = BPTR2APTR(get_long_debug (activetask + 172));
-						uaecptr seglist = 0;
+					if(activetask) { // BARTO
+						int process = get_byte_debug (activetask + 8) == 13 ? 1 : 0;
+						char *name = (char*)get_real_address_debug(get_long_debug (activetask + 10));
+						if (process) {
+							uaecptr cli = BPTR2APTR(get_long_debug (activetask + 172));
+							uaecptr seglist = 0;
 
-						uae_char *command = NULL;
-						if (cli) {
-							if (processname)
-								command = (char*)get_real_address_debug(BPTR2APTR(get_long_debug (cli + 16)));
-							seglist = BPTR2APTR(get_long_debug (cli + 60));
-						} else {
-							seglist = BPTR2APTR(get_long_debug (activetask + 128));
-							seglist = BPTR2APTR(get_long_debug (seglist + 12));
-						}
-						if (activetask == processptr || (processname && (!stricmp (name, processname) || (command && command[0] && !strnicmp (command + 1, processname, ((uae_u8*)command)[0]) && processname[command[0]] == 0)))) {
-							while (seglist) {
-								uae_u32 size = get_long_debug (seglist - 4) - 4;
-								if (pc >= (seglist + 4) && pc < (seglist + size)) {
-									bp = 1;
-									break;
+							uae_char *command = NULL;
+							if (cli) {
+								if (processname)
+									command = (char*)get_real_address_debug(BPTR2APTR(get_long_debug (cli + 16)));
+								seglist = BPTR2APTR(get_long_debug (cli + 60));
+							} else {
+								seglist = BPTR2APTR(get_long_debug (activetask + 128));
+								seglist = BPTR2APTR(get_long_debug (seglist + 12));
+							}
+							if (activetask == processptr || (processname && (!stricmp (name, processname) || (command && command[0] && !strnicmp (command + 1, processname, ((uae_u8*)command)[0]) && processname[command[0]] == 0)))) {
+								while (seglist) {
+									uae_u32 size = get_long_debug (seglist - 4) - 4;
+									if (pc >= (seglist + 4) && pc < (seglist + size)) {
+										bp = 1;
+										break;
+									}
+									seglist = BPTR2APTR(get_long_debug (seglist));
 								}
-								seglist = BPTR2APTR(get_long_debug (seglist));
 							}
 						}
 					}

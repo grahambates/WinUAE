@@ -426,53 +426,58 @@ namespace barto_gdbserver {
 									// from debug.cpp@show_exec_tasks
 									auto execbase = get_long_debug(4);
 									auto ThisTask = get_long_debug(execbase + 276);
-									auto ln_Name = reinterpret_cast<char*>(get_real_address_debug(get_long_debug(ThisTask + 10)));
-									barto_log("GDBSERVER: ln_Name = %s\n", ln_Name);
-									auto ln_Type = get_byte_debug(ThisTask + 8);
-									bool process = ln_Type == 13; // NT_PROCESS
-									sections.clear();
-									if(process) {
-										constexpr auto sizeofLN = 14;
-										// not correct when started from CLI
-										auto tc_SPLower = get_long_debug(ThisTask + sizeofLN + 44);
-										auto tc_SPUpper = get_long_debug(ThisTask + sizeofLN + 48) - 2;
-										stackLower = tc_SPLower;
-										stackUpper = tc_SPUpper;
-										//auto pr_StackBase = BADDR(get_long_debug(ThisTask + 144));
-										//stackUpper = pr_StackBase;
+									response += "E01";
+									if(ThisTask) {
+										auto ln_Name = reinterpret_cast<char*>(get_real_address_debug(get_long_debug(ThisTask + 10)));
+										barto_log("GDBSERVER: ln_Name = %s\n", ln_Name);
+										auto ln_Type = get_byte_debug(ThisTask + 8);
+										bool process = ln_Type == 13; // NT_PROCESS
+										sections.clear();
+										if(process) {
+											constexpr auto sizeofLN = 14;
+											// not correct when started from CLI
+											auto tc_SPLower = get_long_debug(ThisTask + sizeofLN + 44);
+											auto tc_SPUpper = get_long_debug(ThisTask + sizeofLN + 48) - 2;
+											stackLower = tc_SPLower;
+											stackUpper = tc_SPUpper;
+											//auto pr_StackBase = BADDR(get_long_debug(ThisTask + 144));
+											//stackUpper = pr_StackBase;
 
-										systemStackLower = get_long_debug(execbase + 58);
-										systemStackUpper = get_long_debug(execbase + 54);
-										auto pr_SegList = BADDR(get_long_debug(ThisTask + 128));
-										// not correct when started from CLI
-										auto numSegLists = get_long_debug(pr_SegList + 0);
-										auto segList = BADDR(get_long_debug(pr_SegList + 12)); // from debug.cpp@debug()
-										auto pr_CLI = BADDR(get_long_debug(ThisTask + 172));
-										int pr_TaskNum = get_long_debug(ThisTask + 140);
-										if(pr_CLI && pr_TaskNum) {
-											auto cli_CommandName = BSTR(get_real_address_debug(BADDR(get_long_debug(pr_CLI + 16))));
-											barto_log("GDBSERVER: cli_CommandName = %s\n", cli_CommandName.c_str());
-											segList = BADDR(get_long_debug(pr_CLI + 60));
-											// don't know how to get the real stack except reading current stack pointer
-											auto pr_StackSize = get_long_debug(ThisTask + 132);
-											stackUpper = m68k_areg(regs, A7 - A0);
-											stackLower = stackUpper - pr_StackSize;
-										}
-										baseText = 0;
-										for(int i = 0; segList; i++) {
-											auto size = get_long_debug(segList - 4) - 4;
-											auto base = segList + 4;
-											if(i == 0) {
-												baseText = base; 
-												sizeText = size;
+											systemStackLower = get_long_debug(execbase + 58);
+											systemStackUpper = get_long_debug(execbase + 54);
+											auto pr_SegList = BADDR(get_long_debug(ThisTask + 128));
+											// not correct when started from CLI
+											auto numSegLists = get_long_debug(pr_SegList + 0);
+											auto segList = BADDR(get_long_debug(pr_SegList + 12)); // from debug.cpp@debug()
+											auto pr_CLI = BADDR(get_long_debug(ThisTask + 172));
+											int pr_TaskNum = get_long_debug(ThisTask + 140);
+											if(pr_CLI && pr_TaskNum) {
+												auto cli_CommandName = BSTR(get_real_address_debug(BADDR(get_long_debug(pr_CLI + 16))));
+												barto_log("GDBSERVER: cli_CommandName = %s\n", cli_CommandName.c_str());
+												segList = BADDR(get_long_debug(pr_CLI + 60));
+												// don't know how to get the real stack except reading current stack pointer
+												auto pr_StackSize = get_long_debug(ThisTask + 132);
+												stackUpper = m68k_areg(regs, A7 - A0);
+												stackLower = stackUpper - pr_StackSize;
 											}
-											if(i != 0)
-												response += ";";
-											// this is non-standard (we report addresses of all segments), works only with modified gdb
-											response += hex32(base);
-											sections.push_back(base);
-											barto_log("GDBSERVER:   base=%x; size=%x\n", base, size);
-											segList = BADDR(get_long_debug(segList));
+											baseText = 0;
+											for(int i = 0; segList; i++) {
+												auto size = get_long_debug(segList - 4) - 4;
+												auto base = segList + 4;
+												if(i == 0) {
+													baseText = base;
+													sizeText = size;
+												}
+												if(i == 0)
+													response = "$";
+												else
+													response += ";";
+												// this is non-standard (we report addresses of all segments), works only with modified gdb
+												response += hex32(base);
+												sections.push_back(base);
+												barto_log("GDBSERVER:   base=%x; size=%x\n", base, size);
+												segList = BADDR(get_long_debug(segList));
+											}
 										}
 									}
 								} else if(request.substr(0, strlen("qRcmd,")) == "qRcmd,") {
