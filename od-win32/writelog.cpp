@@ -625,6 +625,9 @@ void write_logx(const TCHAR *format, ...)
 	LeaveCriticalSection (&cs);
 }
 
+// BARTO
+namespace barto_gdbserver { void log_output(const TCHAR* string); }
+
 void write_log (const TCHAR *format, ...)
 {
 	int count;
@@ -633,15 +636,7 @@ void write_log (const TCHAR *format, ...)
 	TCHAR *bufp;
 	va_list parms;
 
-// BARTO
-#if 1
-	static int is_debugger_present = -1;
-	if(is_debugger_present == -1) {
-		is_debugger_present = IsDebuggerPresent();
-	}
-#endif
-
-	if (!SHOW_CONSOLE && !console_logging && !debugfile && !is_debugger_present)
+	if (!SHOW_CONSOLE && !console_logging && !debugfile && !(currprefs.debugging_features & (1 << 2))) // BARTO "gdbserver"
 		return;
 
 	if (!cs_init)
@@ -683,12 +678,14 @@ void write_log (const TCHAR *format, ...)
 		_ftprintf (debugfile, _T("%s"), bufp);
 	}
 
-	// BARTO
-#if 1
-	if (is_debugger_present) {
+	static int is_debugger_present = -1;
+	if (is_debugger_present == -1)
+		is_debugger_present = IsDebuggerPresent();
+	if (is_debugger_present)
 		OutputDebugString(bufp);
-	}
-#endif
+	// BARTO
+	if (currprefs.debugging_features & (1 << 2))
+		barto_gdbserver::log_output(bufp);
 
 	lfdetected = 0;
 	if (_tcslen (bufp) > 0 && bufp[_tcslen (bufp) - 1] == '\n')

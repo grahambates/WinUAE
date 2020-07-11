@@ -349,9 +349,6 @@ static int native_dos_op(TrapContext *ctx, uae_u32 mode, uae_u32 p1, uae_u32 p2,
 	return 0;
 }
 
-// BARTO
-namespace barto_gdbserver { void output(const char* string); }
-
 static uae_u32 uaelib_demux_common(TrapContext *ctx, uae_u32 ARG0, uae_u32 ARG1, uae_u32 ARG2, uae_u32 ARG3, uae_u32 ARG4, uae_u32 ARG5)
 {
 	switch (ARG0) {
@@ -395,7 +392,6 @@ static uae_u32 uaelib_demux_common(TrapContext *ctx, uae_u32 ARG0, uae_u32 ARG1,
 		if (valid_address(ARG1, 1)) {
 			uae_char tmp[MAX_DPATH];
 			trap_get_string(ctx, tmp, ARG1, sizeof tmp);
-			barto_gdbserver::output(tmp); // BARTO
 			TCHAR *s = au(tmp);
 			write_log(_T("DBG: %s\n"), s);
 			xfree(s);

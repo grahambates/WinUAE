@@ -136,7 +136,8 @@ void activate_debugger (void)
 	debug_pc = 0xffffffff;
 	trace_mode = 0;
 	if (debugger_active) {
-		write_log(_T("Debugger already active!?\n"));
+		if(!(currprefs.debugging_features & (1 << 2))) // BARTO "gdb_server"
+			write_log(_T("Debugger already active!?\n"));
 		return;
 	}
 	debug_cycles();

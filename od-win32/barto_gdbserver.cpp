@@ -57,6 +57,24 @@ namespace barto_gdbserver {
 	bool data_available();
 	void disconnect();
 
+	static bool in_handle_packet = false;
+	struct tracker {
+		tracker() { backup = in_handle_packet; in_handle_packet = true; }
+		~tracker() { in_handle_packet = backup; }
+	private: 
+		bool backup;
+	};
+
+	void barto_log(const char* format, ...);
+	void barto_log(const wchar_t* format, ...);
+
+	static std::string to_utf8(LPCWSTR string) {
+		int len = WideCharToMultiByte(CP_UTF8, 0, string, -1, nullptr, 0, nullptr, nullptr);
+		std::unique_ptr<char[]> buffer(new char[len]);
+		WideCharToMultiByte(CP_UTF8, 0, string, -1, buffer.get(), len, nullptr, nullptr);
+		return std::string(buffer.get());
+	}
+
 	static constexpr char hex[]{ "0123456789abcdef" };
 	static std::string hex8(uint8_t v) {
 		std::string ret;
@@ -142,7 +160,7 @@ namespace barto_gdbserver {
 			if(select(1, &fd, nullptr, nullptr, &tv)) {
 				gdbconn = accept(gdbsocket, (struct sockaddr*)socketaddr, &sa_len);
 				if(gdbconn != INVALID_SOCKET)
-					write_log("GDBSERVER: connection accepted\n");
+					barto_log("GDBSERVER: connection accepted\n");
 			}
 		}
 		return gdbconn != INVALID_SOCKET;
@@ -168,14 +186,14 @@ namespace barto_gdbserver {
 	}
 
 	bool listen() {
-		write_log("GDBSERVER: listen()\n");
+		barto_log("GDBSERVER: listen()\n");
 
 		assert(debugger_state == state::inited);
 
 		WSADATA wsaData = { 0 };
 		if(WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
 			DWORD lasterror = WSAGetLastError();
-			write_log(_T("GDBSERVER: can't open winsock, error %d\n"), lasterror);
+			barto_log(_T("GDBSERVER: can't open winsock, error %d\n"), lasterror);
 			return false;
 		}
 		int err;
@@ -186,32 +204,32 @@ namespace barto_gdbserver {
 
 		err = GetAddrInfoW(name, port, nullptr, &socketinfo);
 		if(err < 0) {
-			write_log(_T("GDBSERVER: GetAddrInfoW() failed, %s:%s: %d\n"), name, port, WSAGetLastError());
+			barto_log(_T("GDBSERVER: GetAddrInfoW() failed, %s:%s: %d\n"), name, port, WSAGetLastError());
 			return false;
 		}
 		gdbsocket = socket(socketinfo->ai_family, socketinfo->ai_socktype, socketinfo->ai_protocol);
 		if(gdbsocket == INVALID_SOCKET) {
-			write_log(_T("GDBSERVER: socket() failed, %s:%s: %d\n"), name, port, WSAGetLastError());
+			barto_log(_T("GDBSERVER: socket() failed, %s:%s: %d\n"), name, port, WSAGetLastError());
 			return false;
 		}
 		err = ::bind(gdbsocket, socketinfo->ai_addr, (int)socketinfo->ai_addrlen);
 		if(err < 0) {
-			write_log(_T("GDBSERVER: bind() failed, %s:%s: %d\n"), name, port, WSAGetLastError());
+			barto_log(_T("GDBSERVER: bind() failed, %s:%s: %d\n"), name, port, WSAGetLastError());
 			return false;
 		}
 		err = ::listen(gdbsocket, 1);
 		if(err < 0) {
-			write_log(_T("GDBSERVER: listen() failed, %s:%s: %d\n"), name, port, WSAGetLastError());
+			barto_log(_T("GDBSERVER: listen() failed, %s:%s: %d\n"), name, port, WSAGetLastError());
 			return false;
 		}
 		err = setsockopt(gdbsocket, SOL_SOCKET, SO_LINGER, (char*)&linger_1s, sizeof linger_1s);
 		if(err < 0) {
-			write_log(_T("GDBSERVER: setsockopt(SO_LINGER) failed, %s:%s: %d\n"), name, port, WSAGetLastError());
+			barto_log(_T("GDBSERVER: setsockopt(SO_LINGER) failed, %s:%s: %d\n"), name, port, WSAGetLastError());
 			return false;
 		}
 		err = setsockopt(gdbsocket, SOL_SOCKET, SO_REUSEADDR, (char*)&one, sizeof one);
 		if(err < 0) {
-			write_log(_T("GDBSERVER: setsockopt(SO_REUSEADDR) failed, %s:%s: %d\n"), name, port, WSAGetLastError());
+			barto_log(_T("GDBSERVER: setsockopt(SO_REUSEADDR) failed, %s:%s: %d\n"), name, port, WSAGetLastError());
 			return false;
 		}
 
@@ -261,7 +279,7 @@ namespace barto_gdbserver {
 			return;
 		closesocket(gdbconn);
 		gdbconn = INVALID_SOCKET;
-		write_log(_T("GDBSERVER: disconnect\n"));
+		barto_log(_T("GDBSERVER: disconnect\n"));
 	}
 
 	// from binutils-gdb/gdb/m68k-tdep.c
@@ -301,7 +319,7 @@ namespace barto_gdbserver {
 	}
 
 	static std::string get_registers() {
-		write_log("GDBSERVER: PC=%x\n", M68K_GETPC);
+		barto_log("GDBSERVER: PC=%x\n", M68K_GETPC);
 		std::string ret;
 		for(int reg = 0; reg < 18; reg++)
 			ret += get_register(reg);
@@ -309,35 +327,36 @@ namespace barto_gdbserver {
 	}
 
 	void print_breakpoints() {
-		write_log("GDBSERVER: Breakpoints:\n");
+		barto_log("GDBSERVER: Breakpoints:\n");
 		for(auto& bpn : bpnodes) {
 			if(bpn.enabled) {
-				write_log("GDBSERVER: - %d, 0x%x, 0x%x\n", bpn.type, bpn.value1, bpn.value2);
+				barto_log("GDBSERVER: - %d, 0x%x, 0x%x\n", bpn.type, bpn.value1, bpn.value2);
 			}
 		}
 	}
 
 	void print_watchpoints() {
-		write_log("GDBSERVER: Watchpoints:\n");
+		barto_log("GDBSERVER: Watchpoints:\n");
 		for(auto& mwn : mwnodes) {
 			if(mwn.size) {
-				write_log("GDBSERVER: - 0x%x, 0x%x\n", mwn.addr, mwn.size);
+				barto_log("GDBSERVER: - 0x%x, 0x%x\n", mwn.addr, mwn.size);
 			}
 		}
 	}
 
 	void send_ack(const std::string& ack) {
 		if(useAck && !ack.empty()) {
-			write_log("GDBSERVER: <- %s\n", ack.c_str());
+			barto_log("GDBSERVER: <- %s\n", ack.c_str());
 			int result = send(gdbconn, ack.data(), (int)ack.length(), 0);
 			if(result == SOCKET_ERROR)
-				write_log(_T("GDBSERVER: error sending ack: %d\n"), WSAGetLastError());
+				barto_log(_T("GDBSERVER: error sending ack: %d\n"), WSAGetLastError());
 		}
 	}
 
 	void send_response(std::string response) {
+		tracker _;
 		if(!response.empty()) {
-			write_log("GDBSERVER: <- %s\n", response.substr(1).c_str());
+			barto_log("GDBSERVER: <- %s\n", response.substr(1).c_str());
 			uint8_t cksum{};
 			for(size_t i = 1; i < response.length(); i++)
 				cksum += response[i];
@@ -346,22 +365,23 @@ namespace barto_gdbserver {
 			response += hex[cksum & 0xf];
 			int result = send(gdbconn, response.data(), (int)response.length(), 0);
 			if(result == SOCKET_ERROR)
-				write_log(_T("GDBSERVER: error sending data: %d\n"), WSAGetLastError());
+				barto_log(_T("GDBSERVER: error sending data: %d\n"), WSAGetLastError());
 		}
 	}
 
 	void handle_packet() {
+		tracker _;
 		if(data_available()) {
 			char buf[512];
 			auto result = recv(gdbconn, buf, sizeof(buf) - 1, 0);
 			if(result > 0) {
 				buf[result] = '\0';
-				write_log("GDBSERVER: received %d bytes: >>%s<<\n", result, buf);
+				barto_log("GDBSERVER: received %d bytes: >>%s<<\n", result, buf);
 				std::string request{ buf }, ack{}, response;
 				if(request[0] == '+') {
 					request = request.substr(1);
 				} else if(request[0] == '-') {
-					write_log("GDBSERVER: client non-ack'd our last packet\n");
+					barto_log("GDBSERVER: client non-ack'd our last packet\n");
 					request = request.substr(1);
 				}
 				if(!request.empty() && request[0] == 0x03) {
@@ -381,7 +401,7 @@ namespace barto_gdbserver {
 						if(request.length() >= end + 2) {
 							if(tolower(request[end + 1]) == hex[cksum >> 4] && tolower(request[end + 2]) == hex[cksum & 0xf]) {
 								request = request.substr(1, end - 1);
-								write_log("GDBSERVER: -> %s\n", request.c_str());
+								barto_log("GDBSERVER: -> %s\n", request.c_str());
 								ack = "+";
 								response = "$";
 								if(request.substr(0, strlen("qSupported")) == "qSupported") {
@@ -407,7 +427,7 @@ namespace barto_gdbserver {
 									auto execbase = get_long_debug(4);
 									auto ThisTask = get_long_debug(execbase + 276);
 									auto ln_Name = reinterpret_cast<char*>(get_real_address_debug(get_long_debug(ThisTask + 10)));
-									write_log("GDBSERVER: ln_Name = %s\n", ln_Name);
+									barto_log("GDBSERVER: ln_Name = %s\n", ln_Name);
 									auto ln_Type = get_byte_debug(ThisTask + 8);
 									bool process = ln_Type == 13; // NT_PROCESS
 									sections.clear();
@@ -431,7 +451,7 @@ namespace barto_gdbserver {
 										int pr_TaskNum = get_long_debug(ThisTask + 140);
 										if(pr_CLI && pr_TaskNum) {
 											auto cli_CommandName = BSTR(get_real_address_debug(BADDR(get_long_debug(pr_CLI + 16))));
-											write_log("GDBSERVER: cli_CommandName = %s\n", cli_CommandName.c_str());
+											barto_log("GDBSERVER: cli_CommandName = %s\n", cli_CommandName.c_str());
 											segList = BADDR(get_long_debug(pr_CLI + 60));
 											// don't know how to get the real stack except reading current stack pointer
 											auto pr_StackSize = get_long_debug(ThisTask + 132);
@@ -451,14 +471,14 @@ namespace barto_gdbserver {
 											// this is non-standard (we report addresses of all segments), works only with modified gdb
 											response += hex32(base);
 											sections.push_back(base);
-											write_log("GDBSERVER:   base=%x; size=%x\n", base, size);
+											barto_log("GDBSERVER:   base=%x; size=%x\n", base, size);
 											segList = BADDR(get_long_debug(segList));
 										}
 									}
 								} else if(request.substr(0, strlen("qRcmd,")) == "qRcmd,") {
 									// "monitor" command. used for profiling
 									auto cmd = from_hex(request.substr(strlen("qRcmd,")));
-									write_log("GDBSERVER:   monitor %s\n", cmd.c_str());
+									barto_log("GDBSERVER:   monitor %s\n", cmd.c_str());
 									// syntax: monitor profile <num_frames> <unwind_file> <out_file>
 									if(cmd.substr(0, strlen("profile")) == "profile") {
 										auto s = cmd.substr(strlen("profile "));
@@ -576,7 +596,7 @@ namespace barto_gdbserver {
 												return;
 											}
 										} else {
-											write_log("GDBSERVER: unknown vCont action: %s\n", action.c_str());
+											barto_log("GDBSERVER: unknown vCont action: %s\n", action.c_str());
 										}
 									}
 								} else if(request[0] == 'H') {
@@ -667,7 +687,7 @@ namespace barto_gdbserver {
 									if(comma != std::string::npos && comma2 != std::string::npos) {
 										uaecptr adr = strtoul(request.data() + strlen("Z2,"), nullptr, 16);
 										int size = strtoul(request.data() + comma2 + 1, nullptr, 16);
-										write_log("GDBSERVER: write watchpoint at 0x%x, size 0x%x\n", adr, size);
+										barto_log("GDBSERVER: write watchpoint at 0x%x, size 0x%x\n", adr, size);
 										for(auto& mwn : mwnodes) {
 											if(mwn.size)
 												continue;
@@ -721,7 +741,7 @@ namespace barto_gdbserver {
 										std::string mem;
 										uaecptr adr = strtoul(request.data() + strlen("m"), nullptr, 16);
 										int len = strtoul(request.data() + comma + 1, nullptr, 16);
-										write_log("GDBSERVER: want 0x%x bytes at 0x%x\n", len, adr);
+										barto_log("GDBSERVER: want 0x%x bytes at 0x%x\n", len, adr);
 										while(len-- > 0) {
 											auto debug_read_memory_8_no_custom = [](uaecptr addr) -> int {
 												addrbank* ad;
@@ -733,7 +753,7 @@ namespace barto_gdbserver {
 
 											auto data = debug_read_memory_8_no_custom(adr);
 											if(data == -1) {
-												write_log("GDBSERVER: error reading memory at 0x%x\n", len, adr);
+												barto_log("GDBSERVER: error reading memory at 0x%x\n", len, adr);
 												response += "E01";
 												mem.clear();
 												break;
@@ -748,11 +768,11 @@ namespace barto_gdbserver {
 										response += "E01";
 								}
 							} else
-								write_log("GDBSERVER: packet checksum mismatch: got %c%c, want %c%c\n", tolower(request[end + 1]), tolower(request[end + 2]), hex[cksum >> 4], hex[cksum & 0xf]);
+								barto_log("GDBSERVER: packet checksum mismatch: got %c%c, want %c%c\n", tolower(request[end + 1]), tolower(request[end + 2]), hex[cksum >> 4], hex[cksum & 0xf]);
 						} else
-							write_log("GDBSERVER: packet checksum missing\n");
+							barto_log("GDBSERVER: packet checksum missing\n");
 					} else
-						write_log("GDBSERVER: packet end marker '#' not found\n");
+						barto_log("GDBSERVER: packet end marker '#' not found\n");
 				}
 
 				send_ack(ack);
@@ -760,7 +780,7 @@ namespace barto_gdbserver {
 			} else if(result == 0) {
 				disconnect();
 			} else {
-				write_log(_T("GDBSERVER: error receiving data: %d\n"), WSAGetLastError());
+				barto_log(_T("GDBSERVER: error receiving data: %d\n"), WSAGetLastError());
 				disconnect();
 			}
 		}
@@ -824,7 +844,7 @@ namespace barto_gdbserver {
 			start_cpu_profiler(baseText, baseText + sizeText, profile_unwind.get());
 			debug_dma = 1;
 			profile_start_cycles = get_cycles() / (CYCLE_UNIT / 2);
-			write_log("GDBSERVER: Start CPU Profiler @ %u cycles\n", get_cycles() / (CYCLE_UNIT / 2));
+			barto_log("GDBSERVER: Start CPU Profiler @ %u cycles\n", get_cycles() / (CYCLE_UNIT / 2));
 			debugger_state = state::profiling;
 		} else if(debugger_state == state::profiling) {
 			profile_frame_count++;
@@ -832,7 +852,7 @@ namespace barto_gdbserver {
 			stop_cpu_profiler();
 			debug_dma = 0;
 			uae_u32 profile_end_cycles = get_cycles() / (CYCLE_UNIT / 2);
-			write_log("GDBSERVER: Stop CPU Profiler @ %u cycles => %u cycles\n", profile_end_cycles, profile_end_cycles - profile_start_cycles);
+			barto_log("GDBSERVER: Stop CPU Profiler @ %u cycles => %u cycles\n", profile_end_cycles, profile_end_cycles - profile_start_cycles);
 
 			// process dma records
 			static constexpr int NR_DMA_REC_HPOS_IN = 256, NR_DMA_REC_VPOS_IN = 1000;
@@ -931,12 +951,36 @@ namespace barto_gdbserver {
 	std::string KPutCharOutput;
 
 	void output(const char* string) {
-		if(debugger_state == state::connected) {
+		if(debugger_state == state::connected && !in_handle_packet) {
 			std::string response = "$O";
 			while(*string)
 				response += hex8(*string++);
 			send_response(response);
 		}
+	}
+
+	void log_output(const TCHAR* tstring) {
+		output(to_utf8(tstring).c_str());
+	}
+
+	void barto_log(const char* format, ...) {
+		char buffer[1024];
+		va_list parms;
+		va_start(parms, format);
+		vsprintf(buffer, format, parms);
+		OutputDebugStringA(buffer);
+		output(buffer);
+		va_end(parms);
+	}
+
+	void barto_log(const wchar_t* format, ...) {
+		wchar_t buffer[1024];
+		va_list parms;
+		va_start(parms, format);
+		vswprintf(buffer, format, parms);
+		OutputDebugStringW(buffer);
+		output(to_utf8(buffer).c_str());
+		va_end(parms);
 	}
 
 	// returns true if gdbserver handles debugging
@@ -956,7 +1000,7 @@ namespace barto_gdbserver {
 				bpn.type = BREAKPOINT_REG_PC;
 				bpn.oper = BREAKPOINT_CMP_EQUAL;
 				bpn.enabled = 1;
-				write_log("GDBSERVER: Breakpoint for KPutCharX at 0x%x installed\n", bpn.value1);
+				barto_log("GDBSERVER: Breakpoint for KPutCharX at 0x%x installed\n", bpn.value1);
 				break;
 			}
 
@@ -969,7 +1013,7 @@ namespace barto_gdbserver {
 				bpn.type = BREAKPOINT_REG_PC;
 				bpn.oper = BREAKPOINT_CMP_EQUAL;
 				bpn.enabled = 1;
-				write_log("GDBSERVER: Breakpoint for TRAP#7 at 0x%x installed\n", bpn.value1);
+				barto_log("GDBSERVER: Breakpoint for TRAP#7 at 0x%x installed\n", bpn.value1);
 				break;
 			}
 
@@ -981,7 +1025,7 @@ namespace barto_gdbserver {
 				bpn.type = BREAKPOINT_REG_PC;
 				bpn.oper = BREAKPOINT_CMP_EQUAL;
 				bpn.enabled = 1;
-				write_log("GDBSERVER: Breakpoint for AddressError at 0x%x installed\n", bpn.value1);
+				barto_log("GDBSERVER: Breakpoint for AddressError at 0x%x installed\n", bpn.value1);
 				break;
 			}
 
@@ -1005,7 +1049,7 @@ namespace barto_gdbserver {
 				mwn.reportonly = false;
 				mwn.nobreak = false;
 				memwatch_setup();
-				write_log("GDBSERVER: Watchpoint for NULL installed\n");
+				barto_log("GDBSERVER: Watchpoint for NULL installed\n");
 				break;
 			}
 
@@ -1018,12 +1062,12 @@ namespace barto_gdbserver {
 			processptr = 0;
 			xfree(processname);
 			processname = nullptr;
-			write_log("GDBSERVER: Waiting for connection...\n");
+			barto_log("GDBSERVER: Waiting for connection...\n");
 			while(!is_connected()) {
-				write_log(".");
+				barto_log(".");
 				Sleep(100);
 			}
-			write_log("\n");
+			barto_log("\n");
 			useAck = true;
 			debugger_state = state::debugging;
 			debugmem_enable_stackframe(true);
