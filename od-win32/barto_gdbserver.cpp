@@ -651,11 +651,6 @@ namespace barto_gdbserver {
 											trace_param1 = 0;
 											trace_param2 = 0xF80000;
 											response += "OK";
-										} else if(adr == 0xeeeeeeee) {
-											// step out of interrupt (until RTE)
-											trace_mode = TRACE_MATCH_INS;
-											trace_param1 = 0x4e73; // rte
-											response += "OK";
 										} else {
 											for(auto& bpn : bpnodes) {
 												if(bpn.enabled)
