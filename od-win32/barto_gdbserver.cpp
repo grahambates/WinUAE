@@ -68,7 +68,21 @@ namespace barto_gdbserver {
 	void barto_log(const char* format, ...);
 	void barto_log(const wchar_t* format, ...);
 
-	static std::string to_utf8(LPCWSTR string) {
+	static std::string string_replace_all(const std::string& str, const std::string& search, const std::string& replace) {
+		std::string copy(str);
+		size_t start = 0;
+		for(;;) {
+			auto p = copy.find(search, start);
+			if(p == std::string::npos)
+				break;
+
+			copy.replace(p, search.size(), replace);
+			start = p + replace.size();
+		}
+		return copy;
+	}
+
+	static std::string string_to_utf8(LPCWSTR string) {
 		int len = WideCharToMultiByte(CP_UTF8, 0, string, -1, nullptr, 0, nullptr, nullptr);
 		std::unique_ptr<char[]> buffer(new char[len]);
 		WideCharToMultiByte(CP_UTF8, 0, string, -1, buffer.get(), len, nullptr, nullptr);
@@ -965,7 +979,20 @@ namespace barto_gdbserver {
 	}
 
 	void log_output(const TCHAR* tstring) {
-		output(to_utf8(tstring).c_str());
+		auto utf8 = string_to_utf8(tstring);
+		if(utf8.substr(0, 5) == "DBG: ") {
+			utf8 = utf8.substr(0, utf8.length() - 1); // get rid of extra newline from uaelib
+			for(size_t start = 0;;) { // append "DBG: " to every newline, because GDB splits text by lines and vscode doesn't know that the extra lines are DBG output
+				auto p = utf8.find('\n', start);
+				if(p == std::string::npos || p == utf8.length() - 1)
+					break;
+
+				utf8.replace(p, 1, "\nDBG: ");
+				start = p + 6;
+			}
+
+		}
+		output(utf8.c_str());
 	}
 
 	void barto_log(const char* format, ...) {
@@ -984,7 +1011,7 @@ namespace barto_gdbserver {
 		va_start(parms, format);
 		vswprintf(buffer, format, parms);
 		OutputDebugStringW(buffer);
-		output(to_utf8(buffer).c_str());
+		output(string_to_utf8(buffer).c_str());
 		va_end(parms);
 	}
 
