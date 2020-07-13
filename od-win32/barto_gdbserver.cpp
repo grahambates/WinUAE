@@ -586,8 +586,17 @@ namespace barto_gdbserver {
 										// hmm.. what to do with multiple actions?!
 
 										if(action == "s") { // single-step
+											// step over - GDB does this in a different way
+											//auto pc = M68K_GETPC;
+											//decltype(pc) nextpc;
+											//m68k_disasm(pc, &nextpc, pc, 1);
+											//trace_mode = TRACE_MATCH_PC;
+											//trace_param1 = nextpc;
+
+											// step in
 											trace_param1 = 1;
 											trace_mode = TRACE_SKIP_INS;
+
 											exception_debugging = 1;
 											debugger_state = state::connected;
 											send_ack(ack);
@@ -1129,6 +1138,8 @@ namespace barto_gdbserver {
 						if(mwn.addr == 0) {
 							response = "S0B"; // undefined behavior -> SIGSEGV
 						} else {
+//while(!IsDebuggerPresent()) Sleep(100); __debugbreak();
+//							auto data = get_long_debug(mwn.addr);
 							response = "T05";
 							if(mwhit.rwi == 2)
 								response += "watch";
