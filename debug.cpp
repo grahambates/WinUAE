@@ -1607,6 +1607,7 @@ enum barto_cmd {
 	barto_cmd_filled_rect,
 	barto_cmd_text,
 	barto_cmd_register_resource,
+	barto_cmd_set_idle
 };
 
 enum debug_resource_type {
@@ -1621,6 +1622,13 @@ enum debug_resource_flags {
 
 unsigned int barto_debug_resources_count{ 0 };
 barto_debug_resource barto_debug_resources[1024];
+
+bool barto_debug_idle_flag = false;
+unsigned int barto_debug_idle_stack_count{ 0 };
+bool barto_debug_idle_stack[16];
+
+unsigned int barto_debug_idle_count{ 0 };
+uint32_t barto_debug_idle[1024]; // top bit: idle, other bits: cycle
 
 extern int debug_barto_cmd(TrapContext* ctx, uae_u32 arg1, uae_u32 arg2, uae_u32 arg3, uae_u32 arg4, uae_u32 arg5)
 {
@@ -1679,6 +1687,28 @@ extern int debug_barto_cmd(TrapContext* ctx, uae_u32 arg1, uae_u32 arg2, uae_u32
 
 		return 1;
 	}
+	case barto_cmd_set_idle:
+		if(barto_debug_idle_count >= _countof(barto_debug_idle))
+			return 1;
+
+		if(arg2) {
+			if(barto_debug_idle_stack_count < _countof(barto_debug_idle_stack) - 1) {
+				barto_debug_idle_stack[barto_debug_idle_stack_count++] = barto_debug_idle_flag;
+			}
+			barto_debug_idle_flag = true;
+		} else {
+			if(barto_debug_idle_stack_count > 0) {
+				barto_debug_idle_flag = barto_debug_idle_stack[--barto_debug_idle_stack_count];
+			} else {
+				barto_debug_idle_flag = false;
+			}
+		}
+
+		if(barto_debug_idle_count >= _countof(barto_debug_idle))
+			return 1;
+
+		barto_debug_idle[barto_debug_idle_count++] = (get_cycles() / (CYCLE_UNIT / 2)) | ((barto_debug_idle_flag ? 1 : 0) << 31);
+		return 1;
 	}
 
 	return 0;
@@ -1719,6 +1749,7 @@ void debug_draw(uae_u8 *buf, int bpp, int line, int width, int height, uae_u32 *
 		}
 	}
 
+	// BARTO
 	if (debug_barto) {
 		debug_draw_barto(buf, bpp, line, width, height, xredcolors, xgreencolors, xbluecolors);
 	}

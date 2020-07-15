@@ -828,6 +828,7 @@ namespace barto_gdbserver {
 		static FILE* profile_outfile{};
 
 		if(debugger_state == state::profile) {
+start_profile:
 			// start profiling
 			barto_log("PRF: %d/%d\n", profile_frame_count + 1, profile_num_frames);
 			if(profile_frame_count == 0) {
@@ -864,6 +865,12 @@ namespace barto_gdbserver {
 			for(int i = 0; i < _countof(custom_storage); i++)
 				profile_custom_regs[i] = custom_storage[i].value;
 
+			// reset idle
+			if(barto_debug_idle_count > 0) {
+				barto_debug_idle[0] = barto_debug_idle[barto_debug_idle_count - 1] & 0x80000000;
+				barto_debug_idle_count = 1;
+			}
+
 			// start profiler
 			start_cpu_profiler(baseText, baseText + sizeText, profile_unwind.get());
 			debug_dma = 1;
@@ -889,23 +896,49 @@ namespace barto_gdbserver {
 				}
 			}
 
-			int dmarec_size = sizeof(dma_rec);
-			int dmarec_count = NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT;
-			int resource_size = sizeof(barto_debug_resource);
-			int resource_count = barto_debug_resources_count;
-			int profile_count = get_cpu_profiler_output_count();
+			// calculate idle cycles
+			int idle_cycles = 0;
+			int last_idle = 0;
+			for(int i = 0; i < barto_debug_idle_count; i++) {
+				auto this_idle = barto_debug_idle[i];
+				if((last_idle & 0x80000000) && !(this_idle & 0x80000000)) { // idle->busy
+					idle_cycles += (this_idle & 0x7fffffff) - max(profile_start_cycles, (last_idle & 0x7fffffff));
+				}
+
+				if((this_idle ^ last_idle) & 0x80000000)
+					last_idle = this_idle;
+			}
+			if(last_idle & 0x80000000)
+				idle_cycles += profile_end_cycles - max(profile_start_cycles, (last_idle & 0x7fffffff));
+			//barto_log("idle_cycles: %d\n", idle_cycles);
+
 			fwrite(&profile_dmacon, sizeof(profile_dmacon), 1, profile_outfile);
 			fwrite(&profile_custom_regs, sizeof(uae_u16), _countof(profile_custom_regs), profile_outfile);
+
+			// memory
 			fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, profile_outfile);
 			fwrite(profile_chipmem.get(), 1, profile_chipmem_size, profile_outfile);
 			fwrite(&profile_bogomem_size, sizeof(profile_bogomem_size), 1, profile_outfile);
 			fwrite(profile_bogomem.get(), 1, profile_bogomem_size, profile_outfile);
+
+			// DMA
+			int dmarec_size = sizeof(dma_rec);
+			int dmarec_count = NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT;
 			fwrite(&dmarec_size, sizeof(int), 1, profile_outfile);
 			fwrite(&dmarec_count, sizeof(int), 1, profile_outfile);
 			fwrite(dma_out.get(), sizeof(dma_rec), NR_DMA_REC_HPOS_OUT * NR_DMA_REC_VPOS_OUT, profile_outfile);
+
+			// resources
+			int resource_size = sizeof(barto_debug_resource);
+			int resource_count = barto_debug_resources_count;
 			fwrite(&resource_size, sizeof(int), 1, profile_outfile);
 			fwrite(&resource_count, sizeof(int), 1, profile_outfile);
 			fwrite(barto_debug_resources, resource_size, resource_count, profile_outfile);
+
+			fwrite(&idle_cycles, sizeof(int), 1, profile_outfile);
+
+			// profiles
+			int profile_count = get_cpu_profiler_output_count();
 			fwrite(&profile_count, sizeof(int), 1, profile_outfile);
 			fwrite(get_cpu_profiler_output(), sizeof(uae_u32), profile_count, profile_outfile);
 			// write JPEG screenshot
@@ -956,6 +989,7 @@ namespace barto_gdbserver {
 				activate_debugger();
 			} else {
 				debugger_state = state::profile;
+				goto start_profile;
 			}
 		}
 
