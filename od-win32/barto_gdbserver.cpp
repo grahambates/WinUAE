@@ -829,6 +829,7 @@ namespace barto_gdbserver {
 
 		if(debugger_state == state::profile) {
 			// start profiling
+			barto_log("PRF: %d/%d\n", profile_frame_count + 1, profile_num_frames);
 			if(profile_frame_count == 0) {
 				profile_outfile = fopen(profile_outname.c_str(), "wb");
 				if(!profile_outfile) {
@@ -867,7 +868,7 @@ namespace barto_gdbserver {
 			start_cpu_profiler(baseText, baseText + sizeText, profile_unwind.get());
 			debug_dma = 1;
 			profile_start_cycles = get_cycles() / (CYCLE_UNIT / 2);
-			barto_log("GDBSERVER: Start CPU Profiler @ %u cycles\n", get_cycles() / (CYCLE_UNIT / 2));
+			//barto_log("GDBSERVER: Start CPU Profiler @ %u cycles\n", get_cycles() / (CYCLE_UNIT / 2));
 			debugger_state = state::profiling;
 		} else if(debugger_state == state::profiling) {
 			profile_frame_count++;
@@ -875,7 +876,7 @@ namespace barto_gdbserver {
 			stop_cpu_profiler();
 			debug_dma = 0;
 			uae_u32 profile_end_cycles = get_cycles() / (CYCLE_UNIT / 2);
-			barto_log("GDBSERVER: Stop CPU Profiler @ %u cycles => %u cycles\n", profile_end_cycles, profile_end_cycles - profile_start_cycles);
+			//barto_log("GDBSERVER: Stop CPU Profiler @ %u cycles => %u cycles\n", profile_end_cycles, profile_end_cycles - profile_start_cycles);
 
 			// process dma records
 			static constexpr int NR_DMA_REC_HPOS_IN = 256, NR_DMA_REC_VPOS_IN = 1000;
@@ -974,7 +975,7 @@ namespace barto_gdbserver {
 	std::string KPutCharOutput;
 
 	void output(const char* string) {
-		if(debugger_state == state::connected && !in_handle_packet) {
+		if(gdbconn != INVALID_SOCKET && !in_handle_packet) {
 			std::string response = "$O";
 			while(*string)
 				response += hex8(*string++);
