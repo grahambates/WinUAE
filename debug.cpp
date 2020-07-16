@@ -1756,7 +1756,7 @@ void debug_draw(uae_u8 *buf, int bpp, int line, int width, int height, uae_u32 *
 
 	if (heatmap) {
 		debug_draw_heatmap(buf, bpp, line, width, height, xredcolors, xgreencolors, xbluecolors);
-	} else if (dma_record[0]) {
+	} else if (debug_dma > 1 && dma_record[0]) { // BARTO
 		debug_draw_cycles(buf, bpp, line, width, height, xredcolors, xgreencolors, xbluecolors);
 	}
 }
