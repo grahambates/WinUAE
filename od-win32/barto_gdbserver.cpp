@@ -820,10 +820,11 @@ namespace barto_gdbserver {
 
 		static uae_u32 profile_start_cycles{};
 		static uae_u16 profile_dmacon{};
-		static std::unique_ptr<uint8_t[]> profile_chipmem{}; // at start of profile
+/*		static std::unique_ptr<uint8_t[]> profile_chipmem{}; // at start of profile
 		static uae_u32 profile_chipmem_size{};
 		static std::unique_ptr<uint8_t[]> profile_bogomem{}; // at start of profile
 		static uae_u32 profile_bogomem_size{};
+*/
 		static uae_u16 profile_custom_regs[256]{}; // at start of profile 
 		static FILE* profile_outfile{};
 
@@ -846,20 +847,26 @@ start_profile:
 				fwrite(&systemStackUpper, sizeof(uint32_t), 1, profile_outfile);
 				fwrite(&stackLower, sizeof(uint32_t), 1, profile_outfile);
 				fwrite(&stackUpper, sizeof(uint32_t), 1, profile_outfile);
+
+				// store chipmem
+				auto profile_chipmem_size = chipmem_bank.allocated_size;
+				auto profile_chipmem = std::make_unique<uint8_t[]>(profile_chipmem_size);
+				memcpy(profile_chipmem.get(), chipmem_bank.baseaddr, profile_chipmem_size);
+
+				// store bogomem
+				auto profile_bogomem_size = bogomem_bank.allocated_size;
+				auto profile_bogomem = std::make_unique<uint8_t[]>(profile_bogomem_size);
+				memcpy(profile_bogomem.get(), bogomem_bank.baseaddr, profile_bogomem_size);
+
+				// memory
+				fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, profile_outfile);
+				fwrite(profile_chipmem.get(), 1, profile_chipmem_size, profile_outfile);
+				fwrite(&profile_bogomem_size, sizeof(profile_bogomem_size), 1, profile_outfile);
+				fwrite(profile_bogomem.get(), 1, profile_bogomem_size, profile_outfile);
 			}
 
 			// store DMACON
 			profile_dmacon = dmacon;
-
-			// store chipmem
-			profile_chipmem_size = chipmem_bank.allocated_size;
-			profile_chipmem = std::make_unique<uint8_t[]>(profile_chipmem_size);
-			memcpy(profile_chipmem.get(), chipmem_bank.baseaddr, profile_chipmem_size);
-
-			// store bogomem
-			profile_bogomem_size = bogomem_bank.allocated_size;
-			profile_bogomem = std::make_unique<uint8_t[]>(profile_bogomem_size);
-			memcpy(profile_bogomem.get(), bogomem_bank.baseaddr, profile_bogomem_size);
 
 			// store custom registers
 			for(int i = 0; i < _countof(custom_storage); i++)
@@ -914,12 +921,6 @@ start_profile:
 
 			fwrite(&profile_dmacon, sizeof(profile_dmacon), 1, profile_outfile);
 			fwrite(&profile_custom_regs, sizeof(uae_u16), _countof(profile_custom_regs), profile_outfile);
-
-			// memory
-			fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, profile_outfile);
-			fwrite(profile_chipmem.get(), 1, profile_chipmem_size, profile_outfile);
-			fwrite(&profile_bogomem_size, sizeof(profile_bogomem_size), 1, profile_outfile);
-			fwrite(profile_bogomem.get(), 1, profile_bogomem_size, profile_outfile);
 
 			// DMA
 			int dmarec_size = sizeof(dma_rec);
