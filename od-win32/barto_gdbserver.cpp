@@ -1102,7 +1102,8 @@ start_profile:
 			}
 
 			// watchpoint for NULL (GCC sees this as undefined behavior)
-			for(auto& mwn : mwnodes) {
+			// disabled for now, always triggered in OpenScreen()
+			/*for(auto& mwn : mwnodes) {
 				if(mwn.size)
 					continue;
 				mwn.addr = 0;
@@ -1123,7 +1124,7 @@ start_profile:
 				memwatch_setup();
 				barto_log("GDBSERVER: Watchpoint for NULL installed\n");
 				break;
-			}
+			}*/
 
 			// enable break at exceptions
 			debug_illegal = 1;
