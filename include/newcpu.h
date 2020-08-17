@@ -62,7 +62,7 @@ struct cputbl {
 	uae_u16 opcode;
 	uae_s8 length;
 	uae_s8 disp020[2];
-	uae_u8 branch;
+	uae_s8 branch;
 };
 
 #ifdef JIT
@@ -669,6 +669,7 @@ extern void flush_cpu_caches_040(uae_u16 opcode);
 extern void REGPARAM3 MakeSR (void) REGPARAM;
 extern void REGPARAM3 MakeFromSR(void) REGPARAM;
 extern void REGPARAM3 MakeFromSR_T0(void) REGPARAM;
+extern void REGPARAM3 MakeFromSR_intmask(uae_u16 oldsr, uae_u16 newsr) REGPARAM;
 extern void REGPARAM3 Exception (int) REGPARAM;
 extern void REGPARAM3 Exception_cpu(int) REGPARAM;
 extern void REGPARAM3 ExceptionL (int, uaecptr) REGPARAM;
@@ -737,6 +738,7 @@ extern void exception3_read_access(uae_u32 opcode, uaecptr addr, int size, int f
 extern void exception3_read_access2(uae_u32 opcode, uaecptr addr, int size, int fc);
 extern void exception3_write_access(uae_u32 opcode, uaecptr addr, int size, uae_u32 val, int fc);
 extern void exception3_read_prefetch(uae_u32 opcode, uaecptr addr);
+extern void exception3_read_prefetch_68040bug(uae_u32 opcode, uaecptr addr, uae_u16 secondarysr);
 extern void exception3_read_prefetch_only(uae_u32 opcode, uaecptr addr);
 extern void exception3_notinstruction(uae_u32 opcode, uaecptr addr);
 extern void hardware_exception2(uaecptr addr, uae_u32 v, bool read, bool ins, int size);
@@ -853,6 +855,7 @@ extern void stop_cpu_profiler();
 #define CPU_HALT_SSP_IN_NON_EXISTING_ADDRESS 10
 #define CPU_HALT_INVALID_START_ADDRESS 11
 #define CPU_HALT_68060_HALT 12
+#define CPU_HALT_BKPT 13
 
 uae_u32 process_cpu_indirect_memory_read(uae_u32 addr, int size);
 void process_cpu_indirect_memory_write(uae_u32 addr, uae_u32 data, int size);

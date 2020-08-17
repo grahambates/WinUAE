@@ -80,6 +80,8 @@ static int last_di_for_exception_3;
 static bool last_notinstruction_for_exception_3;
 /* set when writing exception stack frame */
 static int exception_in_exception;
+/* secondary SR for handling 68040 bug */
+static uae_u16 last_sr_for_exception3;
 
 static void exception3_read_special(uae_u32 opcode, uaecptr addr, int size, int fc);
 
@@ -152,7 +154,7 @@ struct cputbl_data
 {
 	uae_s16 length;
 	uae_s8 disp020[2];
-	uae_u8 branch;
+	uae_s8 branch;
 };
 static struct cputbl_data cpudatatbl[65536];
 
@@ -857,6 +859,7 @@ static void put_byte030_cicheck(uaecptr addr, uae_u32 v)
 }
 
 static uae_u32 (*icache_fetch)(uaecptr);
+static uae_u16 (*icache_fetch_word)(uaecptr);
 static uae_u32 (*dcache_lget)(uaecptr);
 static uae_u32 (*dcache_wget)(uaecptr);
 static uae_u32 (*dcache_bget)(uaecptr);
@@ -1390,6 +1393,7 @@ static void set_x_funcs (void)
 	dcache_check = dcache_check_nommu;
 
 	icache_fetch = get_longi;
+	icache_fetch_word = NULL;
 	if (currprefs.cpu_cycle_exact) {
 		icache_fetch = mem_access_delay_longi_read_ce020;
 	}
@@ -1438,8 +1442,10 @@ static void set_x_funcs (void)
 		if (currprefs.mmu_model) {
 			if (currprefs.cpu_compatible) {
 				icache_fetch = uae_mmu030_get_ilong_fc;
+				icache_fetch_word = uae_mmu030_get_iword_fc;
 			} else {
 				icache_fetch = uae_mmu030_get_ilong;
+				icache_fetch_word = uae_mmu030_get_iword_fc;
 			}
 			dcache_lput = uae_mmu030_put_long_fc;
 			dcache_wput = uae_mmu030_put_word_fc;
@@ -2014,7 +2020,7 @@ static void update_68k_cycles (void)
 {
 	cycles_mult = 0;
 
-	if (currprefs.m68k_speed == 0) { // aproximate
+	if (currprefs.m68k_speed == 0) { // approximate
 		cycles_mult = CYCLES_DIV;
 		if (currprefs.cpu_model >= 68040) {
 			cycles_mult = CYCLES_DIV / 12;
@@ -2067,17 +2073,8 @@ static void update_68k_cycles (void)
 	}
 	if (cpucycleunit < 1)
 		cpucycleunit = 1;
-#if 0
-	if (!currprefs.cpu_cycle_exact && !currprefs.cpu_memory_cycle_exact && currprefs.cpu_compatible) {
-		if (cpucycleunit == CYCLE_UNIT / 2) {
-			cycles_mult = 0;
-		} else {
-			cycles_mult = cpucycleunit * (CYCLES_DIV / (CYCLE_UNIT / 2));
-		}
-	}
-#endif
-	if (currprefs.cpu_cycle_exact || currprefs.cpu_compatible)
-		write_log (_T("CPU cycleunit: %d (%.3f)\n"), cpucycleunit, (float)cpucycleunit / CYCLE_UNIT);
+
+	write_log (_T("CPU cycleunit: %d (%.3f)\n"), cpucycleunit, (float)cpucycleunit / CYCLE_UNIT);
 	set_config_changed ();
 }
 
@@ -2405,19 +2402,41 @@ void REGPARAM2 MakeFromSR(void)
 	MakeFromSR_x(0);
 }
 
+void REGPARAM2 MakeFromSR_intmask(uae_u16 oldsr, uae_u16 newsr)
+{
+#if 0
+	int oldlvl = (oldsr >> 8) & 7;
+	int newlvl = (newsr >> 8) & 7;
+	int ilvl = intlev();
+
+	// interrupt mask lowered and allows new interrupt to start?
+	if (newlvl < oldlvl && ilvl > 0 && ilvl > newlvl && ilvl <= oldlvl) {
+		if (currprefs.cpu_model >= 68020) {
+			unset_special(SPCFLAG_INT);
+		}
+	}
+#endif
+}
+
+static bool internalexception(int nr)
+{
+	return nr == 5 || nr == 6 || nr == 7 || (nr >= 32 && nr <= 47);
+}
+
 static void exception_check_trace (int nr)
 {
 	unset_special (SPCFLAG_TRACE | SPCFLAG_DOTRACE);
 	if (regs.t1) {
 		/* trace stays pending if exception is div by zero, chk,
-		* trapv or trap #x
+		* trapv or trap #x. Except if 68040 or 68060.
 		*/
-		if (nr == 5 || nr == 6 || nr == 7 || (nr >= 32 && nr <= 47))
-			set_special (SPCFLAG_DOTRACE);
-		// 68010 and RTE format error: trace is not cleared
-		if (nr == 14 && currprefs.cpu_model == 68010)
+		if (currprefs.cpu_model < 68040 && internalexception(nr)) {
 			set_special(SPCFLAG_DOTRACE);
-
+		}
+		// 68010 and RTE format error: trace is not cleared
+		if (nr == 14 && currprefs.cpu_model == 68010) {
+			set_special(SPCFLAG_DOTRACE);
+		}
 	}
 	regs.t1 = regs.t0 = 0;
 }
@@ -2582,8 +2601,6 @@ Interrupt:
 ...
 
 */
-
-static void exception3f(uae_u32 opcode, uaecptr addr, bool writeaccess, bool instructionaccess, bool notinstruction, uaecptr pc, int size, int fc);
 
 static int iack_cycle(int nr)
 {
@@ -2755,6 +2772,7 @@ kludge_me_do:
 			regs.irc = regs.read_buffer;
 			exception3_read_access(regs.opcode, newpc, sz_word, 2);
 		} else {
+			exception_check_trace(nr);
 			exception3_notinstruction(regs.ir, newpc);
 		}
 		return;
@@ -3199,6 +3217,12 @@ static void Exception_normal (int nr)
 	if (currprefs.cpu_model == 68060 && interrupt) {
 		regs.m = 0;
 	}
+	if (currprefs.cpu_model == 68040 && nr == 3 && (last_op_for_exception_3 & 0x10000)) {
+		// Weird 68040 bug with RTR and RTE. New SR when exception starts. Stacked SR is different!
+		// Just replace it in stack, it is safe enough because we are in address error exception
+		// any other exception would halt the CPU.
+		x_put_word(m68k_areg(regs, 7), last_sr_for_exception3);
+	}
 kludge_me_do:
 	if ((regs.vbr & 1) && currprefs.cpu_model <= 68010) {
 		cpu_halt(CPU_HALT_DOUBLE_FAULT);
@@ -3233,6 +3257,7 @@ kludge_me_do:
 			regs.irc = regs.read_buffer;
 			exception3_read_access(regs.ir, newpc, sz_word, 2);
 		} else {
+			exception_check_trace(nr);
 			exception3_notinstruction(regs.ir, newpc);
 		}
 		return;
@@ -3307,6 +3332,9 @@ void REGPARAM2 Exception_cpu(int nr)
 	// Check T0 trace
 	// RTE format error ignores T0 trace
 	if (nr != 14) {
+		if (currprefs.cpu_model >= 68040 && internalexception(nr)) {
+			t0 = false;
+		}
 		if (t0) {
 			activate_trace();
 		}
@@ -3610,6 +3638,15 @@ uae_u32 REGPARAM2 op_illg (uae_u32 opcode)
 		// PC fell off the end of RAM
 		bus_error();
 		return 4;
+	}
+
+	// BKPT?
+	if (opcode >= 0x4848 && opcode <= 0x484f && currprefs.cpu_model >= 68020) {
+		// some boards hang because there is no break point cycle acknowledge
+		if (currprefs.cs_bkpthang) {
+			cpu_halt(CPU_HALT_BKPT);
+			return 4;
+		}
 	}
 
 	if (debugmem_illg(opcode)) {
@@ -4023,7 +4060,7 @@ void mmu_op (uae_u32 opcode, uae_u32 extra)
 static void do_trace (void)
 {
 	// need to store PC because of branch instructions
-	regs.trace_pc = regs.pc;
+	regs.trace_pc = m68k_getpc();
 	if (regs.t0 && !regs.t1 && currprefs.cpu_model >= 68020) {
 		// this is obsolete
 		return;
@@ -7253,7 +7290,7 @@ uae_u8 *restore_mmu (uae_u8 *src)
 
 #endif /* SAVESTATE */
 
-static void exception3f (uae_u32 opcode, uaecptr addr, bool writeaccess, bool instructionaccess, bool notinstruction, uaecptr pc, int size, int fc)
+static void exception3f(uae_u32 opcode, uaecptr addr, bool writeaccess, bool instructionaccess, bool notinstruction, uaecptr pc, int size, int fc, uae_u16 secondarysr)
 {
 	if (currprefs.cpu_model >= 68040)
 		addr &= ~1;
@@ -7263,7 +7300,7 @@ static void exception3f (uae_u32 opcode, uaecptr addr, bool writeaccess, bool in
 		else
 			last_addr_for_exception_3 = pc;
 	} else if (pc == 0xffffffff) {
-		last_addr_for_exception_3 = m68k_getpc ();
+		last_addr_for_exception_3 = m68k_getpc();
 	} else {
 		last_addr_for_exception_3 = pc;
 	}
@@ -7273,6 +7310,7 @@ static void exception3f (uae_u32 opcode, uaecptr addr, bool writeaccess, bool in
 	last_fc_for_exception_3 = fc >= 0 ? fc : (instructionaccess ? 2 : 1);
 	last_notinstruction_for_exception_3 = notinstruction;
 	last_size_for_exception_3 = size;
+	last_sr_for_exception3 = secondarysr;
 	Exception (3);
 #if EXCEPTION3_DEBUGGER
 	activate_debugger();
@@ -7282,11 +7320,11 @@ static void exception3f (uae_u32 opcode, uaecptr addr, bool writeaccess, bool in
 void exception3_notinstruction(uae_u32 opcode, uaecptr addr)
 {
 	last_di_for_exception_3 = 1;
-	exception3f (opcode, addr, true, false, true, 0xffffffff, 1, -1);
+	exception3f (opcode, addr, true, false, true, 0xffffffff, 1, -1, 0);
 }
 static void exception3_read_special(uae_u32 opcode, uaecptr addr, int size, int fc)
 {
-	exception3f(opcode, addr, false, 0, false, 0xffffffff, size, fc);
+	exception3f(opcode, addr, false, 0, false, 0xffffffff, size, fc, 0);
 }
 
 // 68010 special prefetch handling
@@ -7300,7 +7338,7 @@ void exception3_read_prefetch_only(uae_u32 opcode, uae_u32 addr)
 		x_do_cycles(4 * cpucycleunit);
 	}
 	last_di_for_exception_3 = 0;
-	exception3f(opcode, addr, false, true, false, m68k_getpc(), sz_word, -1);
+	exception3f(opcode, addr, false, true, false, m68k_getpc(), sz_word, -1, 0);
 }
 
 // Some hardware accepts address error aborted reads or writes as normal reads/writes.
@@ -7311,8 +7349,15 @@ void exception3_read_prefetch(uae_u32 opcode, uaecptr addr)
 	if (currprefs.cpu_model == 68000) {
 		m68k_incpci(2);
 	}
-	exception3f(opcode, addr, false, true, false, m68k_getpc(), sz_word, -1);
+	exception3f(opcode, addr, false, true, false, m68k_getpc(), sz_word, -1, 0);
 }
+void exception3_read_prefetch_68040bug(uae_u32 opcode, uaecptr addr, uae_u16 secondarysr)
+{
+	x_do_cycles(4 * cpucycleunit);
+	last_di_for_exception_3 = 0;
+	exception3f(opcode | 0x10000, addr, false, true, false, m68k_getpc(), sz_word, -1, secondarysr);
+}
+
 void exception3_read_access(uae_u32 opcode, uaecptr addr, int size, int fc)
 {
 	x_do_cycles(4 * cpucycleunit);
@@ -7346,7 +7391,7 @@ void exception3_read(uae_u32 opcode, uaecptr addr, int size, int fc)
 		opcode = regs.ir;
 	}
 	last_di_for_exception_3 = 1;
-	exception3f(opcode, addr, false, ia, ni, 0xffffffff, size, fc);
+	exception3f(opcode, addr, false, ia, ni, 0xffffffff, size & 15, fc, 0);
 }
 void exception3_write(uae_u32 opcode, uaecptr addr, int size, uae_u32 val, int fc)
 {
@@ -7365,7 +7410,7 @@ void exception3_write(uae_u32 opcode, uaecptr addr, int size, uae_u32 val, int f
 	}
 	last_di_for_exception_3 = 1;
 	regs.write_buffer = val;
-	exception3f(opcode, addr, true, ia, ni, 0xffffffff, size, fc);
+	exception3f(opcode, addr, true, ia, ni, 0xffffffff, size & 15, fc, 0);
 }
 
 void exception2_setup(uae_u32 opcode, uaecptr addr, bool read, int size, uae_u32 fc)
@@ -7376,7 +7421,7 @@ void exception2_setup(uae_u32 opcode, uaecptr addr, bool read, int size, uae_u32
 	last_op_for_exception_3 = opcode;
 	last_fc_for_exception_3 = fc;
 	last_notinstruction_for_exception_3 = exception_in_exception != 0;
-	last_size_for_exception_3 = size;
+	last_size_for_exception_3 = size & 15;
 	last_di_for_exception_3 = 1;
 	hardware_bus_error = 0;
 
@@ -7418,14 +7463,23 @@ void hardware_exception2(uaecptr addr, uae_u32 v, bool read, bool ins, int size)
 
 void exception2_read(uae_u32 opcode, uaecptr addr, int size, int fc)
 {
-	exception2_setup(opcode, addr, true, size, fc);
+	exception2_setup(opcode, addr, true, size & 15, fc);
 	Exception(2);
 }
 
 void exception2_write(uae_u32 opcode, uaecptr addr, int size, uae_u32 val, int fc)
 {
-	exception2_setup(opcode, addr, false, size, fc);
-	regs.write_buffer = val;
+	exception2_setup(opcode, addr, false, size & 15, fc);
+	if (size & 0x100) {
+		regs.write_buffer = val;
+	} else {
+		if (size == sz_byte) {
+			regs.write_buffer &= 0xff00;
+			regs.write_buffer |= val & 0xff;
+		} else {
+			regs.write_buffer = val;
+		}
+	}
 	Exception(2);
 }
 
@@ -7793,7 +7847,7 @@ static void pipeline_020(uaecptr pc)
 #endif
 	// illegal instructions, TRAP, TRAPV, A-line, F-line don't stop prefetches
 	int branch = cpudatatbl[w].branch;
-	if (regs.pipeline_pos > 0 && branch) {
+	if (regs.pipeline_pos > 0 && branch > 0) {
 		// Short branches (Bcc.s) still do one more prefetch.
 #if 0
 		// RTS and other unconditional single opcode instruction stop immediately.
@@ -8179,7 +8233,28 @@ STATIC_INLINE void update_dcache030 (struct cache030 *c, uae_u32 val, uae_u32 ta
 	c->data[lws] = val;
 }
 
-static void fill_icache030 (uae_u32 addr)
+static bool maybe_icache030(uae_u32 addr)
+{
+	int lws;
+	uae_u32 tag;
+	uae_u32 data;
+	struct cache030 *c;
+
+	regs.fc030 = (regs.s ? 4 : 0) | 2;
+	addr &= ~3;
+	if (regs.cacheholdingaddr020 == addr || regs.cacheholdingdata_valid == 0)
+		return true;
+	c = geticache030(icaches030, addr, &tag, &lws);
+	if ((regs.cacr & 1) && c->valid[lws] && c->tag == tag) {
+		// cache hit
+		regs.cacheholdingaddr020 = addr;
+		regs.cacheholdingdata020 = c->data[lws];
+		return true;
+	}
+	return false;
+}
+
+static void fill_icache030(uae_u32 addr)
 {
 	int lws;
 	uae_u32 tag;
@@ -8736,6 +8811,10 @@ uae_u32 get_word_030_prefetch (int o)
 	regs.prefetch020_valid[1] = regs.prefetch020_valid[2];
 	regs.prefetch020_valid[2] = false;
 	if (!regs.prefetch020_valid[1]) {
+		if (regs.pipeline_stop) {
+			regs.db = regs.prefetch020[0];
+			return v;
+		}
 		do_access_or_bus_error(0xffffffff, pc + 4);
 	}
 #if MORE_ACCURATE_68020_PIPELINE
@@ -9517,15 +9596,59 @@ void fill_prefetch_030_ntx_continue (void)
 	regs.cacheholdingdata_valid = 1;
 	regs.cacheholdingaddr020 = 0xffffffff;
 
-	for (int i = 2; i >= 0; i--) {
-		if (!regs.prefetch020_valid[i])
-			break;
-#if MORE_ACCURATE_68020_PIPELINE
-		if (idx >= 1) {
-			pipeline_020(pc);
+	if (regs.prefetch020_valid[0] && regs.prefetch020_valid[1] && regs.prefetch020_valid[2]) {
+		for (int i = 2; i >= 0; i--) {
+			regs.prefetch020[i + 1] = regs.prefetch020[i];
 		}
+		for (int i = 1; i <= 3; i++) {
+#if MORE_ACCURATE_68020_PIPELINE
+			pipeline_020(pc);
+#endif
+			regs.prefetch020[i - 1] = regs.prefetch020[i];
+			pc += 2;
+			idx++;
+		}
+	} else if (regs.prefetch020_valid[2] && !regs.prefetch020_valid[1]) {
+		regs.prefetch020_valid[1] = regs.prefetch020_valid[2];
+		regs.prefetch020[1] = regs.prefetch020[2];
+		regs.prefetch020_valid[2] = 0;
+		pc += 2;
+		idx++;
+#if MORE_ACCURATE_68020_PIPELINE
+		pipeline_020(pc);
+#endif
+		if (!regs.pipeline_stop) {
+			if (maybe_icache030(pc)) {
+				regs.prefetch020[2] = regs.cacheholdingdata020 >> (regs.cacheholdingaddr020 == pc ? 16 : 0);
+			} else {
+				regs.prefetch020[2] = icache_fetch_word(pc);
+			}
+			regs.prefetch020_valid[2] = 1;
+			pc += 2;
+			idx++;
+#if MORE_ACCURATE_68020_PIPELINE
+			pipeline_020(pc);
+#endif
+		}
+
+	} else if (regs.prefetch020_valid[2] && regs.prefetch020_valid[1]) {
+		pc += 2;
+#if MORE_ACCURATE_68020_PIPELINE
+		pipeline_020(pc);
 #endif
 		pc += 2;
+#if MORE_ACCURATE_68020_PIPELINE
+		pipeline_020(pc);
+#endif
+		idx += 2;
+	}
+
+	while (idx < 2) {
+		regs.prefetch020[0] = regs.prefetch020[1];
+		regs.prefetch020[1] = regs.prefetch020[2];
+		regs.prefetch020_valid[0] = regs.prefetch020_valid[1];
+		regs.prefetch020_valid[1] = regs.prefetch020_valid[2];
+		regs.prefetch020_valid[2] = false;
 		idx++;
 	}
 
@@ -9556,9 +9679,9 @@ void fill_prefetch_030_ntx_continue (void)
 
 	ipl_fetch();
 	if (currprefs.cpu_cycle_exact)
-		regs.irc = get_word_ce030_prefetch_opcode (0);
+		regs.irc = get_word_ce030_prefetch_opcode(0);
 	else
-		regs.irc = get_word_030_prefetch (0);
+		regs.irc = get_word_030_prefetch(0);
 }
 
 void fill_prefetch_020_ntx(void)

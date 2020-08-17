@@ -1630,6 +1630,25 @@ static void abspathtorelative (TCHAR *name)
 		memmove (name, name + _tcslen (start_path_exe), (_tcslen (name) - _tcslen (start_path_exe) + 1) * sizeof (TCHAR));
 }
 
+static int extpri(const TCHAR *p, int size)
+{
+	const TCHAR *s = _tcsrchr(p, '.');
+	if (s == NULL)
+		return 80;
+	// if archive: lowest priority
+	if (!my_existsfile(p))
+		return 100;
+	int pri = 10;
+	// prefer matching size
+	struct mystat ms;
+	if (my_stat(p, &ms)) {
+		if (ms.size == size) {
+			pri--;
+		}
+	}
+	return pri;
+}
+
 static int addrom (UAEREG *fkey, struct romdata *rd, const TCHAR *name)
 {
 	TCHAR tmp1[MAX_DPATH], tmp2[MAX_DPATH], tmp3[MAX_DPATH];
@@ -1653,6 +1672,7 @@ static int addrom (UAEREG *fkey, struct romdata *rd, const TCHAR *name)
 		else
 			_stprintf (tmp2, _T(":ROM_%03d"), rd->id);
 	}
+
 	int size = sizeof tmp3 / sizeof(TCHAR);
 	if (regquerystr(fkey, tmp1, tmp3, &size)) {
 		TCHAR *s = _tcschr(tmp3, '\"');
@@ -1661,10 +1681,10 @@ static int addrom (UAEREG *fkey, struct romdata *rd, const TCHAR *name)
 			s = _tcschr(s2, '\"');
 			if (s)
 				*s = 0;
-			// if plain file already in registry: do not overwrite it
-			if (my_existsfile(s2) && !my_existsfile(pathname)) {
+			int pri1 = extpri(s2, rd->size);
+			int pri2 = extpri(pathname, rd->size);
+			if (pri2 >= pri1)
 				return 1;
-			}
 		}
 	}
 	if (pathname[0]) {
@@ -2466,12 +2486,14 @@ static void prefs_to_gui(struct uae_prefs *p)
 
 static void gui_to_prefs(void)
 {
-	/* Always copy our prefs to changed_prefs, ... */
+	// Always copy our prefs to changed_prefs
 	copy_prefs(&workprefs, &changed_prefs);
 	if (quit_program == -UAE_RESET_HARD) {
+		// copy all if hard reset
 		copy_prefs(&workprefs, &currprefs);
+		memory_hardreset(2);
 	}
-	/* filesys hack */
+	// filesys hack
 	currprefs.mountitems = changed_prefs.mountitems;
 	memcpy (&currprefs.mountconfig, &changed_prefs.mountconfig, MOUNT_CONFIG_SIZE * sizeof (struct uaedev_config_info));
 	fixup_prefs (&changed_prefs, true);
@@ -3978,7 +4000,7 @@ static struct ConfigStruct *GetConfigs (struct ConfigStruct *configparent, int u
 			return first; 
 	}
 
-	handle = FindFirstFile (path2, &find_data );
+	handle = FindFirstFile (path2, &find_data);
 	if (handle == INVALID_HANDLE_VALUE) {
 #ifndef SINGLEFILE
 		// Either the directory has no .CFG files, or doesn't exist.
@@ -4184,28 +4206,71 @@ static TCHAR *HandleConfiguration (HWND hDlg, int flag, struct ConfigStruct *con
 		break;
 
 	case CONFIG_DELETE:
-		if (_tcslen (name) == 0) {
-			TCHAR szMessage[MAX_DPATH];
-			WIN32GUI_LoadUIString (IDS_MUSTSELECTCONFIGFORDELETE, szMessage, MAX_DPATH);
-			pre_gui_message (szMessage);
-		} else {
+		{
 			TCHAR szMessage[MAX_DPATH];
 			TCHAR szTitle[MAX_DPATH];
 			TCHAR msg[MAX_DPATH];
-			WIN32GUI_LoadUIString (IDS_DELETECONFIGCONFIRMATION, szMessage, MAX_DPATH);
-			WIN32GUI_LoadUIString (IDS_DELETECONFIGTITLE, szTitle, MAX_DPATH );
-			_stprintf(msg, szMessage, name);
-			if (MessageBox (hDlg, msg, szTitle,
-				MB_YESNO | MB_ICONWARNING | MB_APPLMODAL | MB_SETFOREGROUND) == IDYES) {
-					cfgfile_backup (path);
-					DeleteFile (path);
-					write_log (_T("deleted config '%s'\n"), path);
-					config_filename[0] = 0;
+			WIN32GUI_LoadUIString(IDS_DELETECONFIGTITLE, szTitle, MAX_DPATH);
+			ok = 0;
+			if (name[0] == 0) {
+				if (config && config->Fullpath[0]) {
+					// directory selected
+					bool allowdelete = false;
+					TCHAR fp[MAX_DPATH];
+					_tcscpy(fp, config->Fullpath);
+					_tcscat(fp, _T("*"));
+					WIN32_FIND_DATA fd;
+					HANDLE h = FindFirstFile(fp, &fd);
+					if (h != INVALID_HANDLE_VALUE) {
+						allowdelete = true;
+						for (;;) {
+							if (fd.cFileName[0] != '.' || !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+								allowdelete = false;
+							}
+							if (!FindNextFile(h, &fd))
+								break;
+						}
+						FindClose(h);
+					}
+					if (allowdelete) {
+						WIN32GUI_LoadUIString(IDS_DELETECONFIGDIRCONFIRMATION, szMessage, MAX_DPATH);
+						TCHAR fp[MAX_DPATH];
+						_tcscpy(fp, config->Fullpath);
+						fp[_tcslen(fp) - 1] = 0;
+						_stprintf(msg, szMessage, fp);
+						if (MessageBox(hDlg, msg, szTitle,
+							MB_YESNO | MB_ICONWARNING | MB_APPLMODAL | MB_SETFOREGROUND) == IDYES) {
+							if (RemoveDirectory(fp)) {
+								write_log(_T("deleted config directory '%s'\n"), fp);
+								config_filename[0] = 0;
+								ok = 1;
+							}
+						}
+					} else {
+						WIN32GUI_LoadUIString(IDS_DELETECONFIGDIRNOTEMPTY, szMessage, MAX_DPATH);
+						MessageBox(hDlg, szMessage, szTitle, MB_OK | MB_ICONWARNING | MB_APPLMODAL | MB_SETFOREGROUND);
+					}
+				} else {
+					TCHAR szMessage[MAX_DPATH];
+					WIN32GUI_LoadUIString(IDS_MUSTSELECTCONFIGFORDELETE, szMessage, MAX_DPATH);
+					pre_gui_message(szMessage);
+				}
 			} else {
-				ok = 0;
+				// config file selected
+				WIN32GUI_LoadUIString(IDS_DELETECONFIGCONFIRMATION, szMessage, MAX_DPATH);
+				_stprintf(msg, szMessage, name);
+				if (MessageBox(hDlg, msg, szTitle,
+					MB_YESNO | MB_ICONWARNING | MB_APPLMODAL | MB_SETFOREGROUND) == IDYES) {
+					cfgfile_backup(path);
+					if (DeleteFile(path)) {
+						write_log(_T("deleted config '%s'\n"), path);
+						config_filename[0] = 0;
+						ok = 1;
+					}
+				}
 			}
+			config_pathfilename[0] = 0;
 		}
-		config_pathfilename[0] = 0;
 		break;
 	}
 
@@ -12299,10 +12364,25 @@ static INT_PTR MiscDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
 				switch (LOWORD (wParam))
 				{
 				case IDC_STATENAME:
-					if (getcomboboxtext(hDlg, IDC_STATENAME, savestate_fname, sizeof savestate_fname / sizeof(TCHAR))) {
+					if (HIWORD(wParam) != CBN_EDITCHANGE && getcomboboxtext(hDlg, IDC_STATENAME, savestate_fname, sizeof savestate_fname / sizeof(TCHAR))) {
 						if (savestate_fname[0]) {
 							parsefilepath(savestate_fname, sizeof savestate_fname / sizeof(TCHAR));
 							savestate_state = STATE_DORESTORE;
+							if (!my_existsfile(savestate_fname)) {
+								TCHAR t[MAX_DPATH];
+								_tcscpy(t, savestate_fname);
+								_tcscat(savestate_fname, _T(".uss"));
+								if (!my_existsfile(savestate_fname)) {
+									fetch_statefilepath(savestate_fname, sizeof(t) / sizeof(MAX_DPATH));
+									_tcscat(savestate_fname, t);
+									if (!my_existsfile(savestate_fname)) {
+										_tcscat(savestate_fname, _T(".uss"));
+										if (!my_existsfile(savestate_fname)) {
+											_tcscpy(savestate_fname, t);
+										}
+									}
+								}
+							}
 							_tcscpy(workprefs.statefile, savestate_fname);
 							setstatefilename(hDlg);
 						}
@@ -12728,6 +12808,21 @@ static void values_from_cpudlg(HWND hDlg, WPARAM wParam)
 		if (workprefs.cpu_compatible)
 			workprefs.cpu_data_cache = ischecked (hDlg, IDC_CPUDATACACHE);
 		break;
+	}
+
+	if (newcpu != oldcpu && workprefs.cpu_compatible) {
+		int idx = 0;
+		if (newcpu <= 68010) {
+			workprefs.cpu_clock_multiplier = 2 * 256;
+			idx = 1;
+		} else if (newcpu == 68020) {
+			workprefs.cpu_clock_multiplier = 4 * 256;
+			idx = 2;
+		} else {
+			workprefs.cpu_clock_multiplier = 8 * 256;
+			idx = 3;
+		}
+		SendDlgItemMessage(hDlg, IDC_CPU_FREQUENCY, CB_SETCURSEL, idx, 0);
 	}
 
 	newtrust = ischecked (hDlg, IDC_TRUST0) ? 0 : 1;
@@ -18988,6 +19083,7 @@ static int filter_nativertg;
 static void enable_for_hw3ddlg (HWND hDlg)
 {
 	int v = workprefs.gf[filter_nativertg].gfx_filter ? TRUE : FALSE;
+	int scalemode = workprefs.gf[filter_nativertg].gfx_filter_autoscale;
 	int vv = FALSE, vv2 = FALSE, vv3 = FALSE;
 	int as = FALSE;
 	struct uae_filter *uf;
@@ -19010,16 +19106,17 @@ static void enable_for_hw3ddlg (HWND hDlg)
 		vv2 = TRUE;
 	if (workprefs.gfx_api)
 		v = vv = vv2 = vv3 = TRUE;
-
 	if (filter_nativertg)
 		v = FALSE;
+	if (scalemode == AUTOSCALE_STATIC_AUTO || scalemode == AUTOSCALE_STATIC_NOMINAL || scalemode == AUTOSCALE_STATIC_MAX)
+		as = TRUE;
 
-	ew(hDlg, IDC_FILTERHZ, v);
-	ew(hDlg, IDC_FILTERVZ, v);
 	ew(hDlg, IDC_FILTERHZMULT, v && !as);
 	ew(hDlg, IDC_FILTERVZMULT, v && !as);
-	ew(hDlg, IDC_FILTERHO, v && !as);
-	ew(hDlg, IDC_FILTERVO, v && !as);
+	ew(hDlg, IDC_FILTERHZ, v);
+	ew(hDlg, IDC_FILTERVZ, v);
+	ew(hDlg, IDC_FILTERHO, v);
+	ew(hDlg, IDC_FILTERVO, v);
 	ew(hDlg, IDC_FILTERSLR, vv3);
 	ew(hDlg, IDC_FILTERXL, vv2);
 	ew(hDlg, IDC_FILTERXLV, vv2);
@@ -19027,11 +19124,10 @@ static void enable_for_hw3ddlg (HWND hDlg)
 	ew(hDlg, IDC_FILTERFILTERH, workprefs.gfx_api);
 	ew(hDlg, IDC_FILTERFILTERV, workprefs.gfx_api);
 	ew(hDlg, IDC_FILTERSTACK, workprefs.gfx_api);
-	ew(hDlg, IDC_FILTERKEEPASPECT, v);
-	ew(hDlg, IDC_FILTERASPECT, v);
-	ew(hDlg, IDC_FILTERASPECT2, v && workprefs.gf[filter_nativertg].gfx_filter_keep_aspect);
-	ew(hDlg, IDC_FILTERKEEPAUTOSCALEASPECT, (workprefs.gf[filter_nativertg].gfx_filter_autoscale == AUTOSCALE_NORMAL ||
-		workprefs.gf[filter_nativertg].gfx_filter_autoscale == AUTOSCALE_INTEGER_AUTOSCALE));
+	ew(hDlg, IDC_FILTERKEEPASPECT, v && scalemode != AUTOSCALE_STATIC_AUTO);
+	ew(hDlg, IDC_FILTERASPECT, v && scalemode != AUTOSCALE_STATIC_AUTO);
+	ew(hDlg, IDC_FILTERASPECT2, v && workprefs.gf[filter_nativertg].gfx_filter_keep_aspect && scalemode != AUTOSCALE_STATIC_AUTO);
+	ew(hDlg, IDC_FILTERKEEPAUTOSCALEASPECT, scalemode == AUTOSCALE_NORMAL || scalemode == AUTOSCALE_INTEGER_AUTOSCALE);
 	ew(hDlg, IDC_FILTEROVERLAY, workprefs.gfx_api);
 	ew(hDlg, IDC_FILTEROVERLAYTYPE, workprefs.gfx_api);
 
@@ -19039,8 +19135,7 @@ static void enable_for_hw3ddlg (HWND hDlg)
 	ew(hDlg, IDC_FILTERPRESETLOAD, filterpreset_selected > 0);
 	ew(hDlg, IDC_FILTERPRESETDELETE, filterpreset_selected > 0 && filterpreset_builtin < 0);
 
-	ew(hDlg, IDC_FILTERINTEGER, workprefs.gf[filter_nativertg].gfx_filter_autoscale == AUTOSCALE_INTEGER ||
-		workprefs.gf[filter_nativertg].gfx_filter_autoscale == AUTOSCALE_INTEGER_AUTOSCALE);
+	ew(hDlg, IDC_FILTERINTEGER, scalemode == AUTOSCALE_INTEGER || scalemode == AUTOSCALE_INTEGER_AUTOSCALE);
 }
 
 static const TCHAR *filtermultnames[] = {
@@ -20643,7 +20738,7 @@ static HWND updatePanel (int id, UINT action)
 	ew (guiDlg, IDOK, TRUE);
 	if (panelDlg != NULL) {
 		ShowWindow (panelDlg, FALSE);
-		DestroyWindow (panelDlg);
+		x_DestroyWindow(panelDlg, panelresource);
 		panelDlg = NULL;
 	}
 	if (ToolTipHWND != NULL) {
