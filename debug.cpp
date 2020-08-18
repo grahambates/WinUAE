@@ -1708,7 +1708,7 @@ extern int debug_barto_cmd(TrapContext* ctx, uae_u32 arg1, uae_u32 arg2, uae_u32
 		if(barto_debug_idle_count >= _countof(barto_debug_idle))
 			return 1;
 
-		barto_debug_idle[barto_debug_idle_count++] = (get_cycles() / (CYCLE_UNIT / 2)) | ((barto_debug_idle_flag ? 1 : 0) << 31);
+		barto_debug_idle[barto_debug_idle_count++] = (get_cycles() / cpucycleunit) | ((barto_debug_idle_flag ? 1 : 0) << 31);
 		return 1;
 	}
 

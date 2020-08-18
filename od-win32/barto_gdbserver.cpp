@@ -22,6 +22,9 @@ extern void* screenshot_get_bits();
 // from main.cpp
 extern struct uae_prefs currprefs;
 
+// from newcpu.cpp
+/*static*/ extern int baseclock;
+
 // from debug.cpp
 extern uae_u8 *get_real_address_debug(uaecptr addr);
 extern void initialize_memwatch(int mode);
@@ -820,11 +823,6 @@ namespace barto_gdbserver {
 
 		static uae_u32 profile_start_cycles{};
 		static uae_u16 profile_dmacon{};
-/*		static std::unique_ptr<uint8_t[]> profile_chipmem{}; // at start of profile
-		static uae_u32 profile_chipmem_size{};
-		static std::unique_ptr<uint8_t[]> profile_bogomem{}; // at start of profile
-		static uae_u32 profile_bogomem_size{};
-*/
 		static uae_u16 profile_custom_regs[256]{}; // at start of profile 
 		static FILE* profile_outfile{};
 
@@ -838,6 +836,7 @@ start_profile:
 					send_response("$E01");
 					debugger_state = state::debugging;
 					activate_debugger();
+					return;
 				}
 				int section_count = (int)sections.size();
 				fwrite(&profile_num_frames, sizeof(int), 1, profile_outfile);
@@ -863,6 +862,10 @@ start_profile:
 				fwrite(profile_chipmem.get(), 1, profile_chipmem_size, profile_outfile);
 				fwrite(&profile_bogomem_size, sizeof(profile_bogomem_size), 1, profile_outfile);
 				fwrite(profile_bogomem.get(), 1, profile_bogomem_size, profile_outfile);
+
+				// CPU information
+				fwrite(&baseclock, sizeof(int), 1, profile_outfile);
+				fwrite(&cpucycleunit, sizeof(int), 1, profile_outfile);
 			}
 
 			// store DMACON
@@ -881,15 +884,15 @@ start_profile:
 			// start profiler
 			start_cpu_profiler(baseText, baseText + sizeText, profile_unwind.get());
 			debug_dma = 1;
-			profile_start_cycles = get_cycles() / (CYCLE_UNIT / 2);
-			//barto_log("GDBSERVER: Start CPU Profiler @ %u cycles\n", get_cycles() / (CYCLE_UNIT / 2));
+			profile_start_cycles = get_cycles() / cpucycleunit;
+			//barto_log("GDBSERVER: Start CPU Profiler @ %u cycles\n", get_cycles() / cpucycleunit);
 			debugger_state = state::profiling;
 		} else if(debugger_state == state::profiling) {
 			profile_frame_count++;
 			// end profiling
 			stop_cpu_profiler();
 			debug_dma = 0;
-			uae_u32 profile_end_cycles = get_cycles() / (CYCLE_UNIT / 2);
+			uae_u32 profile_end_cycles = get_cycles() / cpucycleunit;
 			//barto_log("GDBSERVER: Stop CPU Profiler @ %u cycles => %u cycles\n", profile_end_cycles, profile_end_cycles - profile_start_cycles);
 
 			// process dma records
@@ -902,6 +905,8 @@ start_profile:
 					dma_out[y * NR_DMA_REC_HPOS_OUT + x] = dma_in[y * NR_DMA_REC_HPOS_IN + x];
 				}
 			}
+
+			int profile_cycles = profile_end_cycles - profile_start_cycles;
 
 			// calculate idle cycles
 			int idle_cycles = 0;
@@ -936,6 +941,7 @@ start_profile:
 			fwrite(&resource_count, sizeof(int), 1, profile_outfile);
 			fwrite(barto_debug_resources, resource_size, resource_count, profile_outfile);
 
+			fwrite(&profile_cycles, sizeof(int), 1, profile_outfile);
 			fwrite(&idle_cycles, sizeof(int), 1, profile_outfile);
 
 			// profiles
