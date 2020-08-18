@@ -4868,14 +4868,9 @@ static void m68k_run_1_ce (void)
 				if(cpu_profiler_start_addr && cpu_profiler_cycles) { // profiling may have been switched on or off in vsync (which is called from 'r->opcode' above)
 					cpu_profiler_last_cycles = get_cycles();
 					auto cycles_for_instr = (cpu_profiler_last_cycles - cpu_profiler_cycles) / (CYCLE_UNIT / 2);
-					if(r->opcode == 0x4e75) { // rts - callstack's not good
-						if(!cpu_profiler_output.empty())
-							cpu_profiler_output.back() -= cycles_for_instr; // add cycles to last valid callstack
-					} else {
-						for(int i = 0; i < cpu_profiler_callstack_depth; i++)
-							cpu_profiler_output.push_back(cpu_profiler_callstack[i]);
-						cpu_profiler_output.push_back(~0 - cycles_for_instr);
-					}
+					for(int i = 0; i < cpu_profiler_callstack_depth; i++)
+						cpu_profiler_output.push_back(cpu_profiler_callstack[i]);
+					cpu_profiler_output.push_back(~0 - cycles_for_instr);
 				}
 
 cont:
