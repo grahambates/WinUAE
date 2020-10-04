@@ -386,6 +386,387 @@ namespace barto_gdbserver {
 		}
 	}
 
+	std::string handle_qoffsets() {
+		std::string response = "E01";
+		auto BADDR = [](auto bptr) { return bptr << 2; };
+		auto BSTR = [](auto bstr) { return std::string(reinterpret_cast<char*>(bstr) + 1, bstr[0]); };
+		// from debug.cpp@show_exec_tasks
+		auto execbase = get_long_debug(4);
+		auto ThisTask = get_long_debug(execbase + 276);
+		if (ThisTask) {
+			auto ln_Name = reinterpret_cast<char*>(get_real_address_debug(get_long_debug(ThisTask + 10)));
+			barto_log("GDBSERVER: ln_Name = %s\n", ln_Name);
+			auto ln_Type = get_byte_debug(ThisTask + 8);
+			bool process = ln_Type == 13; // NT_PROCESS
+			sections.clear();
+			if (process) {
+				constexpr auto sizeofLN = 14;
+				// not correct when started from CLI
+				auto tc_SPLower = get_long_debug(ThisTask + sizeofLN + 44);
+				auto tc_SPUpper = get_long_debug(ThisTask + sizeofLN + 48) - 2;
+				stackLower = tc_SPLower;
+				stackUpper = tc_SPUpper;
+				//auto pr_StackBase = BADDR(get_long_debug(ThisTask + 144));
+				//stackUpper = pr_StackBase;
+
+				systemStackLower = get_long_debug(execbase + 58);
+				systemStackUpper = get_long_debug(execbase + 54);
+				auto pr_SegList = BADDR(get_long_debug(ThisTask + 128));
+				// not correct when started from CLI
+				auto numSegLists = get_long_debug(pr_SegList + 0);
+				auto segList = BADDR(get_long_debug(pr_SegList + 12)); // from debug.cpp@debug()
+				auto pr_CLI = BADDR(get_long_debug(ThisTask + 172));
+				int pr_TaskNum = get_long_debug(ThisTask + 140);
+				if (pr_CLI && pr_TaskNum) {
+					auto cli_CommandName = BSTR(get_real_address_debug(BADDR(get_long_debug(pr_CLI + 16))));
+					barto_log("GDBSERVER: cli_CommandName = %s\n", cli_CommandName.c_str());
+					segList = BADDR(get_long_debug(pr_CLI + 60));
+					// don't know how to get the real stack except reading current stack pointer
+					auto pr_StackSize = get_long_debug(ThisTask + 132);
+					stackUpper = m68k_areg(regs, A7 - A0);
+					stackLower = stackUpper - pr_StackSize;
+				}
+				baseText = 0;
+				for (int i = 0; segList; i++) {
+					auto size = get_long_debug(segList - 4) - 4;
+					auto base = segList + 4;
+					if (i == 0) {
+						baseText = base;
+						sizeText = size;
+					}
+					if (i == 0)
+						response = "$";
+					else
+						response += ";";
+					// this is non-standard (we report addresses of all segments), works only with modified gdb
+					response += hex32(base);
+					sections.push_back(base);
+					barto_log("GDBSERVER:   base=%x; size=%x\n", base, size);
+					segList = BADDR(get_long_debug(segList));
+				}
+			}
+		}
+		return response;
+	}
+
+	std::string handle_qrcmd(const std::string& request) {
+		std::string ack = "+";
+		// "monitor" command. used for profiling
+		auto cmd = from_hex(request.substr(strlen("qRcmd,")));
+		barto_log("GDBSERVER:   monitor %s\n", cmd.c_str());
+		// syntax: monitor profile <num_frames> <unwind_file> <out_file>
+		if (cmd.substr(0, strlen("profile")) == "profile") {
+			auto s = cmd.substr(strlen("profile "));
+			std::string profile_unwindname;
+			profile_num_frames = 0;
+			profile_outname.clear();
+
+			// get num_frames
+			while (s[0] >= '0' && s[0] <= '9') {
+				profile_num_frames = profile_num_frames * 10 + s[0] - '0';
+				s = s.substr(1);
+			}
+			profile_num_frames = max(1, min(100, profile_num_frames));
+			s = s.substr(1); // skip space
+
+			// get profile_unwindname
+			if (s.substr(0, 1) == "\"") {
+				auto last = s.find('\"', 1);
+				if (last != std::string::npos) {
+					profile_unwindname = s.substr(1, last - 1);
+					s = s.substr(last + 1);
+				}
+				else {
+					s.clear();
+				}
+			}
+			else {
+				auto last = s.find(' ', 1);
+				if (last != std::string::npos) {
+					profile_unwindname = s.substr(0, last);
+					s = s.substr(last + 1);
+				}
+				else {
+					s.clear();
+				}
+			}
+
+			s = s.substr(1); // skip space
+
+			// get profile_outname
+			if (s.substr(0, 1) == "\"") {
+				auto last = s.find('\"', 1);
+				if (last != std::string::npos) {
+					profile_outname = s.substr(1, last - 1);
+					s = s.substr(last + 1);
+				}
+				else {
+					s.clear();
+				}
+			}
+			else {
+				profile_unwindname = s.substr(1);
+			}
+
+			if (!profile_unwindname.empty() && !profile_outname.empty()) {
+				if (auto f = fopen(profile_unwindname.c_str(), "rb")) {
+					profile_unwind = std::make_unique<cpu_profiler_unwind[]>(sizeText >> 1);
+					fread(profile_unwind.get(), sizeof(cpu_profiler_unwind), sizeText >> 1, f);
+					fclose(f);
+					send_ack(ack);
+					profile_frame_count = 0;
+					debugger_state = state::profile;
+					deactivate_debugger();
+					return ""; // response is sent when profile is finished (vsync)
+				}
+			}
+		}
+		return "E01";
+	}
+
+	std::string handle_vcont(const std::string& request) {
+		std::string response = "";
+		std::string ack = "+";
+		auto actions = request.substr(strlen("vCont;"));
+		while (!actions.empty()) {
+			std::string action;
+			// split actions by ';'
+			auto semi = actions.find(';');
+			if (semi != std::string::npos) {
+				action = actions.substr(0, semi);
+				actions = actions.substr(semi + 1);
+			}
+			else {
+				action = actions;
+				actions.clear();
+			}
+			// thread specified by ':'
+			auto colon = action.find(':');
+			if (colon != std::string::npos) {
+				// ignore thread ID
+				action = action.substr(0, colon);
+			}
+
+			// hmm.. what to do with multiple actions?!
+
+			if (action == "s") { // single-step
+				// step over - GDB does this in a different way
+				//auto pc = M68K_GETPC;
+				//decltype(pc) nextpc;
+				//m68k_disasm(pc, &nextpc, pc, 1);
+				//trace_mode = TRACE_MATCH_PC;
+				//trace_param1 = nextpc;
+
+				// step in
+				trace_param1 = 1;
+				trace_mode = TRACE_SKIP_INS;
+
+				exception_debugging = 1;
+				debugger_state = state::connected;
+				send_ack(ack);
+			}
+			else if (action == "c") { // continue
+				debugger_state = state::connected;
+				deactivate_debugger();
+				// none work...
+				//SetWindowPos(AMonitors[0].hAmigaWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE); // bring window to top
+				//BringWindowToTop(AMonitors[0].hAmigaWnd);
+				//SetForegroundWindow(AMonitors[0].hAmigaWnd);
+				//setmouseactive(0, 2);
+				send_ack(ack);
+			}
+			else if (action[0] == 'r') { // keep stepping in range
+				auto comma = action.find(',', 3);
+				if (comma != std::string::npos) {
+					uaecptr start = strtoul(action.data() + 1, nullptr, 16);
+					uaecptr end = strtoul(action.data() + comma + 1, nullptr, 16);
+					trace_mode = TRACE_NRANGE_PC;
+					trace_param1 = start;
+					trace_param2 = end;
+					debugger_state = state::connected;
+					send_ack(ack);
+				}
+			}
+			else {
+				barto_log("GDBSERVER: unknown vCont action: %s\n", action.c_str());
+			}
+		}
+		return response;
+	}
+
+	std::string handle_set_breakpoint(const std::string& request) {
+		std::string response;
+		auto comma = request.find(',', strlen("Z0"));
+		if (comma != std::string::npos) {
+			auto comma_end = request.find(',', 3);
+			size_t end_pos = request.size();
+			if (comma_end != std::string::npos) {
+				end_pos = comma_end;
+			}
+			auto offset_str = request.substr(3, end_pos - 3);
+			uaecptr adr = strtoul(offset_str.data(), nullptr, 16);
+			if (adr == 0xffffffff) {
+				// step out of kickstart
+				trace_mode = TRACE_RANGE_PC;
+				trace_param1 = 0;
+				trace_param2 = 0xF80000;
+				response = "OK";
+			}
+			else {
+				for (auto& bpn : bpnodes) {
+					if (bpn.enabled)
+						continue;
+					bpn.value1 = adr;
+					bpn.type = BREAKPOINT_REG_PC;
+					bpn.oper = BREAKPOINT_CMP_EQUAL;
+					bpn.enabled = 1;
+					trace_mode = 0;
+					print_breakpoints();
+					response = "OK";
+					break;
+				}
+				// TODO: error when too many breakpoints!
+			}
+		}
+		else {
+			response = "E01";
+		}
+		return response;
+	}
+
+	std::string handle_clear_breakpoint(const std::string& request) {
+		std::string response;
+		auto comma = request.find(',', strlen("z0"));
+		if (comma != std::string::npos) {
+			uaecptr adr = strtoul(request.data() + strlen("z0,"), nullptr, 16);
+			if (adr == 0xffffffff) {
+				response = "OK";
+			}
+			else {
+				for (auto& bpn : bpnodes) {
+					if (bpn.enabled && bpn.value1 == adr) {
+						bpn.enabled = 0;
+						trace_mode = 0;
+						print_breakpoints();
+						response = "OK";
+						break;
+					}
+				}
+				// TODO: error when breakpoint not found
+			}
+		}
+		else {
+			response = "E01";
+		}
+		return response;
+	}
+
+	std::string handle_set_watchpoint(std::string request) {
+		std::string response;
+		int rwi = 0;
+		if (request[1] == '2')
+			rwi = 2; // write
+		else if (request[1] == '3')
+			rwi = 1; // read
+		else
+			rwi = 1 | 2; // read + write
+		auto comma = request.find(',', strlen("Z2"));
+		auto comma2 = request.find(',', strlen("Z2,"));
+		if (comma != std::string::npos && comma2 != std::string::npos) {
+			uaecptr adr = strtoul(request.data() + strlen("Z2,"), nullptr, 16);
+			int size = strtoul(request.data() + comma2 + 1, nullptr, 16);
+			barto_log("GDBSERVER: write watchpoint at 0x%x, size 0x%x\n", adr, size);
+			for (auto& mwn : mwnodes) {
+				if (mwn.size)
+					continue;
+				mwn.addr = adr;
+				mwn.size = size;
+				mwn.rwi = rwi;
+				// defaults from debug.cpp@memwatch()
+				mwn.val_enabled = 0;
+				mwn.val_mask = 0xffffffff;
+				mwn.val = 0;
+				mwn.access_mask = MW_MASK_ALL;
+				mwn.reg = 0xffffffff;
+				mwn.frozen = 0;
+				mwn.modval_written = 0;
+				mwn.mustchange = 0;
+				mwn.bus_error = 0;
+				mwn.reportonly = false;
+				mwn.nobreak = false;
+				print_watchpoints();
+				response += "OK";
+				break;
+			}
+			memwatch_setup();
+			// TODO: error when too many watchpoints!
+		}
+		else {
+			response += "E01";
+		}
+		return response;
+	}
+
+	std::string handle_clear_watchpoint(const std::string& request) {
+		std::string response;
+		auto comma = request.find(',', strlen("z2"));
+		if (comma != std::string::npos) {
+			uaecptr adr = strtoul(request.data() + strlen("z2,"), nullptr, 16);
+			for (auto& mwn : mwnodes) {
+				if (mwn.size && mwn.addr == adr) {
+					mwn.size = 0;
+					trace_mode = 0;
+					print_watchpoints();
+					response = "OK";
+					break;
+				}
+				// TODO: error when watchpoint not found
+			}
+			memwatch_setup();
+		}
+		else {
+			response = "E01";
+		}
+		return response;
+	}
+
+	std::string handle_read_memory(const std::string& request) {
+		std::string response;
+		auto comma = request.find(',');
+		if (comma != std::string::npos) {
+			std::string mem;
+			uaecptr adr = strtoul(request.data() + strlen("m"), nullptr, 16);
+			int len = strtoul(request.data() + comma + 1, nullptr, 16);
+			barto_log("GDBSERVER: want 0x%x bytes at 0x%x\n", len, adr);
+			while (len-- > 0) {
+				auto debug_read_memory_8_no_custom = [](uaecptr addr) -> int {
+					addrbank* ad;
+					ad = &get_mem_bank(addr);
+					if (ad && ad != &custom_bank)
+						return ad->bget(addr);
+					return -1;
+				};
+
+				auto data = debug_read_memory_8_no_custom(adr);
+				if (data == -1) {
+					barto_log("GDBSERVER: error reading memory at 0x%x\n", len, adr);
+					response = "E01";
+					mem.clear();
+					break;
+				}
+				data &= 0xff; // custom_bget seems to have a problem?
+				mem += hex[data >> 4];
+				mem += hex[data & 0xf];
+				adr++;
+			}
+			response = mem;
+		}
+		else {
+			response = "E01";
+		}
+		return response;
+	}
+
 	void handle_packet() {
 		tracker _;
 		if(data_available()) {
@@ -422,7 +803,7 @@ namespace barto_gdbserver {
 								ack = "+";
 								response = "$";
 								if(request.substr(0, strlen("qSupported")) == "qSupported") {
-									response += "PacketSize=512;BreakpointCommands+;swbreak+;hwbreak+;QStartNoAckMode+;vContSupported+;";
+									response += "PacketSize=512;BreakpointCommands+;swbreak+;hwbreak+;QStartNoAckMode+;vContSupported+";
 								} else if(request.substr(0, strlen("qAttached")) == "qAttached") {
 									response += "1";
 								} else if(request.substr(0, strlen("qTStatus")) == "qTStatus") {
@@ -438,198 +819,23 @@ namespace barto_gdbserver {
 								} else if(request.substr(0, strlen("qC")) == "qC") {
 									response += "QC1";
 								} else if(request.substr(0, strlen("qOffsets")) == "qOffsets") {
-									auto BADDR = [](auto bptr) { return bptr << 2; };
-									auto BSTR = [](auto bstr) { return std::string(reinterpret_cast<char*>(bstr) + 1, bstr[0]); };
-									// from debug.cpp@show_exec_tasks
-									auto execbase = get_long_debug(4);
-									auto ThisTask = get_long_debug(execbase + 276);
-									response += "E01";
-									if(ThisTask) {
-										auto ln_Name = reinterpret_cast<char*>(get_real_address_debug(get_long_debug(ThisTask + 10)));
-										barto_log("GDBSERVER: ln_Name = %s\n", ln_Name);
-										auto ln_Type = get_byte_debug(ThisTask + 8);
-										bool process = ln_Type == 13; // NT_PROCESS
-										sections.clear();
-										if(process) {
-											constexpr auto sizeofLN = 14;
-											// not correct when started from CLI
-											auto tc_SPLower = get_long_debug(ThisTask + sizeofLN + 44);
-											auto tc_SPUpper = get_long_debug(ThisTask + sizeofLN + 48) - 2;
-											stackLower = tc_SPLower;
-											stackUpper = tc_SPUpper;
-											//auto pr_StackBase = BADDR(get_long_debug(ThisTask + 144));
-											//stackUpper = pr_StackBase;
-
-											systemStackLower = get_long_debug(execbase + 58);
-											systemStackUpper = get_long_debug(execbase + 54);
-											auto pr_SegList = BADDR(get_long_debug(ThisTask + 128));
-											// not correct when started from CLI
-											auto numSegLists = get_long_debug(pr_SegList + 0);
-											auto segList = BADDR(get_long_debug(pr_SegList + 12)); // from debug.cpp@debug()
-											auto pr_CLI = BADDR(get_long_debug(ThisTask + 172));
-											int pr_TaskNum = get_long_debug(ThisTask + 140);
-											if(pr_CLI && pr_TaskNum) {
-												auto cli_CommandName = BSTR(get_real_address_debug(BADDR(get_long_debug(pr_CLI + 16))));
-												barto_log("GDBSERVER: cli_CommandName = %s\n", cli_CommandName.c_str());
-												segList = BADDR(get_long_debug(pr_CLI + 60));
-												// don't know how to get the real stack except reading current stack pointer
-												auto pr_StackSize = get_long_debug(ThisTask + 132);
-												stackUpper = m68k_areg(regs, A7 - A0);
-												stackLower = stackUpper - pr_StackSize;
-											}
-											baseText = 0;
-											for(int i = 0; segList; i++) {
-												auto size = get_long_debug(segList - 4) - 4;
-												auto base = segList + 4;
-												if(i == 0) {
-													baseText = base;
-													sizeText = size;
-												}
-												if(i == 0)
-													response = "$";
-												else
-													response += ";";
-												// this is non-standard (we report addresses of all segments), works only with modified gdb
-												response += hex32(base);
-												sections.push_back(base);
-												barto_log("GDBSERVER:   base=%x; size=%x\n", base, size);
-												segList = BADDR(get_long_debug(segList));
-											}
-										}
-									}
+									response = handle_qoffsets();
 								} else if(request.substr(0, strlen("qRcmd,")) == "qRcmd,") {
-									// "monitor" command. used for profiling
-									auto cmd = from_hex(request.substr(strlen("qRcmd,")));
-									barto_log("GDBSERVER:   monitor %s\n", cmd.c_str());
-									// syntax: monitor profile <num_frames> <unwind_file> <out_file>
-									if(cmd.substr(0, strlen("profile")) == "profile") {
-										auto s = cmd.substr(strlen("profile "));
-										std::string profile_unwindname;
-										profile_num_frames = 0;
-										profile_outname.clear();
-
-										// get num_frames
-										while(s[0] >= '0' && s[0] <= '9') {
-											profile_num_frames = profile_num_frames * 10 + s[0] - '0';
-											s = s.substr(1);
-										}
-										profile_num_frames = max(1, min(100, profile_num_frames));
-										s = s.substr(1); // skip space
-
-										// get profile_unwindname
-										if(s.substr(0, 1) == "\"") {
-											auto last = s.find('\"', 1);
-											if(last != std::string::npos) {
-												profile_unwindname = s.substr(1, last - 1);
-												s = s.substr(last + 1);
-											} else {
-												s.clear();
-											}
-										} else {
-											auto last = s.find(' ', 1);
-											if(last != std::string::npos) {
-												profile_unwindname = s.substr(0, last);
-												s = s.substr(last + 1);
-											} else {
-												s.clear();
-											}
-										}
-
-										s = s.substr(1); // skip space
-
-										// get profile_outname
-										if(s.substr(0, 1) == "\"") {
-											auto last = s.find('\"', 1);
-											if(last != std::string::npos) {
-												profile_outname = s.substr(1, last - 1);
-												s = s.substr(last + 1);
-											} else {
-												s.clear();
-											}
-										} else {
-											profile_unwindname = s.substr(1);
-										}
-
-										if(!profile_unwindname.empty() && !profile_outname.empty()) {
-											if(auto f = fopen(profile_unwindname.c_str(), "rb")) {
-												profile_unwind = std::make_unique<cpu_profiler_unwind[]>(sizeText >> 1);
-												fread(profile_unwind.get(), sizeof(cpu_profiler_unwind), sizeText >> 1, f);
-												fclose(f);
-												send_ack(ack);
-												profile_frame_count = 0;
-												debugger_state = state::profile;
-												deactivate_debugger();
-												return; // response is sent when profile is finished (vsync)
-											}
-										}
+									std::string resp = handle_qrcmd(request);
+									if (resp.empty()) {
+										// No answer, all has been processed in the function
+										return;
 									}
-									response += "E01";
+									response += resp;
 								} else if(request.substr(0, strlen("vCont?")) == "vCont?") {
 									response += "vCont;c;C;s;S;t;r";
 								} else if(request.substr(0, strlen("vCont;")) == "vCont;") {
-									auto actions = request.substr(strlen("vCont;"));
-									while(!actions.empty()) {
-										std::string action;
-										// split actions by ';'
-										auto semi = actions.find(';');
-										if(semi != std::string::npos) {
-											action = actions.substr(0, semi);
-											actions = actions.substr(semi + 1);
-										} else {
-											action = actions;
-											actions.clear();
-										}
-										// thread specified by ':'
-										auto colon = action.find(':');
-										if(colon != std::string::npos) {
-											// ignore thread ID
-											action = action.substr(0, colon);
-										}
-
-										// hmm.. what to do with multiple actions?!
-
-										if(action == "s") { // single-step
-											// step over - GDB does this in a different way
-											//auto pc = M68K_GETPC;
-											//decltype(pc) nextpc;
-											//m68k_disasm(pc, &nextpc, pc, 1);
-											//trace_mode = TRACE_MATCH_PC;
-											//trace_param1 = nextpc;
-
-											// step in
-											trace_param1 = 1;
-											trace_mode = TRACE_SKIP_INS;
-
-											exception_debugging = 1;
-											debugger_state = state::connected;
-											send_ack(ack);
-											return;
-										} else if(action == "c") { // continue
-											debugger_state = state::connected;
-											deactivate_debugger();
-											// none work...
-											//SetWindowPos(AMonitors[0].hAmigaWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE); // bring window to top
-											//BringWindowToTop(AMonitors[0].hAmigaWnd);
-											//SetForegroundWindow(AMonitors[0].hAmigaWnd);
-											//setmouseactive(0, 2);
-											send_ack(ack);
-											return;
-										} else if(action[0] == 'r') { // keep stepping in range
-											auto comma = action.find(',', 3);
-											if(comma != std::string::npos) {
-												uaecptr start = strtoul(action.data() + 1, nullptr, 16);
-												uaecptr end = strtoul(action.data() + comma + 1, nullptr, 16);
-												trace_mode = TRACE_NRANGE_PC;
-												trace_param1 = start;
-												trace_param2 = end;
-												debugger_state = state::connected;
-												send_ack(ack);
-												return;
-											}
-										} else {
-											barto_log("GDBSERVER: unknown vCont action: %s\n", action.c_str());
-										}
+									std::string resp = handle_vcont(request);
+									if (resp.empty()) {
+										// No answer, all has been processed in the function
+										return;
 									}
+									response += resp;
 								} else if(request[0] == 'H') {
 									response += "OK";
 								} else if(request[0] == 'T') {
@@ -653,145 +859,27 @@ namespace barto_gdbserver {
 									uae_quit();
 									deactivate_debugger();
 									return;
-								} else if(request.substr(0, 2) == "Z0") { // set software breakpoint
-									auto comma = request.find(',', strlen("Z0"));
-									if(comma != std::string::npos) {
-										uaecptr adr = strtoul(request.data() + strlen("Z0,"), nullptr, 16);
-										if(adr == 0xffffffff) {
-											// step out of kickstart
-											trace_mode = TRACE_RANGE_PC;
-											trace_param1 = 0;
-											trace_param2 = 0xF80000;
-											response += "OK";
-										} else {
-											for(auto& bpn : bpnodes) {
-												if(bpn.enabled)
-													continue;
-												bpn.value1 = adr;
-												bpn.type = BREAKPOINT_REG_PC;
-												bpn.oper = BREAKPOINT_CMP_EQUAL;
-												bpn.enabled = 1;
-												trace_mode = 0;
-												print_breakpoints();
-												response += "OK";
-												break;
-											}
-											// TODO: error when too many breakpoints!
-										}
-									} else
-										response += "E01";
-								} else if(request.substr(0, 2) == "z0") { // clear software breakpoint
-									auto comma = request.find(',', strlen("z0"));
-									if(comma != std::string::npos) {
-										uaecptr adr = strtoul(request.data() + strlen("z0,"), nullptr, 16);
-										if(adr == 0xffffffff) {
-											response += "OK";
-										} else {
-											for(auto& bpn : bpnodes) {
-												if(bpn.enabled && bpn.value1 == adr) {
-													bpn.enabled = 0;
-													trace_mode = 0;
-													print_breakpoints();
-													response += "OK";
-													break;
-												}
-											}
-											// TODO: error when breakpoint not found
-										}
-									} else
-										response += "E01";
-								} else if(request.substr(0, 2) == "Z2" || request.substr(0, 2) == "Z3" || request.substr(0, 2) == "Z4") { // Z2: write watchpoint, Z3: read watchpoint, Z4: access watchpoint
-									int rwi = 0;
-									if(request[1] == '2')
-										rwi = 2; // write
-									else if(request[1] == '3')
-										rwi = 1; // read
-									else
-										rwi = 1 | 2; // read + write
-									auto comma = request.find(',', strlen("Z2"));
-									auto comma2 = request.find(',', strlen("Z2,"));
-									if(comma != std::string::npos && comma2 != std::string::npos) {
-										uaecptr adr = strtoul(request.data() + strlen("Z2,"), nullptr, 16);
-										int size = strtoul(request.data() + comma2 + 1, nullptr, 16);
-										barto_log("GDBSERVER: write watchpoint at 0x%x, size 0x%x\n", adr, size);
-										for(auto& mwn : mwnodes) {
-											if(mwn.size)
-												continue;
-											mwn.addr = adr;
-											mwn.size = size;
-											mwn.rwi = rwi;
-											// defaults from debug.cpp@memwatch()
-											mwn.val_enabled = 0;
-											mwn.val_mask = 0xffffffff;
-											mwn.val = 0;
-											mwn.access_mask = MW_MASK_ALL;
-											mwn.reg = 0xffffffff;
-											mwn.frozen = 0;
-											mwn.modval_written = 0;
-											mwn.mustchange = 0;
-											mwn.bus_error = 0;
-											mwn.reportonly = false;
-											mwn.nobreak = false;
-											print_watchpoints();
-											response += "OK";
-											break;
-										}
-										memwatch_setup();
-										// TODO: error when too many watchpoints!
-									} else
-										response += "E01";
-								} else if(request.substr(0, 2) == "z2" || request.substr(0, 2) == "z3" || request.substr(0, 2) == "z4") { // Z2: clear write watchpoint, Z3: clear read watchpoint, Z4: clear access watchpoint
-									auto comma = request.find(',', strlen("z2"));
-									if(comma != std::string::npos) {
-										uaecptr adr = strtoul(request.data() + strlen("z2,"), nullptr, 16);
-										for(auto& mwn : mwnodes) {
-											if(mwn.size && mwn.addr == adr) {
-												mwn.size = 0;
-												trace_mode = 0;
-												print_watchpoints();
-												response += "OK";
-												break;
-											}
-											// TODO: error when watchpoint not found
-										}
-										memwatch_setup();
-									} else
-										response += "E01";
-								} else if(request[0] == 'g') { // get registers
+								}
+								else if (request.substr(0, 2) == "Z0") { // set software breakpoint
+									response += handle_set_breakpoint(request);
+								}
+								else if (request.substr(0, 2) == "z0") { // clear software breakpoint
+									response += handle_clear_breakpoint(request);
+								}
+								else if (request.substr(0, 2) == "Z2" || request.substr(0, 2) == "Z3" || request.substr(0, 2) == "Z4") { // Z2: write watchpoint, Z3: read watchpoint, Z4: access watchpoint
+									response += handle_set_watchpoint(request);
+								}
+								else if (request.substr(0, 2) == "z2" || request.substr(0, 2) == "z3" || request.substr(0, 2) == "z4") { // Z2: clear write watchpoint, Z3: clear read watchpoint, Z4: clear access watchpoint
+									response += handle_clear_watchpoint(request);
+								}
+								else if (request[0] == 'g') { // get registers
 									response += get_registers();
-								} else if(request[0] == 'p') { // get register
+								}
+								else if (request[0] == 'p') { // get register
 									response += get_register(strtoul(request.data() + 1, nullptr, 16));
-								} else if(request[0] == 'm') { // read memory
-									auto comma = request.find(',');
-									if(comma != std::string::npos) {
-										std::string mem;
-										uaecptr adr = strtoul(request.data() + strlen("m"), nullptr, 16);
-										int len = strtoul(request.data() + comma + 1, nullptr, 16);
-										barto_log("GDBSERVER: want 0x%x bytes at 0x%x\n", len, adr);
-										while(len-- > 0) {
-											auto debug_read_memory_8_no_custom = [](uaecptr addr) -> int {
-												addrbank* ad;
-												ad = &get_mem_bank(addr);
-												if(ad && ad != &custom_bank)
-													return ad->bget(addr);
-												return -1;
-											};
-
-											auto data = debug_read_memory_8_no_custom(adr);
-											if(data == -1) {
-												barto_log("GDBSERVER: error reading memory at 0x%x\n", len, adr);
-												response += "E01";
-												mem.clear();
-												break;
-											}
-											data &= 0xff; // custom_bget seems to have a problem?
-											mem += hex[data >> 4];
-											mem += hex[data & 0xf];
-											adr++;
-										}
-										response += mem;
-									} else
-										response += "E01";
+								}
+								else if (request[0] == 'm') { // read memory
+									response += handle_read_memory(request);
 								}
 							} else
 								barto_log("GDBSERVER: packet checksum mismatch: got %c%c, want %c%c\n", tolower(request[end + 1]), tolower(request[end + 2]), hex[cksum >> 4], hex[cksum & 0xf]);
