@@ -15,6 +15,7 @@
 #include "dxwrap.h" // AmigaMonitor
 #include "custom.h"
 #include "win32.h"
+#include "savestate.h"
 
 extern BITMAPINFO* screenshot_get_bi();
 extern void* screenshot_get_bits();
@@ -562,8 +563,13 @@ namespace barto_gdbserver {
 												return; // response is sent when profile is finished (vsync)
 											}
 										}
+									} else if(cmd == "reset") {
+										savestate_quick(0, 0); // restore state saved at process entry
+										response += "OK";
+									} else {
+										// unknown monitor command
+										response += "E01";
 									}
-									response += "E01";
 								} else if(request.substr(0, strlen("vCont?")) == "vCont?") {
 									response += "vCont;c;C;s;S;t;r";
 								} else if(request.substr(0, strlen("vCont;")) == "vCont;") {
@@ -1141,6 +1147,7 @@ start_profile:
 			processptr = 0;
 			xfree(processname);
 			processname = nullptr;
+			savestate_quick(0, 1); // save state for "monitor reset"
 			barto_log("GDBSERVER: Waiting for connection...\n");
 			while(!is_connected()) {
 				barto_log(".");
