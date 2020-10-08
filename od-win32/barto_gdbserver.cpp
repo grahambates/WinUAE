@@ -1019,6 +1019,7 @@ start_profile:
 	uaecptr KPutCharX{};
 	uaecptr Trap7{};
 	uaecptr AddressError{};
+	uaecptr IllegalError{};
 	std::string KPutCharOutput;
 
 	void output(const char* string) {
@@ -1101,7 +1102,7 @@ start_profile:
 				break;
 			}
 
-			AddressError = get_long_debug(regs.vbr + 0xc);
+			AddressError = get_long_debug(regs.vbr + 3 * 4);
 			for(auto& bpn : bpnodes) {
 				if(bpn.enabled)
 					continue;
@@ -1110,6 +1111,18 @@ start_profile:
 				bpn.oper = BREAKPOINT_CMP_EQUAL;
 				bpn.enabled = 1;
 				barto_log("GDBSERVER: Breakpoint for AddressError at 0x%x installed\n", bpn.value1);
+				break;
+			}
+
+			IllegalError = get_long_debug(regs.vbr + 4 * 4);
+			for(auto& bpn : bpnodes) {
+				if(bpn.enabled)
+					continue;
+				bpn.value1 = IllegalError;
+				bpn.type = BREAKPOINT_REG_PC;
+				bpn.oper = BREAKPOINT_CMP_EQUAL;
+				bpn.enabled = 1;
+				barto_log("GDBSERVER: Breakpoint for IllegalError at 0x%x installed\n", bpn.value1);
 				break;
 			}
 
@@ -1138,9 +1151,9 @@ start_profile:
 				break;
 			}*/
 
-			// enable break at exceptions
+			// enable break at exceptions - doesn't break when exceptions occur in Kickstart
 			debug_illegal = 1;
-			debug_illegal_mask = 1 << 3; // 3 = address error
+			debug_illegal_mask = (1 << 3) || (1 << 4); // 3 = address error, 4 = illegal instruction
 
 			warpmode(0);
 			// from debug.cpp@process_breakpoint()
@@ -1210,6 +1223,7 @@ start_profile:
 			}
 			for(const auto& bpn : bpnodes) {
 				if(bpn.enabled && bpn.type == BREAKPOINT_REG_PC && bpn.value1 == pc) {
+					// see binutils-gdb/include/gdb/signals.def for number of signals
 					if(pc == Trap7) {
 						response = "S07"; // TRAP#7 -> SIGEMT
 						// unwind PC & stack for better debugging experience (otherwise we're probably just somewhere in Kickstart)
@@ -1217,6 +1231,11 @@ start_profile:
 						m68k_areg(regs, A7 - A0) = regs.usp;
 					} else if(pc == AddressError) {
 						response = "S0A"; // AddressError -> SIGBUS
+						// unwind PC & stack for better debugging experience (otherwise we're probably just somewhere in Kickstart)
+						regs.pc = regs.instruction_pc_user_exception; // don't know size of opcode that caused exception
+						m68k_areg(regs, A7 - A0) = regs.usp;
+					} else if(pc == IllegalError) {
+						response = "S04"; // AddressError -> SIGILL
 						// unwind PC & stack for better debugging experience (otherwise we're probably just somewhere in Kickstart)
 						regs.pc = regs.instruction_pc_user_exception; // don't know size of opcode that caused exception
 						m68k_areg(regs, A7 - A0) = regs.usp;
