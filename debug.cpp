@@ -1608,7 +1608,8 @@ enum barto_cmd {
 	barto_cmd_filled_rect,
 	barto_cmd_text,
 	barto_cmd_register_resource,
-	barto_cmd_set_idle
+	barto_cmd_set_idle,
+	barto_cmd_unregister_resource,
 };
 
 enum debug_resource_type {
@@ -1621,7 +1622,7 @@ enum debug_resource_flags {
 	debug_resource_bitmap_interleaved = 1 << 0,
 };
 
-unsigned int barto_debug_resources_count{ 0 };
+int barto_debug_resources_count{ 0 };
 barto_debug_resource barto_debug_resources[1024];
 
 bool barto_debug_idle_flag = false;
@@ -1688,6 +1689,15 @@ extern int debug_barto_cmd(TrapContext* ctx, uae_u32 arg1, uae_u32 arg2, uae_u32
 
 		return 1;
 	}
+	case barto_cmd_unregister_resource:
+		for(int i = barto_debug_resources_count - 1; i >= 0; i--) {
+			if(barto_debug_resources[i].address == arg2) {
+				barto_debug_resources_count--;
+				if(barto_debug_resources_count > 0) // move last entry into hole
+					barto_debug_resources[i] = barto_debug_resources[barto_debug_resources_count];
+			}
+		}
+		return 1;
 	case barto_cmd_set_idle:
 		if(barto_debug_idle_count >= _countof(barto_debug_idle))
 			return 1;

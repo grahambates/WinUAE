@@ -36,7 +36,7 @@ struct barto_debug_resource {
 		} palette;
 	};
 };
-extern unsigned int barto_debug_resources_count;
+extern int barto_debug_resources_count;
 extern barto_debug_resource barto_debug_resources[1024];
 extern unsigned int barto_debug_idle_count;
 extern uint32_t barto_debug_idle[1024]; // top bit: idle, other bits: cycle / (CYCLE_UNIT / 2)
