@@ -1565,23 +1565,30 @@ static const uint8_t barto_font[] = {
 
 void barto_buf_text(int left, int top, const unsigned char* text, uint32_t color)
 {
+	int x = left;
+	int y = top;
 	while(int c = *text++) {
 		if(c == ' ') {
-			left += 8;
+			x += 8;
+			continue;
+		}
+		if(c == '\n') {
+			x = left;
+			y += 8;
 			continue;
 		}
 		if(c <= barto_font_first_char || c >= barto_font_first_char + barto_font_width)
 			continue;
 
-		for(int y = 0; y < 8; y++) {
-			auto f = barto_font[y * barto_font_width + (c - barto_font_first_char)];
-			for(int x = 0; x < 8; x++) {
-				if(f & (1 << (7 - x)))
+		for(int yy = 0; yy < 8; yy++) {
+			auto f = barto_font[yy * barto_font_width + (c - barto_font_first_char)];
+			for(int xx = 0; xx < 8; xx++) {
+				if(f & (1 << (7 - xx)))
 					continue;
-				barto_buf_pixel(left + x, top + y, color);
+				barto_buf_pixel(x + xx, y + yy, color);
 			}
 		}
-		left += 8;
+		x += 8;
 	}
 }
 
