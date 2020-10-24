@@ -602,7 +602,7 @@ namespace barto_gdbserver {
 					profile_frame_count = 0;
 					debugger_state = state::profile;
 					deactivate_debugger();
-					return; // response is sent when profile is finished (vsync)
+					return ""; // response is sent when profile is finished (vsync)
 				}
 			}
 		} else if(cmd == "reset") {
