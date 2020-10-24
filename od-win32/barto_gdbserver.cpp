@@ -47,6 +47,10 @@ extern void memwatch_setup(void);
 extern int debug_illegal;
 extern uae_u64 debug_illegal_mask;
 
+// from custom.cpp
+extern uae_u8* save_custom(int* len, uae_u8* dstptr, int full);
+
+
 #include "barto_gdbserver.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -152,6 +156,10 @@ namespace barto_gdbserver {
 	int profile_num_frames{};
 	int profile_frame_count{};
 	std::unique_ptr<cpu_profiler_unwind[]> profile_unwind{};
+	#define DEFAULT_TRACEFRAME -1		// Traceframe default index
+	int current_traceframe = DEFAULT_TRACEFRAME;
+	#define THREAD_ID_CPU    1		// Id for the cpu thread
+	#define THREAD_ID_COPPER 2		// Id for the copper thread
 
 	enum class state {
 		inited,
@@ -315,31 +323,112 @@ namespace barto_gdbserver {
 
 	static std::string get_register(int reg) {
 		uint32_t regvalue{};
-		// need to byteswap because GDB expects 68k big-endian
-		switch(reg) {
-		case SR: 
-			regvalue = regs.sr; 
-			break;
-		case PC: 
-			regvalue = M68K_GETPC; 
-			break;
-		case D0: case D1: case D2: case D3: case D4: case D5: case D6: case D7:
-			regvalue = m68k_dreg(regs, reg - D0);
-			break;
-		case A0: case A1: case A2: case A3: case A4: case A5: case A6: case A7:
-			regvalue = m68k_areg(regs, reg - A0);
-			break;
-		default:
-			return "xxxxxxxx";
+		if (current_traceframe < 0) {
+			// need to byteswap because GDB expects 68k big-endian
+			switch (reg) {
+			case SR:
+				regvalue = regs.sr;
+				break;
+			case PC:
+				regvalue = M68K_GETPC;
+				break;
+			case D0: case D1: case D2: case D3: case D4: case D5: case D6: case D7:
+				regvalue = m68k_dreg(regs, reg - D0);
+				break;
+			case A0: case A1: case A2: case A3: case A4: case A5: case A6: case A7:
+				regvalue = m68k_areg(regs, reg - A0);
+				break;
+			default:
+				return "xxxxxxxx";
+			}
+		}
+		else {
+			// Retrive the curren frame
+			int tfnum;
+			debugstackframe* tframe = debugmem_find_traceframe(false, current_traceframe, &tfnum);
+			if (tframe)
+			{
+				switch (reg) {
+				case SR:
+					regvalue = tframe->sr;
+					break;
+				case PC:
+					regvalue = tframe->current_pc;
+					break;
+				case D0: case D1: case D2: case D3: case D4: case D5: case D6: case D7:
+					regvalue = tframe->regs[reg - D0];
+					break;
+				case A0: case A1: case A2: case A3: case A4: case A5: case A6: case A7:
+					regvalue = tframe->regs[reg - A0];
+					break;
+				default:
+					return "xxxxxxxx";
+				}
+			}
 		}
 		return hex32(regvalue);
 	}
 
-	static std::string get_registers() {
+	/**
+	 * Handles a set register request
+	 *‘P n…=r…’
+	 *   Write register n… with value r…. The register number n is in hexadecimal, and r… contains two hex digits for each byte in the register (target byte order).
+	 *   Reply:
+	 *   ‘OK’
+	 *       for success
+	 *   ‘E NN’
+	 *       for an error
+	 */
+	static std::string set_register(const std::string& request) {
+		std::string response = "OK";
+		int reg = strtoul(request.data() + 1, nullptr, 16);
+		uaecptr value = 0;
+		auto eq_pos = request.find('=', 1);
+		if (eq_pos != std::string::npos) {
+			value = strtoul(request.data() + eq_pos + 1, nullptr, 16);
+			switch (reg) {
+			case D0: case D1: case D2: case D3: case D4: case D5: case D6: case D7:
+				m68k_dreg(regs, reg) = value;
+				break;
+			case A0: case A1: case A2: case A3: case A4: case A5: case A6: case A7:
+				m68k_areg(regs, reg) = value;
+				break;
+			default:
+				response = "E1";
+			}
+		}
+		else {
+			response = "E1";
+		}
+		return response;
+	}
+
+	static std::string get_registers(int thread_id) {
 		barto_log("GDBSERVER: PC=%x\n", M68K_GETPC);
 		std::string ret;
-		for(int reg = 0; reg < 18; reg++)
-			ret += get_register(reg);
+		if ((current_traceframe < 0) || (thread_id == THREAD_ID_COPPER)){
+			for (int reg = 0; reg < 18; reg++) {
+				if (thread_id == THREAD_ID_COPPER && reg == PC) {
+					// Copper PC
+					ret += hex32(get_copper_address(-1));
+				}
+				else {
+					ret += get_register(reg);
+				}
+			}
+		}
+		else {
+			// Retrive the curren frame
+			int tfnum;
+			debugstackframe* tframe = debugmem_find_traceframe(false, current_traceframe, &tfnum);
+			if (tframe)
+			{
+				for (int reg = 0; reg < 16; reg++)
+					ret += hex32(tframe->regs[reg]);
+				ret += hex32(tframe->sr);
+				ret += hex32(tframe->current_pc);
+			}
+		}
 		return ret;
 	}
 
@@ -542,8 +631,10 @@ namespace barto_gdbserver {
 			}
 			// thread specified by ':'
 			auto colon = action.find(':');
+			int thread_id = THREAD_ID_CPU;
 			if (colon != std::string::npos) {
-				// ignore thread ID
+				// parse thread id
+				thread_id = strtoul(action.data() + colon + 1, nullptr, 16);
 				action = action.substr(0, colon);
 			}
 
@@ -556,17 +647,23 @@ namespace barto_gdbserver {
 				//m68k_disasm(pc, &nextpc, pc, 1);
 				//trace_mode = TRACE_MATCH_PC;
 				//trace_param1 = nextpc;
+				if (thread_id == THREAD_ID_COPPER) {
+					// copper step
+					debug_copper |= 2;
+				}
+				else {
+					// step in
+					trace_param1 = 1;
+					trace_mode = TRACE_SKIP_INS;
 
-				// step in
-				trace_param1 = 1;
-				trace_mode = TRACE_SKIP_INS;
-
-				exception_debugging = 1;
-				debugger_state = state::connected;
-				send_ack(ack);
+					exception_debugging = 1;
+					debugger_state = state::connected;
+					send_ack(ack);
+				}
 			}
 			else if (action == "c") { // continue
 				debugger_state = state::connected;
+				debug_copper |= 4;
 				deactivate_debugger();
 				// none work...
 				//SetWindowPos(AMonitors[0].hAmigaWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE); // bring window to top
@@ -576,16 +673,68 @@ namespace barto_gdbserver {
 				send_ack(ack);
 			}
 			else if (action[0] == 'r') { // keep stepping in range
-				auto comma = action.find(',', 3);
+				auto comma = action.find(',', 2);
 				if (comma != std::string::npos) {
 					uaecptr start = strtoul(action.data() + 1, nullptr, 16);
 					uaecptr end = strtoul(action.data() + comma + 1, nullptr, 16);
-					trace_mode = TRACE_NRANGE_PC;
-					trace_param1 = start;
-					trace_param2 = end;
+					if (thread_id == THREAD_ID_COPPER) {
+						// We keep the copper in debug mode to check the breakpoints
+						if (start != end) {
+							debug_copper |= 8;
+						}
+						else {
+							debug_copper |= 2;
+						}
+						deactivate_debugger();
+					}
+					else {
+						if (start != end) {
+							trace_mode = TRACE_NRANGE_PC;
+							trace_param1 = start;
+							trace_param2 = end;
+						}
+						else {
+							// step over
+							uaecptr nextpc = 0;
+							uaecptr pc = m68k_getpc();
+							// Get the opcode
+							uae_u32 opcode = get_word_debug(pc);
+							// Check if it is a return opcode
+							if (opcode == 0x4e73 			/* RTE */
+								|| opcode == 0x4e74 		/* RTD */
+								|| opcode == 0x4e75 		/* RTS */
+								|| opcode == 0x4e77 		/* RTR */
+								|| opcode == 0x4e76 		/* TRAPV */
+								//|| (opcode & 0xffc0) == 0x4e80 	/* JSR */
+								|| (opcode & 0xffc0) == 0x4ec0 	/* JMP */
+								//|| (opcode & 0xff00) == 0x6100	/* BSR */
+								|| ((opcode & 0xf000) == 0x6000	/* Bcc */
+									&& cctrue((opcode >> 8) & 0xf))
+								|| ((opcode & 0xf0f0) == 0x5050	/* DBcc */
+									&& !cctrue((opcode >> 8) & 0xf)
+									&& (uae_s16)m68k_dreg(regs, opcode & 7) != 0)) {
+								// A step to next instruction is needed in this case
+								trace_param1 = 1;
+								trace_mode = TRACE_SKIP_INS;
+								exception_debugging = 1;
+							}
+							else {
+								// step one instruction after this pc
+								m68k_disasm(pc, &nextpc, 0xffffffff, 1);
+								trace_mode = TRACE_RANGE_PC;
+								trace_param1 = nextpc;
+								trace_param2 = nextpc + 10;
+							}
+						}
+					}
 					debugger_state = state::connected;
 					send_ack(ack);
 				}
+			}
+			else if (action[0] == 't') { // Pause 
+				debugger_state = state::debugging;
+				activate_debugger();
+				response = "S05"; // SIGTRAP
 			}
 			else {
 				barto_log("GDBSERVER: unknown vCont action: %s\n", action.c_str());
@@ -738,33 +887,221 @@ namespace barto_gdbserver {
 			uaecptr adr = strtoul(request.data() + strlen("m"), nullptr, 16);
 			int len = strtoul(request.data() + comma + 1, nullptr, 16);
 			barto_log("GDBSERVER: want 0x%x bytes at 0x%x\n", len, adr);
-			while (len-- > 0) {
-				auto debug_read_memory_8_no_custom = [](uaecptr addr) -> int {
-					addrbank* ad;
-					ad = &get_mem_bank(addr);
-					if (ad && ad != &custom_bank)
-						return ad->bget(addr);
-					return -1;
-				};
-
-				auto data = debug_read_memory_8_no_custom(adr);
-				if (data == -1) {
-					barto_log("GDBSERVER: error reading memory at 0x%x\n", len, adr);
-					response = "E01";
-					mem.clear();
-					break;
+			if ((adr >= 0xdff000) && (adr < 0xdff1fe)) {
+				int custom_save_length = 0;
+				uae_u8* p1 = NULL;
+				p1 = save_custom(&custom_save_length, 0, 1);
+				if (p1 != NULL) {
+					while (len-- > 0) {
+						int idx = (adr & 0x1ff) + 4;
+						if ((idx > 0) && (idx < custom_save_length)) {
+							uae_u8 data = p1[idx];
+							mem += hex[data >> 4];
+							mem += hex[data & 0xf];
+						}
+						adr++;
+					}
+					xfree(p1);
 				}
-				data &= 0xff; // custom_bget seems to have a problem?
-				mem += hex[data >> 4];
-				mem += hex[data & 0xf];
-				adr++;
 			}
-			response = mem;
+			else {
+				while (len-- > 0) {
+					auto debug_read_memory_8_no_custom = [](uaecptr addr) -> int {
+						addrbank* ad;
+						ad = &get_mem_bank(addr);
+						if (ad && ad != &custom_bank) {
+							return ad->bget(addr);
+						}
+						return -1;
+					};
+
+					auto data = debug_read_memory_8_no_custom(adr);
+					if (data == -1) {
+						barto_log("GDBSERVER: error reading memory at 0x%x\n", len, adr);
+						response = "E01";
+						mem.clear();
+						break;
+					}
+					data &= 0xff; // custom_bget seems to have a problem?
+					mem += hex[data >> 4];
+					mem += hex[data & 0xf];
+					adr++;
+				}
+			}
+			if (mem.length() > 0) {
+				response = mem;
+			}
 		}
 		else {
 			response = "E01";
 		}
 		return response;
+	}
+
+	/**
+	 * Finds if it is a safe address or not
+	 *
+	 * @param addr Address to check
+	 * @param size Size of the address
+	 * @return true if it is a safe address
+	 */
+	static bool safe_addr(uaecptr addr, int size)
+	{
+		addrbank* ab = &get_mem_bank(addr);
+
+		if (!ab)
+			return false;
+
+		if (ab->flags & ABFLAG_SAFE)
+			return true;
+
+		if (!ab->check(addr, size))
+			return false;
+
+		if (ab->flags & (ABFLAG_RAM | ABFLAG_ROM | ABFLAG_ROMIN | ABFLAG_SAFE))
+			return true;
+
+		return false;
+	}
+
+	/**
+	 * Handles a set memory request
+	 * ‘M addr,length:XX…’
+	 *   Write length addressable memory units starting at address addr (see addressable memory unit). The data is given by XX…; each byte is transmitted as a two-digit hexadecimal number.
+	 *   Reply:
+	 *   ‘OK’
+	 *       for success
+	 *   ‘E NN’
+	 *       for an error (this includes the case where only part of the data was written).
+	 */
+	static std::string handle_write_memory(const std::string& request) {
+		auto comma = request.find(',');
+		auto data_pos = request.find(':');
+		if ((comma != std::string::npos) && (data_pos != std::string::npos)) {
+			data_pos++;
+			uaecptr address = strtoul(request.data() + strlen("m"), nullptr, 16);
+			int len = strtoul(request.data() + comma + 1, nullptr, 16);
+			barto_log("GDBSERVER: want write 0x%x bytes at 0x%x\n", len, address);
+			auto mem = from_hex(request.substr(data_pos));
+			for (int i = 0; i < mem.length(); i++)
+			{
+				if (!safe_addr(address, 1)) {
+					return "E1";
+				}
+				uae_u8 t = *(mem.data() + i);
+				put_byte(address++, t);
+			}
+		}
+		else {
+			return "E1";
+		}
+		return "OK";
+	}
+
+
+	/**
+	 * Reponse to the qfThreadInfo
+	 * Reply:
+	 *     ‘m thread-id’
+	 *   A single thread ID
+	 *		‘m thread-id,thread-id…’
+	 *   a comma-separated list of thread IDs
+	 *		‘l’
+	 * @param packet Containing the request
+	 * @return true if the response was sent without error
+	 */
+	std::string handle_qfthreadinfo()
+	{
+		std::string th1 = hex8(THREAD_ID_CPU);
+		std::string th2 = hex8(THREAD_ID_COPPER);
+		return "m" + th1 + "," + th2;
+	}
+
+	/**
+	 * Handles a QTFrame command
+	 * ! Partial implementation : Not real tracepoint implentation
+	 *‘QTFrame:n’
+	 *   Select the n’th tracepoint frame from the buffer, and use the register and memory contents recorded there to answer subsequent request packets from GDB.
+	 *   A successful reply from the stub indicates that the stub has found the requested frame. The response is a series of parts, concatenated without separators, describing the frame we selected. Each part has one of the following forms:
+	 *   ‘F f’
+	 *       The selected frame is number n in the trace frame buffer; f is a hexadecimal number. If f is ‘-1’, then there was no frame matching the criteria in the request packet.
+	 *   ‘T t’
+	 *       The selected trace frame records a hit of tracepoint number t; t is a hexadecimal number.
+	 * @param packet Containing the request
+	 * @return true if the response was sent without error
+	 */
+	std::string handle_qtframe(const std::string& request)
+	{
+		std::string response;
+		uae_u32 frame, pc, lo, hi, num;
+		int tfnum, tpnum, tfnum_found;
+		struct debugstackframe* tframe;
+
+		tfnum = strtoul(request.data() + strlen("QTFrame:"), nullptr, 16);
+		if (tfnum < 0) {
+			current_traceframe = DEFAULT_TRACEFRAME;
+			response = "OK";
+		}
+		else {
+			tframe = debugmem_find_traceframe(false, tfnum, &tfnum_found);
+			if (tframe)
+			{
+				current_traceframe = tfnum_found;
+				if (tfnum_found < 0)
+				{
+					response = "F-1";
+				}
+				else
+				{
+					response = "F" + hex8(tfnum_found) + "T1";
+				}
+			}
+			else
+			{
+				response = "F-1";
+			}
+		}
+		return response;
+	}
+
+	/**
+	* ‘qTStatus’
+    Ask the stub if there is a trace experiment running right now.
+    The reply has the form:
+    ‘Trunning[;field]…’
+        running is a single digit 1 if the trace is presently running, or 0 if not. It is followed by semicolon-separated optional fields that an agent may use to report additional status.
+    If the trace is not running, the agent may report any of several explanations as one of the optional fields:
+    ‘tnotrun:0’
+        No trace has been run yet.
+    ‘tstop[:text]:0’
+        The trace was stopped by a user-originated stop command. The optional text field is a user-supplied string supplied as part of the stop command (for instance, an explanation of why the trace was stopped manually). It is hex-encoded.
+    ‘tfull:0’
+        The trace stopped because the trace buffer filled up.
+    ‘tdisconnected:0’
+        The trace stopped because GDB disconnected from the target.
+    ‘tpasscount:tpnum’
+        The trace stopped because tracepoint tpnum exceeded its pass count.
+    ‘terror:text:tpnum’
+        The trace stopped because tracepoint tpnum had an error. The string text is available to describe the nature of the error (for instance, a divide by zero in the condition expression); it is hex encoded.
+    ‘tunknown:0’
+        The trace stopped for some other reason.
+    Additional optional fields supply statistical and other information. Although not required, they are extremely useful for users monitoring the progress of a trace run. If a trace has stopped, and these numbers are reported, they must reflect the state of the just-stopped trace.
+    ‘tframes:n’
+        The number of trace frames in the buffer.
+    ‘tcreated:n’
+        The total number of trace frames created during the run. This may be larger than the trace frame count, if the buffer is circular.
+    ‘tsize:n’
+        The total size of the trace buffer, in bytes.
+    ‘tfree:n’
+        The number of bytes still unused in the buffer.
+    ‘circular:n’
+        The value of the circular trace buffer flag. 1 means that the trace buffer is circular and old trace frames will be discarded if necessary to make room, 0 means that the trace buffer is linear and may fill up.
+    ‘disconn:n’
+        The value of the disconnected tracing flag. 1 means that tracing will continue after GDB disconnects, 0 means that the trace run will stop.
+	*/
+	std::string handle_qtstatus() {
+		string tframe_count = hex8(debugmem_get_traceframe_count(false));
+		return "T1;tstop::0;tframes:" + tframe_count + ";tcreated:" + tframe_count + ";tfree:ffffff;tsize:50*!;circular:1;disconn:1;starttime:;stoptime:;username:;notes::";
 	}
 
 	void handle_packet() {
@@ -803,19 +1140,27 @@ namespace barto_gdbserver {
 								ack = "+";
 								response = "$";
 								if(request.substr(0, strlen("qSupported")) == "qSupported") {
-									response += "PacketSize=512;BreakpointCommands+;swbreak+;hwbreak+;QStartNoAckMode+;vContSupported+";
+									response += "PacketSize=512;BreakpointCommands+;swbreak+;hwbreak+;QStartNoAckMode+;vContSupported+;QTFrame+";
 								} else if(request.substr(0, strlen("qAttached")) == "qAttached") {
 									response += "1";
-								} else if(request.substr(0, strlen("qTStatus")) == "qTStatus") {
-									response += "T0";
 								} else if(request.substr(0, strlen("QStartNoAckMode")) == "QStartNoAckMode") {
 									send_ack(ack);
 									useAck = false;
 									response += "OK";
 								} else if(request.substr(0, strlen("qfThreadInfo")) == "qfThreadInfo") {
-									response += "m1";
+									response += handle_qfthreadinfo();
 								} else if(request.substr(0, strlen("qsThreadInfo")) == "qsThreadInfo") {
 									response += "l";
+								} else if (request.substr(0, strlen("QTFrame")) == "QTFrame") {
+									response += handle_qtframe(request);
+								} else if (request.substr(0, strlen("QTinit")) == "QTinit") {
+									response += "OK";
+								} else if (request.substr(0, strlen("QTStop")) == "QTStop") {
+									response += "OK";
+								} else if (request.substr(0, strlen("QTStart")) == "QTStart") {
+									response += "OK";
+								} else if (request.substr(0, strlen("qTStatus")) == "qTStatus") {
+									response += handle_qtstatus();
 								} else if(request.substr(0, strlen("qC")) == "qC") {
 									response += "QC1";
 								} else if(request.substr(0, strlen("qOffsets")) == "qOffsets") {
@@ -837,7 +1182,14 @@ namespace barto_gdbserver {
 									}
 									response += resp;
 								} else if(request[0] == 'H') {
-									response += "OK";
+									if (request.substr(0, strlen("Hg")) == "Hg") {
+										// getting registers for thread
+										int tid = strtoul(request.data() + strlen("Hg"), nullptr, 16);
+										response += get_registers(tid);
+									}
+									else {
+										response += "OK";
+									}
 								} else if(request[0] == 'T') {
 									response += "OK";
 /*								} else if(request.substr(0, strlen("vRun")) == "vRun") {
@@ -873,13 +1225,19 @@ namespace barto_gdbserver {
 									response += handle_clear_watchpoint(request);
 								}
 								else if (request[0] == 'g') { // get registers
-									response += get_registers();
+									response += get_registers(THREAD_ID_CPU);
 								}
 								else if (request[0] == 'p') { // get register
 									response += get_register(strtoul(request.data() + 1, nullptr, 16));
 								}
+								else if (request[0] == 'P') { // write register
+									response += set_register(request.data());
+								}
 								else if (request[0] == 'm') { // read memory
 									response += handle_read_memory(request);
+								}
+								else if (request[0] == 'M') { // read memory
+									response += handle_write_memory(request);									
 								}
 							} else
 								barto_log("GDBSERVER: packet checksum mismatch: got %c%c, want %c%c\n", tolower(request[end + 1]), tolower(request[end + 2]), hex[cksum >> 4], hex[cksum & 0xf]);
@@ -1239,6 +1597,8 @@ start_profile:
 			debugger_state = state::debugging;
 			debugmem_enable_stackframe(true);
 			debugmem_trace = true;
+
+			debug_copper = 1 | 4;
 		}
 
 		// something stopped execution and entered debugger
@@ -1261,6 +1621,12 @@ start_profile:
 			}
 
 			std::string response{ "S05" };
+			if (debug_copper & 8) {
+				// copper debugging
+				debug_copper &= ~8;
+				response = "T05swbreak:;thread:" + hex8(THREAD_ID_COPPER);
+				goto send_response;
+			}
 
 			//if(memwatch_triggered) // can't use, debug() will reset it, so just check mwhit
 			if(mwhit.size) {
@@ -1302,7 +1668,7 @@ start_profile:
 						regs.pc = regs.instruction_pc_user_exception; // don't know size of opcode that caused exception
 						m68k_areg(regs, A7 - A0) = regs.usp;
 					} else {
-						response = "T05swbreak:;";
+						response = "T05swbreak:;thread:" + hex8(THREAD_ID_CPU);
 					}
 					goto send_response;
 				}
@@ -1327,4 +1693,36 @@ send_response:
 
 		return true;
 	}
+
+	/**
+	 * Main function that will be called when doing the copper debugging
+	 */
+	bool remote_debug_copper(uaecptr addr, uae_u16 word1, uae_u16 word2, int hpos, int vpos)
+	{
+		// scan breakpoints for the current address
+		if (debug_copper & 4) {
+			// check breakpoints for copper
+			for (int i = 0; i < BREAKPOINT_TOTAL; i++) {
+				struct breakpoint_node* bpn = &bpnodes[i];
+				if (bpn->enabled && (bpn->type == BREAKPOINT_REG_PC)) {
+					int tested_copper_pc = bpn->value1;
+					if (addr >= tested_copper_pc && addr <= tested_copper_pc + 3) {
+						debugger_state = state::connected;
+						debug_copper |= 8;
+						activate_debugger_new();
+						return true;
+					}
+				}
+			}
+		}
+		if (debug_copper & 2) {
+			debugger_state = state::connected;
+			debug_copper &= ~2;
+			debug_copper |= 8;
+			activate_debugger_new();
+			return true;
+		}
+		return false;
+	}
+
 } // namespace barto_gdbserver
