@@ -15,6 +15,7 @@
 #include "dxwrap.h" // AmigaMonitor
 #include "custom.h"
 #include "win32.h"
+#include "savestate.h"
 
 extern BITMAPINFO* screenshot_get_bi();
 extern void* screenshot_get_bits();
@@ -371,12 +372,12 @@ namespace barto_gdbserver {
 
 	/**
 	 * Handles a set register request
-	 *‘P n…=r…’
-	 *   Write register n… with value r…. The register number n is in hexadecimal, and r… contains two hex digits for each byte in the register (target byte order).
+	 *ï¿½P nï¿½=rï¿½ï¿½
+	 *   Write register nï¿½ with value rï¿½. The register number n is in hexadecimal, and rï¿½ contains two hex digits for each byte in the register (target byte order).
 	 *   Reply:
-	 *   ‘OK’
+	 *   ï¿½OKï¿½
 	 *       for success
-	 *   ‘E NN’
+	 *   ï¿½E NNï¿½
 	 *       for an error
 	 */
 	static std::string set_register(const std::string& request) {
@@ -544,14 +545,14 @@ namespace barto_gdbserver {
 		auto cmd = from_hex(request.substr(strlen("qRcmd,")));
 		barto_log("GDBSERVER:   monitor %s\n", cmd.c_str());
 		// syntax: monitor profile <num_frames> <unwind_file> <out_file>
-		if (cmd.substr(0, strlen("profile")) == "profile") {
+		if(cmd.substr(0, strlen("profile")) == "profile") {
 			auto s = cmd.substr(strlen("profile "));
 			std::string profile_unwindname;
 			profile_num_frames = 0;
 			profile_outname.clear();
 
 			// get num_frames
-			while (s[0] >= '0' && s[0] <= '9') {
+			while(s[0] >= '0' && s[0] <= '9') {
 				profile_num_frames = profile_num_frames * 10 + s[0] - '0';
 				s = s.substr(1);
 			}
@@ -559,23 +560,20 @@ namespace barto_gdbserver {
 			s = s.substr(1); // skip space
 
 			// get profile_unwindname
-			if (s.substr(0, 1) == "\"") {
+			if(s.substr(0, 1) == "\"") {
 				auto last = s.find('\"', 1);
-				if (last != std::string::npos) {
+				if(last != std::string::npos) {
 					profile_unwindname = s.substr(1, last - 1);
 					s = s.substr(last + 1);
-				}
-				else {
+				} else {
 					s.clear();
 				}
-			}
-			else {
+			} else {
 				auto last = s.find(' ', 1);
-				if (last != std::string::npos) {
+				if(last != std::string::npos) {
 					profile_unwindname = s.substr(0, last);
 					s = s.substr(last + 1);
-				}
-				else {
+				} else {
 					s.clear();
 				}
 			}
@@ -583,22 +581,20 @@ namespace barto_gdbserver {
 			s = s.substr(1); // skip space
 
 			// get profile_outname
-			if (s.substr(0, 1) == "\"") {
+			if(s.substr(0, 1) == "\"") {
 				auto last = s.find('\"', 1);
-				if (last != std::string::npos) {
+				if(last != std::string::npos) {
 					profile_outname = s.substr(1, last - 1);
 					s = s.substr(last + 1);
-				}
-				else {
+				} else {
 					s.clear();
 				}
-			}
-			else {
+			} else {
 				profile_unwindname = s.substr(1);
 			}
 
-			if (!profile_unwindname.empty() && !profile_outname.empty()) {
-				if (auto f = fopen(profile_unwindname.c_str(), "rb")) {
+			if(!profile_unwindname.empty() && !profile_outname.empty()) {
+				if(auto f = fopen(profile_unwindname.c_str(), "rb")) {
 					profile_unwind = std::make_unique<cpu_profiler_unwind[]>(sizeText >> 1);
 					fread(profile_unwind.get(), sizeof(cpu_profiler_unwind), sizeText >> 1, f);
 					fclose(f);
@@ -606,9 +602,15 @@ namespace barto_gdbserver {
 					profile_frame_count = 0;
 					debugger_state = state::profile;
 					deactivate_debugger();
-					return ""; // response is sent when profile is finished (vsync)
+					return; // response is sent when profile is finished (vsync)
 				}
 			}
+		} else if(cmd == "reset") {
+			savestate_quick(0, 0); // restore state saved at process entry
+			return "OK";
+		} else {
+			// unknown monitor command
+			return "E01";
 		}
 		return "E01";
 	}
@@ -966,12 +968,12 @@ namespace barto_gdbserver {
 
 	/**
 	 * Handles a set memory request
-	 * ‘M addr,length:XX…’
-	 *   Write length addressable memory units starting at address addr (see addressable memory unit). The data is given by XX…; each byte is transmitted as a two-digit hexadecimal number.
+	 * ï¿½M addr,length:XXï¿½ï¿½
+	 *   Write length addressable memory units starting at address addr (see addressable memory unit). The data is given by XXï¿½; each byte is transmitted as a two-digit hexadecimal number.
 	 *   Reply:
-	 *   ‘OK’
+	 *   ï¿½OKï¿½
 	 *       for success
-	 *   ‘E NN’
+	 *   ï¿½E NNï¿½
 	 *       for an error (this includes the case where only part of the data was written).
 	 */
 	static std::string handle_write_memory(const std::string& request) {
@@ -1002,11 +1004,11 @@ namespace barto_gdbserver {
 	/**
 	 * Reponse to the qfThreadInfo
 	 * Reply:
-	 *     ‘m thread-id’
+	 *     ï¿½m thread-idï¿½
 	 *   A single thread ID
-	 *		‘m thread-id,thread-id…’
+	 *		ï¿½m thread-id,thread-idï¿½ï¿½
 	 *   a comma-separated list of thread IDs
-	 *		‘l’
+	 *		ï¿½lï¿½
 	 * @param packet Containing the request
 	 * @return true if the response was sent without error
 	 */
@@ -1020,12 +1022,12 @@ namespace barto_gdbserver {
 	/**
 	 * Handles a QTFrame command
 	 * ! Partial implementation : Not real tracepoint implentation
-	 *‘QTFrame:n’
-	 *   Select the n’th tracepoint frame from the buffer, and use the register and memory contents recorded there to answer subsequent request packets from GDB.
+	 *ï¿½QTFrame:nï¿½
+	 *   Select the nï¿½th tracepoint frame from the buffer, and use the register and memory contents recorded there to answer subsequent request packets from GDB.
 	 *   A successful reply from the stub indicates that the stub has found the requested frame. The response is a series of parts, concatenated without separators, describing the frame we selected. Each part has one of the following forms:
-	 *   ‘F f’
-	 *       The selected frame is number n in the trace frame buffer; f is a hexadecimal number. If f is ‘-1’, then there was no frame matching the criteria in the request packet.
-	 *   ‘T t’
+	 *   ï¿½F fï¿½
+	 *       The selected frame is number n in the trace frame buffer; f is a hexadecimal number. If f is ï¿½-1ï¿½, then there was no frame matching the criteria in the request packet.
+	 *   ï¿½T tï¿½
 	 *       The selected trace frame records a hit of tracepoint number t; t is a hexadecimal number.
 	 * @param packet Containing the request
 	 * @return true if the response was sent without error
@@ -1065,38 +1067,38 @@ namespace barto_gdbserver {
 	}
 
 	/**
-	* ‘qTStatus’
+	* ï¿½qTStatusï¿½
     Ask the stub if there is a trace experiment running right now.
     The reply has the form:
-    ‘Trunning[;field]…’
+    ï¿½Trunning[;field]ï¿½ï¿½
         running is a single digit 1 if the trace is presently running, or 0 if not. It is followed by semicolon-separated optional fields that an agent may use to report additional status.
     If the trace is not running, the agent may report any of several explanations as one of the optional fields:
-    ‘tnotrun:0’
+    ï¿½tnotrun:0ï¿½
         No trace has been run yet.
-    ‘tstop[:text]:0’
+    ï¿½tstop[:text]:0ï¿½
         The trace was stopped by a user-originated stop command. The optional text field is a user-supplied string supplied as part of the stop command (for instance, an explanation of why the trace was stopped manually). It is hex-encoded.
-    ‘tfull:0’
+    ï¿½tfull:0ï¿½
         The trace stopped because the trace buffer filled up.
-    ‘tdisconnected:0’
+    ï¿½tdisconnected:0ï¿½
         The trace stopped because GDB disconnected from the target.
-    ‘tpasscount:tpnum’
+    ï¿½tpasscount:tpnumï¿½
         The trace stopped because tracepoint tpnum exceeded its pass count.
-    ‘terror:text:tpnum’
+    ï¿½terror:text:tpnumï¿½
         The trace stopped because tracepoint tpnum had an error. The string text is available to describe the nature of the error (for instance, a divide by zero in the condition expression); it is hex encoded.
-    ‘tunknown:0’
+    ï¿½tunknown:0ï¿½
         The trace stopped for some other reason.
     Additional optional fields supply statistical and other information. Although not required, they are extremely useful for users monitoring the progress of a trace run. If a trace has stopped, and these numbers are reported, they must reflect the state of the just-stopped trace.
-    ‘tframes:n’
+    ï¿½tframes:nï¿½
         The number of trace frames in the buffer.
-    ‘tcreated:n’
+    ï¿½tcreated:nï¿½
         The total number of trace frames created during the run. This may be larger than the trace frame count, if the buffer is circular.
-    ‘tsize:n’
+    ï¿½tsize:nï¿½
         The total size of the trace buffer, in bytes.
-    ‘tfree:n’
+    ï¿½tfree:nï¿½
         The number of bytes still unused in the buffer.
-    ‘circular:n’
+    ï¿½circular:nï¿½
         The value of the circular trace buffer flag. 1 means that the trace buffer is circular and old trace frames will be discarded if necessary to make room, 0 means that the trace buffer is linear and may fill up.
-    ‘disconn:n’
+    ï¿½disconn:nï¿½
         The value of the disconnected tracing flag. 1 means that tracing will continue after GDB disconnects, 0 means that the trace run will stop.
 	*/
 	std::string handle_qtstatus() {
@@ -1459,6 +1461,7 @@ start_profile:
 	uaecptr KPutCharX{};
 	uaecptr Trap7{};
 	uaecptr AddressError{};
+	uaecptr IllegalError{};
 	std::string KPutCharOutput;
 
 	void output(const char* string) {
@@ -1541,7 +1544,7 @@ start_profile:
 				break;
 			}
 
-			AddressError = get_long_debug(regs.vbr + 0xc);
+			AddressError = get_long_debug(regs.vbr + 3 * 4);
 			for(auto& bpn : bpnodes) {
 				if(bpn.enabled)
 					continue;
@@ -1550,6 +1553,18 @@ start_profile:
 				bpn.oper = BREAKPOINT_CMP_EQUAL;
 				bpn.enabled = 1;
 				barto_log("GDBSERVER: Breakpoint for AddressError at 0x%x installed\n", bpn.value1);
+				break;
+			}
+
+			IllegalError = get_long_debug(regs.vbr + 4 * 4);
+			for(auto& bpn : bpnodes) {
+				if(bpn.enabled)
+					continue;
+				bpn.value1 = IllegalError;
+				bpn.type = BREAKPOINT_REG_PC;
+				bpn.oper = BREAKPOINT_CMP_EQUAL;
+				bpn.enabled = 1;
+				barto_log("GDBSERVER: Breakpoint for IllegalError at 0x%x installed\n", bpn.value1);
 				break;
 			}
 
@@ -1578,15 +1593,16 @@ start_profile:
 				break;
 			}*/
 
-			// enable break at exceptions
+			// enable break at exceptions - doesn't break when exceptions occur in Kickstart
 			debug_illegal = 1;
-			debug_illegal_mask = 1 << 3; // 3 = address error
+			debug_illegal_mask = (1 << 3) || (1 << 4); // 3 = address error, 4 = illegal instruction
 
 			warpmode(0);
 			// from debug.cpp@process_breakpoint()
 			processptr = 0;
 			xfree(processname);
 			processname = nullptr;
+			savestate_quick(0, 1); // save state for "monitor reset"
 			barto_log("GDBSERVER: Waiting for connection...\n");
 			while(!is_connected()) {
 				barto_log(".");
@@ -1657,6 +1673,7 @@ start_profile:
 			}
 			for(const auto& bpn : bpnodes) {
 				if(bpn.enabled && bpn.type == BREAKPOINT_REG_PC && bpn.value1 == pc) {
+					// see binutils-gdb/include/gdb/signals.def for number of signals
 					if(pc == Trap7) {
 						response = "S07"; // TRAP#7 -> SIGEMT
 						// unwind PC & stack for better debugging experience (otherwise we're probably just somewhere in Kickstart)
@@ -1664,6 +1681,11 @@ start_profile:
 						m68k_areg(regs, A7 - A0) = regs.usp;
 					} else if(pc == AddressError) {
 						response = "S0A"; // AddressError -> SIGBUS
+						// unwind PC & stack for better debugging experience (otherwise we're probably just somewhere in Kickstart)
+						regs.pc = regs.instruction_pc_user_exception; // don't know size of opcode that caused exception
+						m68k_areg(regs, A7 - A0) = regs.usp;
+					} else if(pc == IllegalError) {
+						response = "S04"; // AddressError -> SIGILL
 						// unwind PC & stack for better debugging experience (otherwise we're probably just somewhere in Kickstart)
 						regs.pc = regs.instruction_pc_user_exception; // don't know size of opcode that caused exception
 						m68k_areg(regs, A7 - A0) = regs.usp;
