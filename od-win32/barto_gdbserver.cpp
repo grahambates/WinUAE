@@ -689,7 +689,7 @@ namespace barto_gdbserver {
 					}
 					else {
 						if (start != end) {
-							trace_mode = TRACE_NRANGE_PC;
+							trace_mode = TRACE_RANGE_PC;
 							trace_param1 = start;
 							trace_param2 = end;
 						}
