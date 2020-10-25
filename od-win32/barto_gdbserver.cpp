@@ -691,7 +691,7 @@ namespace barto_gdbserver {
 					}
 					else {
 						if (start != end) {
-							trace_mode = TRACE_RANGE_PC;
+							trace_mode = TRACE_NRANGE_PC;
 							trace_param1 = start;
 							trace_param2 = end;
 						}
@@ -1690,7 +1690,7 @@ start_profile:
 						regs.pc = regs.instruction_pc_user_exception; // don't know size of opcode that caused exception
 						m68k_areg(regs, A7 - A0) = regs.usp;
 					} else {
-						response = "T05swbreak:;thread:" + hex8(THREAD_ID_CPU);
+						response = "T05swbreak:;";//;thread:" + hex8(THREAD_ID_CPU);
 					}
 					goto send_response;
 				}
