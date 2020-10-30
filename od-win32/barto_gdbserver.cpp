@@ -17,6 +17,20 @@
 #include "win32.h"
 #include "savestate.h"
 
+#define GDB_ACK                                  "+"
+#define GDB_OK                                   "OK"
+
+#define GDBERROR_PACKET_NOT_SUPPORTED            ""    // Packet not supported
+#define GDBERROR_PROCESSING                      "E01" // General error during processing
+#define GDBERROR_PARSE                           "E02" // Error during the packet parse
+#define GDBERROR_UNSUPPORTED_COMMAND             "E03" // Unsupported / unknown command
+#define GDBERROR_UNKOWN_REGISTER                 "E04" // Unknown register
+#define GDBERROR_INVALID_FRAME_ID                "E05" // Invalid Frame Id
+#define GDBERROR_INVALID_MEMORY_LOCATION         "E06" // Invalid memory location
+#define GDBERROR_INVALID_ADDRESS                 "E07" // Address not safe for a set memory command
+#define GDBERROR_INVALID_BREAKPOINT              "E08" // Unknown breakpoint
+#define GDBERROR_MAX_BREAKPOINTS_REACHED         "E09" // The maximum of breakpoints have been reached
+
 extern BITMAPINFO* screenshot_get_bi();
 extern void* screenshot_get_bits();
 
@@ -366,22 +380,25 @@ namespace barto_gdbserver {
 					return "xxxxxxxx";
 				}
 			}
+			else {
+				return GDBERROR_INVALID_FRAME_ID;
+			}
 		}
 		return hex32(regvalue);
 	}
 
 	/**
 	 * Handles a set register request
-	 *�P n�=r��
-	 *   Write register n� with value r�. The register number n is in hexadecimal, and r� contains two hex digits for each byte in the register (target byte order).
+	 *`P n`=r`
+	 *   Write register n` with value r`. The register number n is in hexadecimal, and r` contains two hex digits for each byte in the register (target byte order).
 	 *   Reply:
-	 *   �OK�
+	 *   `OK`
 	 *       for success
-	 *   �E NN�
+	 *   `E NN`
 	 *       for an error
 	 */
 	static std::string set_register(const std::string& request) {
-		std::string response = "OK";
+		std::string response = GDB_OK;
 		int reg = strtoul(request.data() + 1, nullptr, 16);
 		uaecptr value = 0;
 		auto eq_pos = request.find('=', 1);
@@ -395,11 +412,11 @@ namespace barto_gdbserver {
 				m68k_areg(regs, reg) = value;
 				break;
 			default:
-				response = "E1";
+				response = GDBERROR_UNKOWN_REGISTER;
 			}
 		}
 		else {
-			response = "E1";
+			response = GDBERROR_PARSE;
 		}
 		return response;
 	}
@@ -428,6 +445,9 @@ namespace barto_gdbserver {
 					ret += hex32(tframe->regs[reg]);
 				ret += hex32(tframe->sr);
 				ret += hex32(tframe->current_pc);
+			}
+			else {
+				ret = GDBERROR_INVALID_FRAME_ID;
 			}
 		}
 		return ret;
@@ -477,7 +497,7 @@ namespace barto_gdbserver {
 	}
 
 	std::string handle_qoffsets() {
-		std::string response = "E01";
+		std::string response = GDBERROR_PARSE;
 		auto BADDR = [](auto bptr) { return bptr << 2; };
 		auto BSTR = [](auto bstr) { return std::string(reinterpret_cast<char*>(bstr) + 1, bstr[0]); };
 		// from debug.cpp@show_exec_tasks
@@ -540,7 +560,6 @@ namespace barto_gdbserver {
 	}
 
 	std::string handle_qrcmd(const std::string& request) {
-		std::string ack = "+";
 		// "monitor" command. used for profiling
 		auto cmd = from_hex(request.substr(strlen("qRcmd,")));
 		barto_log("GDBSERVER:   monitor %s\n", cmd.c_str());
@@ -598,7 +617,7 @@ namespace barto_gdbserver {
 					profile_unwind = std::make_unique<cpu_profiler_unwind[]>(sizeText >> 1);
 					fread(profile_unwind.get(), sizeof(cpu_profiler_unwind), sizeText >> 1, f);
 					fclose(f);
-					send_ack(ack);
+					send_ack(GDB_ACK);
 					profile_frame_count = 0;
 					debugger_state = state::profile;
 					deactivate_debugger();
@@ -607,17 +626,16 @@ namespace barto_gdbserver {
 			}
 		} else if(cmd == "reset") {
 			savestate_quick(0, 0); // restore state saved at process entry
-			return "OK";
+			return GDB_OK;
 		} else {
 			// unknown monitor command
-			return "E01";
+			return GDBERROR_UNSUPPORTED_COMMAND;
 		}
-		return "E01";
+		return GDBERROR_PARSE;
 	}
 
 	std::string handle_vcont(const std::string& request) {
 		std::string response = "";
-		std::string ack = "+";
 		auto actions = request.substr(strlen("vCont;"));
 		while (!actions.empty()) {
 			std::string action;
@@ -660,7 +678,7 @@ namespace barto_gdbserver {
 
 					exception_debugging = 1;
 					debugger_state = state::connected;
-					send_ack(ack);
+					send_ack(GDB_ACK);
 				}
 			}
 			else if (action == "c") { // continue
@@ -672,7 +690,7 @@ namespace barto_gdbserver {
 				//BringWindowToTop(AMonitors[0].hAmigaWnd);
 				//SetForegroundWindow(AMonitors[0].hAmigaWnd);
 				//setmouseactive(0, 2);
-				send_ack(ack);
+				send_ack(GDB_ACK);
 			}
 			else if (action[0] == 'r') { // keep stepping in range
 				auto comma = action.find(',', 2);
@@ -730,7 +748,7 @@ namespace barto_gdbserver {
 						}
 					}
 					debugger_state = state::connected;
-					send_ack(ack);
+					send_ack(GDB_ACK);
 				}
 			}
 			else if (action[0] == 't') { // Pause 
@@ -740,6 +758,7 @@ namespace barto_gdbserver {
 			}
 			else {
 				barto_log("GDBSERVER: unknown vCont action: %s\n", action.c_str());
+				response = GDBERROR_UNSUPPORTED_COMMAND;
 			}
 		}
 		return response;
@@ -761,9 +780,17 @@ namespace barto_gdbserver {
 				trace_mode = TRACE_RANGE_PC;
 				trace_param1 = 0;
 				trace_param2 = 0xF80000;
-				response = "OK";
+				response = GDB_OK;
 			}
 			else {
+				// Does the breakpoint exist ?
+				for (auto& bpn : bpnodes) {
+					if (bpn.enabled && bpn.value1 == adr && bpn.type == BREAKPOINT_REG_PC && bpn.oper == BREAKPOINT_CMP_EQUAL) {
+						return GDB_OK;
+					}
+				}
+				// Add the new breakpoint
+				response = GDBERROR_MAX_BREAKPOINTS_REACHED;
 				for (auto& bpn : bpnodes) {
 					if (bpn.enabled)
 						continue;
@@ -773,14 +800,13 @@ namespace barto_gdbserver {
 					bpn.enabled = 1;
 					trace_mode = 0;
 					print_breakpoints();
-					response = "OK";
+					response = GDB_OK;
 					break;
 				}
-				// TODO: error when too many breakpoints!
 			}
 		}
 		else {
-			response = "E01";
+			response = GDBERROR_PARSE;
 		}
 		return response;
 	}
@@ -791,23 +817,29 @@ namespace barto_gdbserver {
 		if (comma != std::string::npos) {
 			uaecptr adr = strtoul(request.data() + strlen("z0,"), nullptr, 16);
 			if (adr == 0xffffffff) {
-				response = "OK";
+				response = GDB_OK;
 			}
 			else {
+				bool found = false;
 				for (auto& bpn : bpnodes) {
 					if (bpn.enabled && bpn.value1 == adr) {
 						bpn.enabled = 0;
 						trace_mode = 0;
-						print_breakpoints();
-						response = "OK";
+						//print_breakpoints();
+						response = GDB_OK;
+						found = true;
 						break;
 					}
 				}
-				// TODO: error when breakpoint not found
+				if (!found) {
+					barto_log("GDBSERVER: unknown breakpoint at: %x\n", adr);
+					print_breakpoints();
+					response = GDBERROR_INVALID_BREAKPOINT;
+				}
 			}
 		}
 		else {
-			response = "E01";
+			response = GDBERROR_PARSE;
 		}
 		return response;
 	}
@@ -827,6 +859,7 @@ namespace barto_gdbserver {
 			uaecptr adr = strtoul(request.data() + strlen("Z2,"), nullptr, 16);
 			int size = strtoul(request.data() + comma2 + 1, nullptr, 16);
 			barto_log("GDBSERVER: write watchpoint at 0x%x, size 0x%x\n", adr, size);
+			bool proceeded = false;
 			for (auto& mwn : mwnodes) {
 				if (mwn.size)
 					continue;
@@ -846,14 +879,17 @@ namespace barto_gdbserver {
 				mwn.reportonly = false;
 				mwn.nobreak = false;
 				print_watchpoints();
-				response += "OK";
+				response += GDB_OK;
+				proceeded = true;
 				break;
 			}
 			memwatch_setup();
-			// TODO: error when too many watchpoints!
+			if (!proceeded) {
+				response = GDBERROR_MAX_BREAKPOINTS_REACHED;
+			}
 		}
 		else {
-			response += "E01";
+			response += GDBERROR_PARSE;
 		}
 		return response;
 	}
@@ -863,20 +899,24 @@ namespace barto_gdbserver {
 		auto comma = request.find(',', strlen("z2"));
 		if (comma != std::string::npos) {
 			uaecptr adr = strtoul(request.data() + strlen("z2,"), nullptr, 16);
+			bool found = false;
 			for (auto& mwn : mwnodes) {
 				if (mwn.size && mwn.addr == adr) {
 					mwn.size = 0;
 					trace_mode = 0;
 					print_watchpoints();
-					response = "OK";
+					response = GDB_OK;
+					found = true;
 					break;
 				}
-				// TODO: error when watchpoint not found
 			}
 			memwatch_setup();
+			if (!found) {
+				response = GDBERROR_INVALID_BREAKPOINT;
+			}
 		}
 		else {
-			response = "E01";
+			response = GDBERROR_PARSE;
 		}
 		return response;
 	}
@@ -920,7 +960,7 @@ namespace barto_gdbserver {
 					auto data = debug_read_memory_8_no_custom(adr);
 					if (data == -1) {
 						barto_log("GDBSERVER: error reading memory at 0x%x\n", len, adr);
-						response = "E01";
+						response = GDBERROR_PROCESSING;
 						mem.clear();
 						break;
 					}
@@ -935,7 +975,7 @@ namespace barto_gdbserver {
 			}
 		}
 		else {
-			response = "E01";
+			response = GDBERROR_PARSE;
 		}
 		return response;
 	}
@@ -968,12 +1008,12 @@ namespace barto_gdbserver {
 
 	/**
 	 * Handles a set memory request
-	 * �M addr,length:XX��
-	 *   Write length addressable memory units starting at address addr (see addressable memory unit). The data is given by XX�; each byte is transmitted as a two-digit hexadecimal number.
+	 * `M addr,length:XX`
+	 *   Write length addressable memory units starting at address addr (see addressable memory unit). The data is given by XX`; each byte is transmitted as a two-digit hexadecimal number.
 	 *   Reply:
-	 *   �OK�
+	 *   `OK`
 	 *       for success
-	 *   �E NN�
+	 *   `E NN`
 	 *       for an error (this includes the case where only part of the data was written).
 	 */
 	static std::string handle_write_memory(const std::string& request) {
@@ -988,27 +1028,27 @@ namespace barto_gdbserver {
 			for (int i = 0; i < mem.length(); i++)
 			{
 				if (!safe_addr(address, 1)) {
-					return "E1";
+					return GDBERROR_INVALID_MEMORY_LOCATION;
 				}
 				uae_u8 t = *(mem.data() + i);
 				put_byte(address++, t);
 			}
 		}
 		else {
-			return "E1";
+			return GDBERROR_PARSE;
 		}
-		return "OK";
+		return GDB_OK;
 	}
 
 
 	/**
 	 * Reponse to the qfThreadInfo
 	 * Reply:
-	 *     �m thread-id�
+	 *     `m thread-id`
 	 *   A single thread ID
-	 *		�m thread-id,thread-id��
+	 *		`m thread-id,thread-id`
 	 *   a comma-separated list of thread IDs
-	 *		�l�
+	 *		`l`
 	 * @param packet Containing the request
 	 * @return true if the response was sent without error
 	 */
@@ -1022,12 +1062,12 @@ namespace barto_gdbserver {
 	/**
 	 * Handles a QTFrame command
 	 * ! Partial implementation : Not real tracepoint implentation
-	 *�QTFrame:n�
-	 *   Select the n�th tracepoint frame from the buffer, and use the register and memory contents recorded there to answer subsequent request packets from GDB.
+	 *`QTFrame:n`
+	 *   Select the n`th tracepoint frame from the buffer, and use the register and memory contents recorded there to answer subsequent request packets from GDB.
 	 *   A successful reply from the stub indicates that the stub has found the requested frame. The response is a series of parts, concatenated without separators, describing the frame we selected. Each part has one of the following forms:
-	 *   �F f�
-	 *       The selected frame is number n in the trace frame buffer; f is a hexadecimal number. If f is �-1�, then there was no frame matching the criteria in the request packet.
-	 *   �T t�
+	 *   `F f`
+	 *       The selected frame is number n in the trace frame buffer; f is a hexadecimal number. If f is `-1`, then there was no frame matching the criteria in the request packet.
+	 *   `T t`
 	 *       The selected trace frame records a hit of tracepoint number t; t is a hexadecimal number.
 	 * @param packet Containing the request
 	 * @return true if the response was sent without error
@@ -1042,7 +1082,7 @@ namespace barto_gdbserver {
 		tfnum = strtoul(request.data() + strlen("QTFrame:"), nullptr, 16);
 		if (tfnum < 0) {
 			current_traceframe = DEFAULT_TRACEFRAME;
-			response = "OK";
+			response = GDB_OK;
 		}
 		else {
 			tframe = debugmem_find_traceframe(false, tfnum, &tfnum_found);
@@ -1067,38 +1107,38 @@ namespace barto_gdbserver {
 	}
 
 	/**
-	* �qTStatus�
+	* `qTStatus`
     Ask the stub if there is a trace experiment running right now.
     The reply has the form:
-    �Trunning[;field]��
+    `Trunning[;field]`
         running is a single digit 1 if the trace is presently running, or 0 if not. It is followed by semicolon-separated optional fields that an agent may use to report additional status.
     If the trace is not running, the agent may report any of several explanations as one of the optional fields:
-    �tnotrun:0�
+    `tnotrun:0`
         No trace has been run yet.
-    �tstop[:text]:0�
+    `tstop[:text]:0`
         The trace was stopped by a user-originated stop command. The optional text field is a user-supplied string supplied as part of the stop command (for instance, an explanation of why the trace was stopped manually). It is hex-encoded.
-    �tfull:0�
+    `tfull:0`
         The trace stopped because the trace buffer filled up.
-    �tdisconnected:0�
+    `tdisconnected:0`
         The trace stopped because GDB disconnected from the target.
-    �tpasscount:tpnum�
+    `tpasscount:tpnum`
         The trace stopped because tracepoint tpnum exceeded its pass count.
-    �terror:text:tpnum�
+    `terror:text:tpnum`
         The trace stopped because tracepoint tpnum had an error. The string text is available to describe the nature of the error (for instance, a divide by zero in the condition expression); it is hex encoded.
-    �tunknown:0�
+    `tunknown:0`
         The trace stopped for some other reason.
     Additional optional fields supply statistical and other information. Although not required, they are extremely useful for users monitoring the progress of a trace run. If a trace has stopped, and these numbers are reported, they must reflect the state of the just-stopped trace.
-    �tframes:n�
+    `tframes:n`
         The number of trace frames in the buffer.
-    �tcreated:n�
+    `tcreated:n`
         The total number of trace frames created during the run. This may be larger than the trace frame count, if the buffer is circular.
-    �tsize:n�
+    `tsize:n`
         The total size of the trace buffer, in bytes.
-    �tfree:n�
+    `tfree:n`
         The number of bytes still unused in the buffer.
-    �circular:n�
+    `circular:n`
         The value of the circular trace buffer flag. 1 means that the trace buffer is circular and old trace frames will be discarded if necessary to make room, 0 means that the trace buffer is linear and may fill up.
-    �disconn:n�
+    `disconn:n`
         The value of the disconnected tracing flag. 1 means that tracing will continue after GDB disconnects, 0 means that the trace run will stop.
 	*/
 	std::string handle_qtstatus() {
@@ -1148,7 +1188,7 @@ namespace barto_gdbserver {
 								} else if(request.substr(0, strlen("QStartNoAckMode")) == "QStartNoAckMode") {
 									send_ack(ack);
 									useAck = false;
-									response += "OK";
+									response += GDB_OK;
 								} else if(request.substr(0, strlen("qfThreadInfo")) == "qfThreadInfo") {
 									response += handle_qfthreadinfo();
 								} else if(request.substr(0, strlen("qsThreadInfo")) == "qsThreadInfo") {
@@ -1156,11 +1196,11 @@ namespace barto_gdbserver {
 								} else if (request.substr(0, strlen("QTFrame")) == "QTFrame") {
 									response += handle_qtframe(request);
 								} else if (request.substr(0, strlen("QTinit")) == "QTinit") {
-									response += "OK";
+									response += GDB_OK;
 								} else if (request.substr(0, strlen("QTStop")) == "QTStop") {
-									response += "OK";
+									response += GDB_OK;
 								} else if (request.substr(0, strlen("QTStart")) == "QTStart") {
-									response += "OK";
+									response += GDB_OK;
 								} else if (request.substr(0, strlen("qTStatus")) == "qTStatus") {
 									response += handle_qtstatus();
 								} else if(request.substr(0, strlen("qC")) == "qC") {
@@ -1190,19 +1230,19 @@ namespace barto_gdbserver {
 										response += get_registers(tid);
 									}
 									else {
-										response += "OK";
+										response += GDB_OK;
 									}
 								} else if(request[0] == 'T') {
-									response += "OK";
+									response += GDB_OK;
 /*								} else if(request.substr(0, strlen("vRun")) == "vRun") {
 									debugger_state = state::wait_for_process;
 									activate_debugger();
 									send_ack(ack);
 									return;
 */								} else if(request[0] == 'D') { // detach
-									response += "OK";
+									response += GDB_OK;
 /*								} else if(request[0] == '!') { // enable extended mode
-									response += "OK";
+									response += GDB_OK;
 */								} else if(request[0] == '?') { // reason for stopping
 									response += "S05"; // SIGTRAP
 								} else if(request[0] == 's') { // single-step
