@@ -1069,7 +1069,7 @@ namespace barto_gdbserver {
 	 *       The selected frame is number n in the trace frame buffer; f is a hexadecimal number. If f is `-1`, then there was no frame matching the criteria in the request packet.
 	 *   `T t`
 	 *       The selected trace frame records a hit of tracepoint number t; t is a hexadecimal number.
-	 * @param packet Containing the request
+	 * @param request Containing the request
 	 * @return true if the response was sent without error
 	 */
 	std::string handle_qtframe(const std::string& request)
@@ -1144,6 +1144,37 @@ namespace barto_gdbserver {
 	std::string handle_qtstatus() {
 		string tframe_count = hex8(debugmem_get_traceframe_count(false));
 		return "T1;tstop::0;tframes:" + tframe_count + ";tcreated:" + tframe_count + ";tfree:ffffff;tsize:50*!;circular:1;disconn:1;starttime:;stoptime:;username:;notes::";
+	}
+
+	/**
+	 * Handles set breakpoint request for an exception
+	 * The message is Z1,0,0;Xf,nnnnnnnnnnnnnnnn
+	 *  address is 0 : not used
+	 *  One parameter with 16 chars is the 64bit mask for exception filtering
+	 * @param packet Packet of the request
+	 * @return true if the response was sent without error
+	 */
+	std::string handle_set_exception_breakpoint(const std::string& request) {
+		auto last_comma = request.find_last_of(",");
+		if (last_comma != std::string::npos) {
+			debug_illegal = 1;
+			debug_illegal_mask = strtoul(request.data() + last_comma + 1, nullptr, 16);
+			return GDB_OK;
+		}
+	}
+
+	/**
+	 * Handles set breakpoint request for an exception
+	 * The message is z1,0,0;Xf,nnnnnnnnnnnnnnnn
+	 *  address is 0 : not used
+	 *  One parameter with 16 chars is the 64bit mask for exception filtering
+	 * @param packet Packet of the request
+	 * @return true if the response was sent without error
+	 */
+	std::string handle_clear_exception_breakpoint(const std::string& request) {
+		debug_illegal = 0;
+		debug_illegal_mask = 0;
+		return GDB_OK;
 	}
 
 	void handle_packet() {
@@ -1260,6 +1291,12 @@ namespace barto_gdbserver {
 								else if (request.substr(0, 2) == "z0") { // clear software breakpoint
 									response += handle_clear_breakpoint(request);
 								}
+								else if (request.substr(0, 2) == "Z1") { // set exception breakpoint
+									response += handle_set_exception_breakpoint(request);
+								}
+								else if (request.substr(0, 2) == "z1") { // clear exception breakpoint
+									response += handle_clear_exception_breakpoint(request);
+								}								
 								else if (request.substr(0, 2) == "Z2" || request.substr(0, 2) == "Z3" || request.substr(0, 2) == "Z4") { // Z2: write watchpoint, Z3: read watchpoint, Z4: access watchpoint
 									response += handle_set_watchpoint(request);
 								}
