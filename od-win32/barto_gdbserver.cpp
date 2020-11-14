@@ -1157,6 +1157,7 @@ namespace barto_gdbserver {
 	std::string handle_set_exception_breakpoint(const std::string& request) {
 		auto last_comma = request.find_last_of(",");
 		if (last_comma != std::string::npos) {
+			exception_debugging = 1;
 			debug_illegal = 1;
 			debug_illegal_mask = strtoul(request.data() + last_comma + 1, nullptr, 16);
 			return GDB_OK;
@@ -1172,6 +1173,7 @@ namespace barto_gdbserver {
 	 * @return true if the response was sent without error
 	 */
 	std::string handle_clear_exception_breakpoint(const std::string& request) {
+		exception_debugging = 0;
 		debug_illegal = 0;
 		debug_illegal_mask = 0;
 		return GDB_OK;
