@@ -4009,7 +4009,7 @@ struct debugstackframe* debugmem_find_traceframe(bool super, int num, int* tfnum
 		int cnt = super ? stackframecntsuper : stackframecnt;
 		if (cnt > 0)
 		{
-			if (num <= 0)
+			if (num < 0)
 			{
 				// asking for last frame
 				*tfnump = cnt - 1;

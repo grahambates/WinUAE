@@ -1089,11 +1089,11 @@ namespace barto_gdbserver {
 			if (tframe)
 			{
 				current_traceframe = tfnum_found;
-				if (tfnum_found < 0)
+				if ((tfnum_found < 0) || (tfnum != tfnum_found))
 				{
 					response = "F-1";
 				}
-				else
+				else 
 				{
 					response = "F" + hex8(tfnum_found) + "T1";
 				}
