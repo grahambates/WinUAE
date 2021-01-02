@@ -175,6 +175,7 @@ namespace barto_gdbserver {
 	int current_traceframe = DEFAULT_TRACEFRAME;
 	#define THREAD_ID_CPU    1		// Id for the cpu thread
 	#define THREAD_ID_COPPER 2		// Id for the copper thread
+	std::string stop_signal;
 
 	enum class state {
 		inited,
@@ -342,6 +343,7 @@ namespace barto_gdbserver {
 			// need to byteswap because GDB expects 68k big-endian
 			switch (reg) {
 			case SR:
+				MakeSR();
 				regvalue = regs.sr;
 				break;
 			case PC:
@@ -754,6 +756,7 @@ namespace barto_gdbserver {
 			else if (action[0] == 't') { // Pause 
 				debugger_state = state::debugging;
 				activate_debugger();
+				stop_signal = "S05";
 				response = "S05"; // SIGTRAP
 			}
 			else {
@@ -798,11 +801,12 @@ namespace barto_gdbserver {
 					bpn.type = BREAKPOINT_REG_PC;
 					bpn.oper = BREAKPOINT_CMP_EQUAL;
 					bpn.enabled = 1;
-					trace_mode = 0;
-					print_breakpoints();
+					trace_mode = TRACE_CHECKONLY;
+					//print_breakpoints();
 					response = GDB_OK;
 					break;
 				}
+				response = GDB_OK;
 			}
 		}
 		else {
@@ -824,7 +828,7 @@ namespace barto_gdbserver {
 				for (auto& bpn : bpnodes) {
 					if (bpn.enabled && bpn.value1 == adr) {
 						bpn.enabled = 0;
-						trace_mode = 0;
+						trace_mode = TRACE_CHECKONLY;
 						//print_breakpoints();
 						response = GDB_OK;
 						found = true;
@@ -903,7 +907,7 @@ namespace barto_gdbserver {
 			for (auto& mwn : mwnodes) {
 				if (mwn.size && mwn.addr == adr) {
 					mwn.size = 0;
-					trace_mode = 0;
+					trace_mode = TRACE_CHECKONLY;
 					print_watchpoints();
 					response = GDB_OK;
 					found = true;
@@ -1277,7 +1281,7 @@ namespace barto_gdbserver {
 /*								} else if(request[0] == '!') { // enable extended mode
 									response += GDB_OK;
 */								} else if(request[0] == '?') { // reason for stopping
-									response += "S05"; // SIGTRAP
+									response += stop_signal; // SIGTRAP
 								} else if(request[0] == 's') { // single-step
 									assert(!"should have used vCont;s");
 								} else if(request[0] == 'c') { // continue
@@ -1716,6 +1720,7 @@ start_profile:
 			}
 
 			std::string response{ "S05" };
+			stop_signal = "S05";
 			if (debug_copper & 8) {
 				// copper debugging
 				debug_copper &= ~8;
@@ -1728,6 +1733,7 @@ start_profile:
 				for(const auto& mwn : mwnodes) {
 					if(mwn.size && mwhit.addr >= mwn.addr && mwhit.addr < mwn.addr + mwn.size) {
 						if(mwn.addr == 0) {
+							stop_signal = "S0B";
 							response = "S0B"; // undefined behavior -> SIGSEGV
 						} else {
 //while(!IsDebuggerPresent()) Sleep(100); __debugbreak();
@@ -1755,21 +1761,25 @@ start_profile:
 					// see binutils-gdb/include/gdb/signals.def for number of signals
 					if(pc == Trap7) {
 						response = "S07"; // TRAP#7 -> SIGEMT
-						// unwind PC & stack for better debugging experience (otherwise we're probably just somewhere in Kickstart)
+						stop_signal = "S07";
+							// unwind PC & stack for better debugging experience (otherwise we're probably just somewhere in Kickstart)
 						regs.pc = regs.instruction_pc_user_exception - 2;
 						m68k_areg(regs, A7 - A0) = regs.usp;
 					} else if(pc == AddressError) {
 						response = "S0A"; // AddressError -> SIGBUS
+						stop_signal = "S0A";
 						// unwind PC & stack for better debugging experience (otherwise we're probably just somewhere in Kickstart)
 						regs.pc = regs.instruction_pc_user_exception; // don't know size of opcode that caused exception
 						m68k_areg(regs, A7 - A0) = regs.usp;
 					} else if(pc == IllegalError) {
 						response = "S04"; // AddressError -> SIGILL
+						stop_signal = "S04";
 						// unwind PC & stack for better debugging experience (otherwise we're probably just somewhere in Kickstart)
 						regs.pc = regs.instruction_pc_user_exception; // don't know size of opcode that caused exception
 						m68k_areg(regs, A7 - A0) = regs.usp;
 					} else {
 						response = "T05swbreak:;";//;thread:" + hex8(THREAD_ID_CPU);
+						stop_signal = "S05";
 					}
 					goto send_response;
 				}
