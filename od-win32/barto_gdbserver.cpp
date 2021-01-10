@@ -175,7 +175,7 @@ namespace barto_gdbserver {
 	int current_traceframe = DEFAULT_TRACEFRAME;
 	#define THREAD_ID_CPU    1		// Id for the cpu thread
 	#define THREAD_ID_COPPER 2		// Id for the copper thread
-	std::string stop_signal;
+	std::string stop_signal = "S05";
 
 	enum class state {
 		inited,
@@ -1079,8 +1079,7 @@ namespace barto_gdbserver {
 	std::string handle_qtframe(const std::string& request)
 	{
 		std::string response;
-		uae_u32 frame, pc, lo, hi, num;
-		int tfnum, tpnum, tfnum_found;
+		int tfnum, tfnum_found;
 		struct debugstackframe* tframe;
 
 		tfnum = strtoul(request.data() + strlen("QTFrame:"), nullptr, 16);
@@ -1165,6 +1164,9 @@ namespace barto_gdbserver {
 			debug_illegal = 1;
 			debug_illegal_mask = strtoul(request.data() + last_comma + 1, nullptr, 16);
 			return GDB_OK;
+		}
+		else {
+			return GDBERROR_PARSE;
 		}
 	}
 

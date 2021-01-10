@@ -29,7 +29,7 @@ bool debugmem_illg(uae_u16);
 void debugmem_flushcache(uaecptr, int);
 
 // Stack frame functions
-typedef struct debugstackframe
+struct debugstackframe
 {
 	uaecptr current_pc;
 	uaecptr branch_pc;
