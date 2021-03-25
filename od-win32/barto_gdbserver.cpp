@@ -31,6 +31,9 @@
 #define GDBERROR_INVALID_BREAKPOINT              "E08" // Unknown breakpoint
 #define GDBERROR_MAX_BREAKPOINTS_REACHED         "E09" // The maximum of breakpoints have been reached
 
+// Size of the communication buffer
+#define BUFFER_SIZE 512
+
 extern BITMAPINFO* screenshot_get_bi();
 extern void* screenshot_get_bits();
 
@@ -1188,7 +1191,7 @@ namespace barto_gdbserver {
 	void handle_packet() {
 		tracker _;
 		if(data_available()) {
-			char buf[512];
+			char buf[BUFFER_SIZE];
 			auto result = recv(gdbconn, buf, sizeof(buf) - 1, 0);
 			if(result > 0) {
 				buf[result] = '\0';
@@ -1221,7 +1224,9 @@ namespace barto_gdbserver {
 								ack = "+";
 								response = "$";
 								if(request.substr(0, strlen("qSupported")) == "qSupported") {
-									response += "PacketSize=512;BreakpointCommands+;swbreak+;hwbreak+;QStartNoAckMode+;vContSupported+;QTFrame+";
+									response += "PacketSize=";
+									response += BUFFER_SIZE;
+									response += ";BreakpointCommands+;swbreak+;hwbreak+;QStartNoAckMode+;vContSupported+;QTFrame+";
 								} else if(request.substr(0, strlen("qAttached")) == "qAttached") {
 									response += "1";
 								} else if(request.substr(0, strlen("QStartNoAckMode")) == "QStartNoAckMode") {
@@ -1576,20 +1581,20 @@ start_profile:
 	}
 
 	void barto_log(const char* format, ...) {
-		char buffer[1024];
+		char buffer[10024];
 		va_list parms;
 		va_start(parms, format);
-		vsprintf(buffer, format, parms);
+		vsnprintf(buffer, 10020, format, parms);
 		OutputDebugStringA(buffer);
 		output(buffer);
 		va_end(parms);
 	}
 
 	void barto_log(const wchar_t* format, ...) {
-		wchar_t buffer[1024];
+		wchar_t buffer[10024];
 		va_list parms;
 		va_start(parms, format);
-		vswprintf(buffer, format, parms);
+		vswprintf(buffer, 10020, format, parms);
 		OutputDebugStringW(buffer);
 		output(string_to_utf8(buffer).c_str());
 		va_end(parms);
