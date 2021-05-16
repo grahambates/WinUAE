@@ -104,6 +104,7 @@
 #include "fsdb.h"
 #include "uae/time.h"
 #include "specialmonitors.h"
+#include "barto_gdbserver.h"
 
 const static GUID GUID_DEVINTERFACE_HID =  { 0x4D1E55B2L, 0xF16F, 0x11CF,
 { 0x88, 0xCB, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30 } };
@@ -3100,6 +3101,7 @@ bool handle_events (void)
 #ifdef RETROPLATFORM
 		rp_vsync ();
 #endif
+		barto_gdbserver::vsync();
 		cnt1 = 0;
 		while (checkIPC (globalipc, &currprefs));
 //		if (quit_program)

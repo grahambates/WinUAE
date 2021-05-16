@@ -823,6 +823,17 @@ namespace barto_gdbserver {
 		}
 	}
 
+	// called during pause_emulation
+	void vsync() {
+		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
+			return;
+
+		if(debugger_state == state::connected && data_available()) {
+			resumepaused(9);
+			// handle_packet will be called in next call to vsync_pre
+		}
+	}
+
 	void vsync_pre() {
 		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
 			return;
