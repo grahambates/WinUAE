@@ -565,6 +565,7 @@ namespace barto_gdbserver {
 										}
 									} else if(cmd == "reset") {
 										savestate_quick(0, 0); // restore state saved at process entry
+										barto_debug_resources_count = 0;
 										response += "OK";
 									} else {
 										// unknown monitor command
