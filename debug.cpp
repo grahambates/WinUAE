@@ -6764,7 +6764,7 @@ void debug (void)
 					if (pc >= trace_param[0] && pc < trace_param[1])
 						bp = -1;
 				} else if(trace_mode == TRACE_NRANGE_PC) { // BARTO
-					if(pc < trace_param1 || pc >= trace_param2)
+					if(pc < trace_param[0] || pc >= trace_param[1])
 						bp = -1;
 				} else if (trace_mode == TRACE_SKIP_LINE) {
 					if (trace_param[0] != 0)

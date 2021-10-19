@@ -30,17 +30,8 @@ extern struct uae_prefs currprefs;
 extern uae_u8 *get_real_address_debug(uaecptr addr);
 extern void initialize_memwatch(int mode);
 extern void memwatch_setup(void);
-#define TRACE_SKIP_INS 1
-#define TRACE_MATCH_PC 2
-#define TRACE_MATCH_INS 3
-#define TRACE_RANGE_PC 4
-#define TRACE_SKIP_LINE 5
-#define TRACE_RAM_PC 6
-#define TRACE_NRANGE_PC 7
-#define TRACE_CHECKONLY 10
 /*static*/ extern int trace_mode;
-/*static*/ extern uae_u32 trace_param1;
-/*static*/ extern uae_u32 trace_param2;
+/*static*/ extern uae_u32 trace_param[3];
 /*static*/ extern uaecptr processptr;
 /*static*/ extern uae_char *processname;
 /*static*/ extern int memwatch_triggered;
@@ -603,7 +594,7 @@ namespace barto_gdbserver {
 											//trace_param1 = nextpc;
 
 											// step in
-											trace_param1 = 1;
+											trace_param[0] = 1;
 											trace_mode = TRACE_SKIP_INS;
 
 											exception_debugging = 1;
@@ -626,8 +617,8 @@ namespace barto_gdbserver {
 												uaecptr start = strtoul(action.data() + 1, nullptr, 16);
 												uaecptr end = strtoul(action.data() + comma + 1, nullptr, 16);
 												trace_mode = TRACE_NRANGE_PC;
-												trace_param1 = start;
-												trace_param2 = end;
+												trace_param[0] = start;
+												trace_param[1] = end;
 												debugger_state = state::connected;
 												send_ack(ack);
 												return;
@@ -666,8 +657,8 @@ namespace barto_gdbserver {
 										if(adr == 0xffffffff) {
 											// step out of kickstart
 											trace_mode = TRACE_RANGE_PC;
-											trace_param1 = 0;
-											trace_param2 = 0xF80000;
+											trace_param[0] = 0;
+											trace_param[1] = 0xF80000;
 											response += "OK";
 										} else {
 											for(auto& bpn : bpnodes) {

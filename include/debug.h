@@ -241,6 +241,7 @@ struct peekdma
 };
 extern struct peekdma peekdma_data;
 
+#pragma pack(1) // BARTO
 struct dma_rec
 {
     uae_u16 reg;
@@ -253,6 +254,7 @@ struct dma_rec
 	uae_s8 intlev;
 	uae_u16 cf_reg, cf_dat, cf_addr;
 };
+#pragma pack() // BARTO
 
 extern struct dma_rec *last_dma_rec;
 
@@ -311,6 +313,7 @@ extern void debug_draw(uae_u8 *buf, int bpp, int line, int width, int height, ua
 #define TRACE_RANGE_PC 4
 #define TRACE_SKIP_LINE 5
 #define TRACE_RAM_PC 6
+#define TRACE_NRANGE_PC 7 //BARTO
 #define TRACE_CHECKONLY 10
 
 #else
