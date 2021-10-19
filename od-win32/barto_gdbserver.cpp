@@ -556,6 +556,7 @@ namespace barto_gdbserver {
 										}
 									} else if(cmd == "reset") {
 										savestate_quick(0, 0); // restore state saved at process entry
+										barto_debug_resources_count = 0;
 										response += "OK";
 									} else {
 										// unknown monitor command
@@ -811,6 +812,17 @@ namespace barto_gdbserver {
 			debugger_state = state::inited;
 			close();
 			deactivate_debugger();
+		}
+	}
+
+	// called during pause_emulation
+	void vsync() {
+		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
+			return;
+
+		if(debugger_state == state::connected && data_available()) {
+			resumepaused(9);
+			// handle_packet will be called in next call to vsync_pre
 		}
 	}
 
