@@ -181,7 +181,7 @@ static int openprinter_ps (void)
 	return 1;
 }
 
-static void *prt_thread (void *p)
+static void prt_thread (void *p)
 {
 	uae_u8 **buffers = (uae_u8**)p;
 	int err, cnt, ok;
@@ -223,7 +223,6 @@ static void *prt_thread (void *p)
 	}
 	unload_ghostscript ();
 	prt_running--;
-	return 0;
 }
 
 static int doflushprinter (void)
@@ -623,7 +622,24 @@ int uaeser_setparams (void *vsd, int baud, int rbuffer, int bits, int sbits, int
 	dcb.fBinary = TRUE;
 	dcb.BaudRate = baud;
 	dcb.ByteSize = bits;
-	dcb.Parity = parity == 0 ? NOPARITY : (parity == 1 ? ODDPARITY : EVENPARITY);
+	switch (parity)
+	{
+	case 1:
+		dcb.Parity = ODDPARITY;
+		break;
+	case 2:
+		dcb.Parity = EVENPARITY;
+		break;
+	case 3:
+		dcb.Parity = MARKPARITY;
+		break;
+	case 4:
+		dcb.Parity = SPACEPARITY;
+		break;
+	default:
+		dcb.Parity = NOPARITY;
+		break;
+	}
 	dcb.fParity = FALSE;
 	dcb.StopBits = sbits == 1 ? ONESTOPBIT : TWOSTOPBITS;
 
@@ -668,7 +684,7 @@ static void startwce(struct uaeserialdatawin32 *sd, DWORD *evtmask)
 	WaitCommEvent(sd->hCom, evtmask, &sd->olwce);
 }
 
-static void *uaeser_trap_thread (void *arg)
+static void uaeser_trap_thread (void *arg)
 {
 	struct uaeserialdatawin32 *sd = (struct uaeserialdatawin32*)arg;
 	HANDLE handles[4];
@@ -710,7 +726,6 @@ static void *uaeser_trap_thread (void *arg)
 	}
 	sd->threadactive = 0;
 	uae_sem_post (&sd->sync_sem);
-	return 0;
 }
 
 void uaeser_trigger (void *vsd)
@@ -1291,7 +1306,6 @@ void serialuartbreak (int v)
 
 void getserstat (int *pstatus)
 {
-	DWORD err;
 	DWORD stat;
 	int status = 0;
 

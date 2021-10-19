@@ -69,6 +69,7 @@
     <CharacterSet>Unicode</CharacterSet>
     <PlatformToolset>v142</PlatformToolset>
     <SpectreMitigation>false</SpectreMitigation>
+    <EnableASAN>false</EnableASAN>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='FullRelease|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -98,6 +99,7 @@
     <CharacterSet>Unicode</CharacterSet>
     <PlatformToolset>v142</PlatformToolset>
     <SpectreMitigation>false</SpectreMitigation>
+    <EnableASAN>false</EnableASAN>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -236,7 +238,7 @@
       <OmitFramePointers>true</OmitFramePointers>
       <WholeProgramOptimization>false</WholeProgramOptimization>
       <AdditionalIncludeDirectories>..\..\include;..\..;..\;..\resources;..\osdep;..\sounddep;..\..\prowizard\include;..\..\slirp;..\..\ppc\pearpc;:%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>WINVER=0x0601;NDEBUG;_WIN32_IE=0x0700;WIN32;UAE;WINUAE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WINVER=0x0601;NDEBUG;_WIN32_IE=0x0700;WIN32;UAE;WINUAE;__i386__;_HAS_STD_BYTE=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
       <ExceptionHandling>Sync</ExceptionHandling>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -245,7 +247,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
       <FloatingPointModel>Fast</FloatingPointModel>
-      <TreatWChar_tAsBuiltInType>false</TreatWChar_tAsBuiltInType>
+      <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <PrecompiledHeader>
       </PrecompiledHeader>
@@ -260,13 +262,19 @@
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ForcedIncludeFiles>%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalOptions>/Zc:strictStrings- %(AdditionalOptions)</AdditionalOptions>
+      <LanguageStandard_C>Default</LanguageStandard_C>
+      <ConformanceMode>false</ConformanceMode>
+      <EnforceTypeConversionRules>
+      </EnforceTypeConversionRules>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Culture>0x0409</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;winio.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;libpng16.lib;lglcd.lib;openal32.lib;portaudio_x86.lib;vfw32.lib;wtsapi32.lib;enet.lib;lzmalib.lib;prowizard.lib;libFLAC_static.lib;hid.lib;zlibstat.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;winio.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;libpng16.lib;lglcd.lib;openal32.lib;portaudio_x86.lib;vfw32.lib;wtsapi32.lib;enet.lib;lzmalib.lib;prowizard.lib;libFLAC_static.lib;hid.lib;zlibstat.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;effects11.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories);$(SolutionDir)\..\lib\</AdditionalLibraryDirectories>
@@ -340,13 +348,14 @@
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ForcedIncludeFiles>%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Culture>0x0409</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;winio.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;libpng16.lib;lglcd.lib;openal32.lib;portaudio_x86.lib;vfw32.lib;wtsapi32.lib;enet.lib;lzmalib.lib;prowizard.lib;libFLAC_static.lib;hid.lib;zlibstat.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;winio.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;libpng16.lib;lglcd.lib;openal32.lib;portaudio_x86.lib;vfw32.lib;wtsapi32.lib;enet.lib;lzmalib.lib;prowizard.lib;libFLAC_static.lib;hid.lib;zlibstat.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;effects11.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories);$(SolutionDir)\..\lib\</AdditionalLibraryDirectories>
@@ -396,7 +405,7 @@
       <OmitFramePointers>false</OmitFramePointers>
       <WholeProgramOptimization>false</WholeProgramOptimization>
       <AdditionalIncludeDirectories>..\..\include;..\..;..\;..\resources;..\osdep;..\sounddep;..\..\prowizard\include;..\..\slirp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>WINVER=0x0601;_WIN32_IE=0x0700;WIN32;UAE;WINUAE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WINVER=0x0601;_WIN32_IE=0x0700;WIN32;UAE;WINUAE;__i386__;_HAS_STD_BYTE=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
       <ExceptionHandling>Sync</ExceptionHandling>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
@@ -405,7 +414,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
       <FloatingPointModel>Fast</FloatingPointModel>
-      <TreatWChar_tAsBuiltInType>false</TreatWChar_tAsBuiltInType>
+      <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <PrecompiledHeader>
       </PrecompiledHeader>
@@ -420,13 +429,15 @@
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ForcedIncludeFiles>%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalOptions>/Zc:strictStrings- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Culture>0x0409</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;winio.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;libpng16.lib;lglcd.lib;openal32.lib;portaudio_x86.lib;vfw32.lib;wtsapi32.lib;enet.lib;lzmalib.lib;prowizard.lib;libFLAC_static.lib;hid.lib;zlibstat.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;winio.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;libpng16.lib;lglcd.lib;openal32.lib;portaudio_x86.lib;vfw32.lib;wtsapi32.lib;enet.lib;lzmalib.lib;prowizard.lib;libFLAC_static.lib;hid.lib;zlibstat.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;effects11.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories);$(SolutionDir)\..\lib\</AdditionalLibraryDirectories>
@@ -476,7 +487,7 @@
       <OmitFramePointers>true</OmitFramePointers>
       <WholeProgramOptimization>false</WholeProgramOptimization>
       <AdditionalIncludeDirectories>..\..\include;..\..;..\;..\resources;..\osdep;..\sounddep;..\..\slirp;..\..\ppc\pearpc;..\..\ppc\pearpc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>WINVER=0x0601;NDEBUG;_WIN32_IE=0x0700;WIN32;WIN64;PTR64;UAE;WINUAE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WINVER=0x0601;NDEBUG;_WIN32_IE=0x0700;WIN32;WIN64;PTR64;UAE;WINUAE;_HAS_STD_BYTE=0;SAHF_SETO_PROFITABLE;__amd64__;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
       <ExceptionHandling>Sync</ExceptionHandling>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -499,13 +510,15 @@
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ForcedIncludeFiles>%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalOptions>/Zc:strictStrings- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Culture>0x0409</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;vfw32.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;zlibstat.lib;portaudio_x64.lib;openal32.lib;libpng16.lib;lglcd.lib;wtsapi32.lib;enet_x64.lib;prowizard_x64.lib;lzmalib.lib;libFLAC_static.lib;hid.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;vfw32.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;zlibstat.lib;portaudio_x64.lib;openal32.lib;libpng16.lib;lglcd.lib;wtsapi32.lib;enet_x64.lib;prowizard_x64.lib;lzmalib.lib;libFLAC_static.lib;hid.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;effects11.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ShowProgress>NotSet</ShowProgress>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
@@ -581,7 +594,7 @@
       <Culture>0x0409</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;vfw32.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;zlibstat.lib;portaudio_x64.lib;openal32.lib;libpng16.lib;lglcd.lib;wtsapi32.lib;enet_x64.lib;prowizard_x64.lib;lzmalib.lib;libFLAC_static.lib;hid.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;vfw32.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;zlibstat.lib;portaudio_x64.lib;openal32.lib;libpng16.lib;lglcd.lib;wtsapi32.lib;enet_x64.lib;prowizard_x64.lib;lzmalib.lib;libFLAC_static.lib;hid.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;effects11.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ShowProgress>NotSet</ShowProgress>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
@@ -628,7 +641,7 @@
       <OmitFramePointers>false</OmitFramePointers>
       <WholeProgramOptimization>false</WholeProgramOptimization>
       <AdditionalIncludeDirectories>..\..\include;..\..;..\;..\resources;..\osdep;..\sounddep;..\..\slirp;..\..\ppc\pearpc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>WINVER=0x0601;NDEBUG;_WIN32_IE=0x0700;WIN32;WIN64;PTR64;UAE;WINUAE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WINVER=0x0601;NDEBUG;_WIN32_IE=0x0700;WIN32;WIN64;PTR64;UAE;WINUAE;_HAS_STD_BYTE=0;SAHF_SETO_PROFITABLE;__amd64__;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
       <ExceptionHandling>Sync</ExceptionHandling>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -651,13 +664,15 @@
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ForcedIncludeFiles>%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalOptions>/Zc:strictStrings- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Culture>0x0409</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;vfw32.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;zlibstat.lib;portaudio_x64.lib;openal32.lib;libpng16.lib;lglcd.lib;wtsapi32.lib;enet_x64.lib;prowizard_x64.lib;lzmalib.lib;libFLAC_static.lib;hid.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;vfw32.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;zlibstat.lib;portaudio_x64.lib;openal32.lib;libpng16.lib;lglcd.lib;wtsapi32.lib;enet_x64.lib;prowizard_x64.lib;lzmalib.lib;libFLAC_static.lib;hid.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;effects11.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ShowProgress>NotSet</ShowProgress>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
@@ -696,14 +711,14 @@
       <TypeLibraryName>.\Release/winuae_msvc.tlb</TypeLibraryName>
     </Midl>
     <ClCompile>
-      <Optimization>Full</Optimization>
+      <Optimization>MaxSpeed</Optimization>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <OmitFramePointers>true</OmitFramePointers>
       <WholeProgramOptimization>true</WholeProgramOptimization>
       <AdditionalIncludeDirectories>..\..\include;..\..;..\;..\resources;..\osdep;..\sounddep;..\..\prowizard\include;..\..\slirp;..\..\ppc\pearpc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>WINVER=0x0601;NDEBUG;_WIN32_IE=0x0700;WIN32;UAE;WINUAE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WINVER=0x0601;NDEBUG;_WIN32_IE=0x0700;WIN32;UAE;WINUAE;__i386__;_HAS_STD_BYTE=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
       <ExceptionHandling>Sync</ExceptionHandling>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -727,13 +742,15 @@
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ForcedIncludeFiles>%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalOptions>/Zc:strictStrings- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Culture>0x0409</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;winio.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;zlibstat.lib;libpng16.lib;lglcd.lib;openal32.lib;portaudio_x86.lib;vfw32.lib;wtsapi32.lib;enet.lib;prowizard.lib;lzmalib.lib;libFLAC_static.lib;hid.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;winio.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;libpng16.lib;lglcd.lib;openal32.lib;portaudio_x86.lib;vfw32.lib;wtsapi32.lib;enet.lib;lzmalib.lib;prowizard.lib;libFLAC_static.lib;hid.lib;zlibstat.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;effects11.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories);$(SolutionDir)\..\lib\</AdditionalLibraryDirectories>
@@ -775,14 +792,14 @@
       <TypeLibraryName>.\Release/winuae_msvc.tlb</TypeLibraryName>
     </Midl>
     <ClCompile>
-      <Optimization>Full</Optimization>
+      <Optimization>MaxSpeed</Optimization>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <OmitFramePointers>true</OmitFramePointers>
       <WholeProgramOptimization>true</WholeProgramOptimization>
       <AdditionalIncludeDirectories>..\..\include;..\..;..\;..\resources;..\osdep;..\sounddep;..\..\slirp;..\..\ppc\pearpc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>WINVER=0x0601;NDEBUG;_WIN32_IE=0x0700;WIN32;WIN64;PTR64;UAE;WINUAE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WINVER=0x0601;NDEBUG;_WIN32_IE=0x0700;WIN32;WIN64;PTR64;UAE;WINUAE;_HAS_STD_BYTE=0;SAHF_SETO_PROFITABLE;__amd64__;FX11;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
       <ExceptionHandling>Sync</ExceptionHandling>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -806,13 +823,15 @@
       <DisableSpecificWarnings>4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <ForcedIncludeFiles>%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalOptions>/Zc:strictStrings- %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Culture>0x0409</Culture>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;vfw32.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;zlibstat.lib;portaudio_x64.lib;openal32.lib;libpng16.lib;lglcd.lib;wtsapi32.lib;enet_x64.lib;prowizard_x64.lib;lzmalib.lib;libFLAC_static.lib;hid.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ws2_32.lib;ddraw.lib;dxguid.lib;winmm.lib;comctl32.lib;version.lib;vfw32.lib;msacm32.lib;dsound.lib;dinput8.lib;d3d9.lib;d3dx9.lib;setupapi.lib;wininet.lib;dxerr.lib;shlwapi.lib;zlibstat.lib;portaudio_x64.lib;openal32.lib;libpng16.lib;lglcd.lib;wtsapi32.lib;enet_x64.lib;prowizard_x64.lib;lzmalib.lib;libFLAC_static.lib;hid.lib;Iphlpapi.lib;luastatic.lib;libmpeg2_ff.lib;softfloat.lib;gdiplus.lib;effects11.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ShowProgress>NotSet</ShowProgress>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <SuppressStartupBanner>true</SuppressStartupBanner>
@@ -912,6 +931,7 @@
     <ClCompile Include="..\..\ethernet.cpp" />
     <ClCompile Include="..\..\events.cpp" />
     <ClCompile Include="..\..\flashrom.cpp" />
+    <ClCompile Include="..\..\floppybridge\floppybridge_lib.cpp" />
     <ClCompile Include="..\..\fpp_native.cpp" />
     <ClCompile Include="..\..\fpp_softfloat.cpp" />
     <ClCompile Include="..\..\framebufferboards.cpp" />
@@ -929,6 +949,7 @@
     <ClCompile Include="..\..\ncr9x_scsi.cpp" />
     <ClCompile Include="..\..\newcpu_common.cpp" />
     <ClCompile Include="..\..\pcem\386.cpp" />
+    <ClCompile Include="..\..\pcem\386_common.cpp" />
     <ClCompile Include="..\..\pcem\386_dynarec.cpp" />
     <ClCompile Include="..\..\pcem\808x.cpp" />
     <ClCompile Include="..\..\pcem\cpu.cpp" />
@@ -940,8 +961,8 @@
     <ClCompile Include="..\..\pcem\mem.cpp" />
     <ClCompile Include="..\..\pcem\mouse_ps2.cpp" />
     <ClCompile Include="..\..\pcem\mouse_serial.cpp" />
+    <ClCompile Include="..\..\pcem\nvr.cpp" />
     <ClCompile Include="..\..\pcem\pcemglue.cpp" />
-    <ClCompile Include="..\..\pcem\pcemnvr.cpp" />
     <ClCompile Include="..\..\pcem\pcemrtc.cpp" />
     <ClCompile Include="..\..\pcem\pic.cpp" />
     <ClCompile Include="..\..\pcem\pit.cpp" />
@@ -954,8 +975,26 @@
     <ClCompile Include="..\..\pcem\sound_sb_dsp.cpp" />
     <ClCompile Include="..\..\pcem\sound_speaker.cpp" />
     <ClCompile Include="..\..\pcem\timer.cpp" />
+    <ClCompile Include="..\..\pcem\vid_cl5429.cpp" />
+    <ClCompile Include="..\..\pcem\vid_s3.cpp" />
+    <ClCompile Include="..\..\pcem\vid_s3_virge.cpp" />
+    <ClCompile Include="..\..\pcem\vid_sdac_ramdac.cpp" />
+    <ClCompile Include="..\..\pcem\vid_svga.cpp" />
+    <ClCompile Include="..\..\pcem\vid_svga_render.cpp" />
+    <ClCompile Include="..\..\pcem\vid_voodoo.cpp" />
+    <ClCompile Include="..\..\pcem\vid_voodoo_banshee.cpp" />
+    <ClCompile Include="..\..\pcem\vid_voodoo_banshee_blitter.cpp" />
+    <ClCompile Include="..\..\pcem\vid_voodoo_blitter.cpp" />
+    <ClCompile Include="..\..\pcem\vid_voodoo_display.cpp" />
+    <ClCompile Include="..\..\pcem\vid_voodoo_fb.cpp" />
+    <ClCompile Include="..\..\pcem\vid_voodoo_fifo.cpp" />
+    <ClCompile Include="..\..\pcem\vid_voodoo_reg.cpp" />
+    <ClCompile Include="..\..\pcem\vid_voodoo_render.cpp" />
+    <ClCompile Include="..\..\pcem\vid_voodoo_setup.cpp" />
+    <ClCompile Include="..\..\pcem\vid_voodoo_texture.cpp" />
     <ClCompile Include="..\..\pcem\x86seg.cpp" />
     <ClCompile Include="..\..\pcem\x87.cpp" />
+    <ClCompile Include="..\..\pcem\x87_timings.cpp" />
     <ClCompile Include="..\..\pci.cpp" />
     <ClCompile Include="..\..\ppc\ppc.cpp" />
     <ClCompile Include="..\..\ppc\ppcd.cpp" />
@@ -999,6 +1038,7 @@
     <ClCompile Include="..\..\support\time.cpp" />
     <ClCompile Include="..\..\tabletlibrary.cpp" />
     <ClCompile Include="..\..\test_card.cpp" />
+    <ClCompile Include="..\..\tinyxml2.cpp" />
     <ClCompile Include="..\..\uaenative.cpp" />
     <ClCompile Include="..\..\vm.cpp" />
     <ClCompile Include="..\..\x86.cpp" />
@@ -1021,12 +1061,6 @@
     <ClCompile Include="..\fpp_native_msvc_80bit.cpp" />
     <ClCompile Include="..\fsdb_mywin32.cpp" />
     <ClCompile Include="..\fsdb_win32.cpp" />
-    <ClCompile Include="..\FX11\d3dxGlobal.cpp" />
-    <ClCompile Include="..\FX11\EffectAPI.cpp" />
-    <ClCompile Include="..\FX11\EffectLoad.cpp" />
-    <ClCompile Include="..\FX11\EffectNonRuntime.cpp" />
-    <ClCompile Include="..\FX11\EffectReflection.cpp" />
-    <ClCompile Include="..\FX11\EffectRuntime.cpp" />
     <ClCompile Include="..\hardfile_win32.cpp" />
     <ClCompile Include="..\hq2x_d3d.cpp" />
     <ClCompile Include="..\ioport.cpp" />

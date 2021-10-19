@@ -81,7 +81,7 @@ static struct debuggerpage dbgpage[MAXPAGES];
 static int currpage, pages;
 static int pagetype;
 
-TCHAR *pname[] = { _T("OUT1"), _T("OUT2"), _T("MEM1"), _T("MEM2"), _T("DASM1"), _T("DASM2"), _T("BRKPTS"), _T("MISC"), _T("CUSTOM") };
+const TCHAR *pname[] = { _T("OUT1"), _T("OUT2"), _T("MEM1"), _T("MEM2"), _T("DASM1"), _T("DASM2"), _T("BRKPTS"), _T("MISC"), _T("CUSTOM") };
 static int pstatuscolor[MAXPAGES];
 
 static int dbgwnd_minx = 800, dbgwnd_miny = 600;
@@ -519,7 +519,7 @@ static void ShowBreakpoints(void)
 	for (i = 0; i < BREAKPOINT_TOTAL; i++) {
 		if (!bpnodes[i].enabled)
 			continue;
-		m68k_disasm_2(outbp, sizeof outbp / sizeof (TCHAR), bpnodes[i].value1, NULL, 1, NULL, NULL, 0xffffffff, 0);
+		m68k_disasm_2(outbp, sizeof outbp / sizeof (TCHAR), bpnodes[i].value1, NULL, 0, NULL, 1, NULL, NULL, 0xffffffff, 0);
 		ULBS(outbp);
 		got = 1;
 	}
@@ -575,7 +575,7 @@ static int GetPrevAddr(uae_u32 addr, uae_u32 *prevaddr)
 	dasmaddr = addr - 20;
 	while (dasmaddr < addr) {
 		next = dasmaddr + 2;
-		m68k_disasm_2(NULL, 0, dasmaddr, &next, 1, NULL, NULL, 0xffffffff, 0);
+		m68k_disasm_2(NULL, 0, dasmaddr, NULL, 0, &next, 1, NULL, NULL, 0xffffffff, 0);
 		if (next == addr) {
 			*prevaddr = dasmaddr;
 			return 1;
@@ -607,7 +607,7 @@ static void ShowDasm(int direction)
 	else
 		addr = dbgpage[currpage].dasmaddr;
 	if (direction > 0) {
-		m68k_disasm_2(NULL, 0, addr, &addr, 1, NULL, NULL, 0xffffffff, 0);
+		m68k_disasm_2(NULL, 0, addr, NULL, 0, &addr, 1, NULL, NULL, 0xffffffff, 0);
 		if (!addr || addr < dbgpage[currpage].dasmaddr)
 			addr = dbgpage[currpage].dasmaddr;
 	}
@@ -621,7 +621,7 @@ static void ShowDasm(int direction)
 	lines_old = SendMessage(hDasm, LB_GETCOUNT, 0, 0);
 	lines_new = GetLBOutputLines(hDasm);
 	for (i = 0; i < lines_new; i++) {
-		m68k_disasm_2(out, sizeof out / sizeof (TCHAR), addr, &addr, 1, NULL, NULL, 0xffffffff, 0);
+		m68k_disasm_2(out, sizeof out / sizeof (TCHAR), addr, NULL, 0, &addr, 1, NULL, NULL, 0xffffffff, 0);
 		if (addr > dbgpage[currpage].dasmaddr)
 			UpdateListboxString(hDasm, i, out, FALSE);
 		else
@@ -1012,8 +1012,10 @@ static void ListboxEndEdit(HWND hwnd, BOOL acceptinput)
 	ignore_ws(&p);
 	if ((GetWindowTextLength(hedit) == 0) || (_tcslen(p) == 0))
 		acceptinput = FALSE;
-	while (PeekMessage(&msg, hedit, 0, 0, PM_REMOVE))
-		;
+	while (PeekMessage(&msg, hedit, 0, 0, PM_REMOVE)) {
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
+	}
 	DestroyWindow(hedit);
 	hedit = NULL;
 	if (acceptinput) {
@@ -1768,7 +1770,7 @@ static INT_PTR CALLBACK DebuggerProc (HWND hDlg, UINT message, WPARAM wParam, LP
 			HMONITOR hmon = MonitorFromWindow(hDlg, MONITOR_DEFAULTTONEAREST);
 			if (hmon && GetMonitorInfo(hmon, &mi)) {
 				xoffset = mi.rcWork.left - mi.rcMonitor.left;
-				yoffset = mi.rcWork.top - mi.rcWork.top;
+				yoffset = mi.rcWork.top - mi.rcMonitor.top;
 			}
 			if (GetWindowPlacement (hDlg, &wp)) {
 				r = &wp.rcNormalPosition;

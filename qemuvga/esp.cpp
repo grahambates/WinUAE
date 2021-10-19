@@ -71,7 +71,10 @@ static void esp_raise_irq(ESPState *s)
 {
     if (!(s->rregs[ESP_RSTAT] & STAT_INT)) {
         s->rregs[ESP_RSTAT] |= STAT_INT;
-		esp_raise_ext_irq(s);
+#if ESPLOG
+        write_log("irq->1\n");
+#endif
+        esp_raise_ext_irq(s);
     }
 }
 
@@ -79,7 +82,10 @@ static void esp_lower_irq(ESPState *s)
 {
     if (s->rregs[ESP_RSTAT] & STAT_INT) {
         s->rregs[ESP_RSTAT] &= ~STAT_INT;
-		esp_lower_ext_irq(s);
+#if ESPLOG
+        write_log("irq->0\n");
+#endif
+        esp_lower_ext_irq(s);
     }
 }
 
@@ -87,6 +93,9 @@ static void fas408_raise_irq(ESPState *s)
 {
 	if (!(s->rregs[ESP_REGS + NCR_PSTAT] & NCRPSTAT_SIRQ)) {
 		s->rregs[ESP_REGS + NCR_PSTAT] |= NCRPSTAT_SIRQ;
+#if ESPLOG
+        write_log("irq408->1\n");
+#endif
 		esp_raise_ext_irq(s);
 	}
 }
@@ -95,13 +104,16 @@ static void fas408_lower_irq(ESPState *s)
 {
 	if (s->rregs[ESP_REGS + NCR_PSTAT] & NCRPSTAT_SIRQ) {
 		s->rregs[ESP_REGS + NCR_PSTAT] &= ~NCRPSTAT_SIRQ;
-		esp_lower_ext_irq(s);
+#if ESPLOG
+        write_log("irq408->0\n");
+#endif
+        esp_lower_ext_irq(s);
 	}
 }
 
 static void fas408_check(ESPState *s)
 {
-	if (!s->fas4xxextra)
+	if (!(s->fas4xxextra & 1))
 		return;
 	bool irq = false;
 	int v = 0;
@@ -338,7 +350,7 @@ static void esp_dma_done(ESPState *s)
 	s->dma_counter -= s->dma_len;
     s->rregs[ESP_TCLO] = s->dma_counter;
     s->rregs[ESP_TCMID] = s->dma_counter >> 8;
-	if (s->wregs[ESP_CFG2] & 0x40)
+	if ((s->wregs[ESP_CFG2] & 0x40) || (s->fas4xxextra & 2))
 		s->rregs[ESP_TCHI] = s->dma_counter >> 16;
     
 	esp_raise_irq(s);
@@ -566,7 +578,9 @@ void esp_hard_reset(ESPState *s)
 {
     memset(s->rregs, 0, ESP_REGS);
     memset(s->wregs, 0, ESP_REGS);
-    s->rregs[ESP_TCHI] = s->chip_id;
+    if (!(s->fas4xxextra & 2)) {
+        s->rregs[ESP_TCHI] = s->chip_id;
+    }
     s->ti_size = 0;
     s->ti_rptr = 0;
     s->ti_wptr = 0;
@@ -594,7 +608,7 @@ uint64_t fas408_read_fifo(void *opaque)
 {
 	ESPState *s = (ESPState*)opaque;
 	s->rregs[ESP_FIFO] = 0;
-	if (s->fas4xxextra && (s->wregs[ESP_REGS + NCR_PSTAT] & NCRPSTAT_PIOM) && (s->fas408_buffer_size > 0 || s->fas408_buffer_offset > 0 || (s->rregs[ESP_RSTAT] & STAT_PIO_MASK) == STAT_DO)) {
+	if ((s->fas4xxextra & 1) && (s->wregs[ESP_REGS + NCR_PSTAT] & NCRPSTAT_PIOM) && (s->fas408_buffer_size > 0 || s->fas408_buffer_offset > 0 || (s->rregs[ESP_RSTAT] & STAT_PIO_MASK) == STAT_DO)) {
 		bool refill = true;
 		if (s->ti_size > 128) {
 			s->rregs[ESP_FIFO] = s->async_buf[s->ti_rptr++];
@@ -631,7 +645,7 @@ static uint64_t esp_reg_read2(void *opaque, uint32_t saddr)
 	ESPState *s = (ESPState*)opaque;
 	uint32_t old_val;
 
-	if (s->fas4xxextra && (s->wregs[0x0d] & 0x80)) {
+	if ((s->fas4xxextra & 1) && (s->wregs[0x0d] & 0x80)) {
 		saddr += ESP_REGS;
 	}
 
@@ -706,7 +720,7 @@ static uint64_t esp_reg_read2(void *opaque, uint32_t saddr)
 	case ESP_RES4:
 		return 0x80 | 0x20 | 0x2;
 	case ESP_TCHI:
-		if (!(s->wregs[ESP_CFG2] & 0x40))
+		if (!(s->wregs[ESP_CFG2] & 0x40) && !(s->fas4xxextra & 2))
 			return 0;
 		break;
 
@@ -741,7 +755,7 @@ uint64_t esp_reg_read(void *opaque, uint32_t saddr)
 void fas408_write_fifo(void *opaque, uint64_t val)
 {
 	ESPState *s = (ESPState*)opaque;
-	if (!s->fas4xxextra)
+	if (!(s->fas4xxextra & 1))
 		return;
 	s->fas408_buffer_offset = 0;
 	if (s->fas408_buffer_size < 128) {
@@ -766,7 +780,7 @@ void esp_reg_write(void *opaque, uint32_t saddr, uint64_t val)
 {
 	ESPState *s = (ESPState*)opaque;
 
-	if (s->fas4xxextra && (s->wregs[ESP_RES3] & 0x80)) {
+	if ((s->fas4xxextra & 1) && (s->wregs[ESP_RES3] & 0x80)) {
 		saddr += ESP_REGS;
 	}
 
@@ -780,7 +794,7 @@ void esp_reg_write(void *opaque, uint32_t saddr, uint64_t val)
 		s->rregs[ESP_RSTAT] &= ~STAT_TC;
 		break;
 	case ESP_TCHI:
-		if (!(s->wregs[ESP_CFG2] & 0x40))
+		if (!(s->wregs[ESP_CFG2] & 0x40) && !(s->fas4xxextra & 2))
 			val = 0;
 		else
 			s->rregs[ESP_RSTAT] &= ~STAT_TC;
@@ -808,14 +822,14 @@ void esp_reg_write(void *opaque, uint32_t saddr, uint64_t val)
             s->rregs[ESP_TCLO] = s->wregs[ESP_TCLO];
             s->rregs[ESP_TCMID] = s->wregs[ESP_TCMID];
             s->rregs[ESP_TCHI] = s->wregs[ESP_TCHI];
-			if (!(s->wregs[ESP_CFG2] & 0x40))
+			if (!(s->wregs[ESP_CFG2] & 0x40) && !(s->fas4xxextra & 2))
 				s->rregs[ESP_TCHI] = 0;
         } else {
             s->dma = 0;
         }
         switch(val & CMD_CMD) {
         case CMD_NOP:
-			if ((val & CMD_DMA) && (s->wregs[ESP_CFG2] & 0x40))
+			if ((val & CMD_DMA) && ((s->wregs[ESP_CFG2] & 0x40) && !(s->fas4xxextra & 2)))
 				s->rregs[ESP_TCHI] = s->chip_id;
 			break;
         case CMD_FLUSH:
@@ -855,11 +869,8 @@ void esp_reg_write(void *opaque, uint32_t saddr, uint64_t val)
             s->rregs[ESP_RINTR] = INTR_DC;
             s->rregs[ESP_RSEQ] = 0;
             //s->rregs[ESP_RFLAGS] = 0;
-			// Features enable
-			if (!(s->wregs[ESP_CFG2] & 0x40)) {
-				// Masoboshi driver expects phase=0!
-				s->rregs[ESP_RSTAT] &= ~7;
-			}
+			// Masoboshi and Trifecta drivers expects phase=0
+			s->rregs[ESP_RSTAT] &= ~7;
             esp_raise_irq(s);
             break;
         case CMD_PAD:
@@ -1140,14 +1151,14 @@ static void esp_register_types(void)
 type_init(esp_register_types)
 #endif
 
-void esp_scsi_init(DeviceState *dev, ESPDMAMemoryReadWriteFunc read, ESPDMAMemoryReadWriteFunc write, bool fas4xxextra)
+void esp_scsi_init(DeviceState *dev, ESPDMAMemoryReadWriteFunc read, ESPDMAMemoryReadWriteFunc write, int fas4xxextra)
 {
 	dev->lsistate = calloc(sizeof(ESPState), 1);
 	ESPState *s = ESP(dev);
 	s->dma_memory_read = read;
 	s->dma_memory_write = write;
 	s->fas4xxextra = fas4xxextra;
-	s->chip_id = 0x12;
+	s->chip_id = 0x12 | 0x80;
 }
 
 void esp_scsi_reset(DeviceState *dev, void *privdata)

@@ -395,10 +395,15 @@ static int get_gayle_ide_reg (uaecptr addr, struct ide_hdf **ide)
 			addr &= ~IDE_SECONDARY;
 		}
 	}
+	if (idedrive[ide2] == NULL) {
+		return -1;
+	}
 	*ide = idedrive[ide2 + idedrive[ide2]->ide_drv];
+	if (*ide == NULL) {
+		return -1;
+	}
 	return addr;
 }
-
 
 static uae_u32 gayle_read2 (uaecptr addr)
 {
@@ -1865,11 +1870,11 @@ static void gayle_map_pcmcia (void)
 	}
 	if (pcmcia_card == 0 || (gayle_cs & GAYLE_CS_DIS)) {
 		map_banks_cond (&dummy_bank, 0xa0, 8, 0);
-		if (currprefs.chipmem_size <= 4 * 1024 * 1024 && !pcmcia_override)
+		if (currprefs.chipmem.size <= 4 * 1024 * 1024 && !pcmcia_override)
 			map_banks_cond (&dummy_bank, PCMCIA_COMMON_START >> 16, PCMCIA_COMMON_SIZE >> 16, 0);
 	} else {
 		map_banks_cond (&gayle_attr_bank, 0xa0, 8, 0);
-		if (currprefs.chipmem_size <= 4 * 1024 * 1024 && !pcmcia_override)
+		if (currprefs.chipmem.size <= 4 * 1024 * 1024 && !pcmcia_override)
 			map_banks_cond (&gayle_common_bank, PCMCIA_COMMON_START >> 16, PCMCIA_COMMON_SIZE >> 16, 0);
 	}
 }

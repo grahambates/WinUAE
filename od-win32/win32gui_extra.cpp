@@ -5,6 +5,7 @@
 #include <commctrl.h>
 #include <Dwmapi.h>
 #include <shellscalingapi.h>
+#include <shlwapi.h>
 
 #include "sysconfig.h"
 #include "sysdeps.h"
@@ -751,15 +752,28 @@ void x_DestroyWindow(HWND hwnd, struct newresource *res)
 	for (int i = 0; res->hwndcnt; i++) {
 		struct newreswnd *pr = &res->hwnds[i];
 		if (res->hwnds[i].hwnd == hwnd) {
-			res->hwndcnt--;
-			int tomove = res->hwndcnt - i;
-			if (tomove > 0) {
-				memmove(&res->hwnds[i], &res->hwnds[i + 1], tomove * sizeof(newreswnd));
+			while (i + 1 < res->hwndcnt) {
+				res->hwnds[i] = res->hwnds[i + 1];
+				i++;
 			}
+			res->hwndcnt--;
+			res->hwnds[res->hwndcnt].hwnd = NULL;
+			res->hwnds[res->hwndcnt].x = res->hwnds[res->hwndcnt].y = res->hwnds[res->hwndcnt].w = res->hwnds[res->hwndcnt].h = 0;
 			break;
 		}
 	}
 	DestroyWindow(hwnd);
+	if (res->child) {
+		struct newresource *cres = res->child;
+		if (cres->dinfo.hUserFont) {
+			DeleteObject(cres->dinfo.hUserFont);
+			cres->dinfo.hUserFont = NULL;
+		}
+		if (cres->dinfo.hMenu) {
+			DeleteObject(cres->dinfo.hMenu);
+			cres->dinfo.hMenu = NULL;
+		}
+	}
 }
 
 static int align (double f)
@@ -1259,6 +1273,7 @@ int scaleresource_choosefont (HWND hDlg, int fonttype)
 struct imagedata
 {
 	Gdiplus::Image *image;
+	IStream *stream;
 	TCHAR *metafile;
 };
 
@@ -1292,9 +1307,9 @@ static void boxart_init(void)
 }
 
 static const TCHAR *boxartnames[MAX_BOX_ART_TYPES] = {
-	_T("Boxart"),
 	_T("Title"),
 	_T("SShot"),
+	_T("Boxart"),
 	_T("Misc"),
 	_T("Data"),
 };
@@ -1360,17 +1375,27 @@ void move_box_art_window(void)
 	SetWindowPos(boxarthwnd, HWND_TOPMOST, r.left, r.top, 0, 0, SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER | SWP_NOSIZE);
 }
 
-void close_box_art_window(void)
+static void freeimages(void)
 {
 	for (int i = 0; i < MAX_BOX_ART_IMAGES; i++) {
-		if (images[i]) {
-			struct imagedata *im = images[i];
-			delete im->image;
+		struct imagedata *im = images[i];
+		if (im) {
+			if (im->image) {
+				delete im->image;
+			}
+			if (im->stream) {
+				im->stream->Release();
+			}
 			xfree(im->metafile);
 			xfree(im);
 			images[i] = NULL;
 		}
 	}
+}
+
+void close_box_art_window(void)
+{
+	freeimages();
 	if (!boxarthwnd)
 		return;
 	ShowWindow(boxarthwnd, SW_HIDE);
@@ -1550,12 +1575,7 @@ bool show_box_art(const TCHAR *path, const TCHAR *configpath)
 {
 	TCHAR tmp1[MAX_DPATH];
 
-	for (int i = 0; i < MAX_BOX_ART_IMAGES; i++) {
-		if (images[i]) {
-			delete images[i];
-			images[i] = NULL;
-		}
-	}
+	freeimages();
 
 	if (!path) {
 		close_box_art_window();
@@ -1607,7 +1627,6 @@ bool show_box_art(const TCHAR *path, const TCHAR *configpath)
 			if (total_images >= MAX_BOX_ART_IMAGES)
 				break;
 			images[cnt] = NULL;
-			Gdiplus::Image *image;
 			TCHAR metafile[MAX_DPATH];
 			metafile[0] = 0;
 
@@ -1658,33 +1677,62 @@ bool show_box_art(const TCHAR *path, const TCHAR *configpath)
 				_tcscat(tmp1, _T(".png"));
 			}
 
-			image = Gdiplus::Image::FromFile(tmp1);
-			// above returns out of memory if file does not exist!
-			if (image->GetLastStatus() != Gdiplus::Ok) {
-				_tcscpy(tmp1 + _tcslen(tmp1) - 3, _T("jpg"));
-				image = Gdiplus::Image::FromFile(tmp1);
+			Gdiplus::Image *image = NULL;
+			IStream *stream = NULL;
+			for (int imgtype = 0; imgtype < 2 && !image; imgtype++) {
+				if (imgtype == 1 && _tcslen(tmp1) > 3) {
+					_tcscpy(tmp1 + _tcslen(tmp1) - 3, _T("jpg"));
+				}
+				int outlen = 0;
+				uae_u8 *filedata = zfile_load_file(tmp1, &outlen);
+				if (filedata) {
+					stream = SHCreateMemStream(filedata, outlen);
+					xfree(filedata);
+					if (stream) {
+						image = Gdiplus::Image::FromStream(stream);
+						if (image && image->GetLastStatus() == Gdiplus::Ok) {
+							break;
+						}
+						if (image) {
+							delete image;
+							image = NULL;
+						}
+						stream->Release();
+						stream = NULL;
+					}
+				}
 			}
-			if (image->GetLastStatus() == Gdiplus::Ok) {
+			if (image && stream) {
 				int w = image->GetWidth();
 				int h = image->GetHeight();
 				write_log(_T("Image '%s' loaded %d*%d\n"), tmp1, w, h);
 				struct imagedata *img = xcalloc(struct imagedata, 1);
-				img->image = image;
-				if (metafile[0]) {
-					img->metafile = my_strdup(metafile);
+				if (img) {
+					img->image = image;
+					img->stream = stream;
+					if (metafile[0]) {
+						img->metafile = my_strdup(metafile);
+					}
+					images[cnt++] = img;
+					if (total_images < max_visible_boxart_images) {
+						if (w > max_width)
+							max_width = w;
+						total_height += h;
+						total_images++;
+					}
+					image = NULL;
+					stream = NULL;
 				}
-				images[cnt++] = img;
-				if (total_images < max_visible_boxart_images) {
-					if (w > max_width)
-						max_width = w;
-					total_height += h;
-					total_images++;
+				if (image || stream) {
+					if (image) {
+						delete image;
+					}
+					if (stream) {
+						stream->Release();
+					}
+					break;
 				}
-			} else {
-				delete image;
-				break;
 			}
-			image = NULL;
 		}
 	}
 	images[cnt] = NULL;
@@ -1783,8 +1831,8 @@ LRESULT CALLBACK BoxArtWindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM
 			HDC hDC = BeginPaint(hWnd, &ps);
 			boxartpaint(hDC, hWnd);
 			EndPaint(hWnd, &ps);
+			return 0;
 		}
-		break;
 		case WM_CLOSE:
 			close_box_art_window();
 		return 0;

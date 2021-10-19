@@ -415,6 +415,7 @@
 #define IDS_QUIT_WARNING                418
 #define IDS_UNMAPPED_ADDRESS            419
 #define IDS_GENLOCK_OPTIONS             420
+#define IDS_READONLYCONFIRMATION        421
 #define IDS_QS_MODELS                   1000
 #define IDS_QS_MODEL_A500               1001
 #define IDS_QS_MODEL_A500P              1002
@@ -509,6 +510,7 @@
 #define IDC_AUTORESOLUTIONVGA           1181
 #define IDC_RATE2ENABLE                 1182
 #define IDC_GRAYSCALE                   1183
+#define IDC_OVERSCANMODE                1184
 #define IDC_FRAMERATE                   1185
 #define IDC_XSIZE                       1187
 #define IDC_YSIZE                       1188
@@ -744,6 +746,8 @@
 #define IDC_CPUTEXT_x86                 1510
 #define IDC_SCREENRESTEXT               1511
 #define IDC_MAPDRIVES_AUTO              1511
+#define IDC_CPUTEXT2                    1511
+#define IDC_CPUIDLETEXT                 1511
 #define IDC_WIDTHTEXT                   1512
 #define IDC_WINDOWEDTEXT                1512
 #define IDC_MAPDRIVES_LIMIT             1512
@@ -1242,7 +1246,9 @@
 #define IDC_MISCLIST                    1810
 #define IDC_FASTMEMNOAUTOCONFIG         1810
 #define IDC_STATENAME                   1811
+#define IDC_FASTMEMDMA                  1811
 #define IDC_SAMPLER_STEREO              1812
+#define IDC_FASTMEMFORCE16              1812
 #define IDC_LISTDIALOG_LIST             1813
 #define IDC_LOGPATH                     1814
 #define IDC_MIDIROUTER                  1815
@@ -1312,6 +1318,7 @@
 #define IDC_ROM_ADDRESS2                1863
 #define IDC_CUSTOMROMFILE               1864
 #define IDC_SCSIROMFILEPCMCIA           1865
+#define IDC_SCSIROM24BITDMA             1866
 #define ID__FLOPPYDRIVES                40004
 #define ID_FLOPPYDRIVES_DF0             40005
 #define ID_ST_CONFIGURATION             40010

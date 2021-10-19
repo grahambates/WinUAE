@@ -30,7 +30,7 @@ extern unsigned long timeframes;
 
 // Do it this way because stupid LogitechLCDLib.lib LogiLcdInit() refuses to link.
 
-typedef bool(__cdecl *LOGILCDINIT)(wchar_t*, int);
+typedef bool(__cdecl *LOGILCDINIT)(const wchar_t*, int);
 static LOGILCDINIT pLogiLcdInit;
 typedef bool(__cdecl *LOGILCDISCONNECTED)(int);
 static LOGILCDISCONNECTED pLogiLcdIsConnected;
@@ -43,7 +43,7 @@ static LOGILCDSETBACKGROUND pLogiLcdMonoSetBackground, pLogiLcdColorSetBackgroun
 
 #define LOGITECH_LCD_DLL _T("SOFTWARE\\Classes\\CLSID\\{d0e790a5-01a7-49ae-ae0b-e986bdd0c21b}\\ServerBinary")
 
-static void *lcd_thread(void *null);
+static void lcd_thread(void *null);
 
 void lcd_close (void)
 {
@@ -77,6 +77,7 @@ static int lcd_init (void)
 	DWORD type = REG_SZ;
 	DWORD size = sizeof(path) / sizeof(TCHAR);
 	HKEY key;
+	bool lcd_mono, lcd_color;
 
 	if (!logitech_lcd)
 		return 0;
@@ -104,8 +105,8 @@ static int lcd_init (void)
 	if (!pLogiLcdInit(_T("WinUAE"), LOGI_LCD_TYPE_MONO | LOGI_LCD_TYPE_COLOR))
 		goto err;
 
-	bool lcd_mono = pLogiLcdIsConnected(LOGI_LCD_TYPE_MONO);
-	bool lcd_color = pLogiLcdIsConnected(LOGI_LCD_TYPE_COLOR);
+	lcd_mono = pLogiLcdIsConnected(LOGI_LCD_TYPE_MONO);
+	lcd_color = pLogiLcdIsConnected(LOGI_LCD_TYPE_COLOR);
 	if (!lcd_mono && !lcd_color) {
 		pLogiLcdShutdown();
 		goto err;
@@ -255,7 +256,7 @@ void lcd_update(int led, int on)
 	lcd_updated = true;
 }
 
-static void *lcd_thread(void *null)
+static void lcd_thread(void *null)
 {
 	while (lcd_thread_active > 0) {
 		bool c;
@@ -272,7 +273,6 @@ static void *lcd_thread(void *null)
 		}
 	}
 	lcd_thread_active = 0;
-	return NULL;
 }
 
 int lcd_open (void)

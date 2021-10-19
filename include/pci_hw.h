@@ -13,6 +13,9 @@ typedef bool(*pci_dev_init)(struct pci_board_state*,struct autoconfig_info*);
 typedef void(*pci_dev_reset)(struct pci_board_state*);
 typedef void(*pci_dev_hsync)(struct pci_board_state*);
 typedef void(*pci_dev_free)(struct pci_board_state*);
+typedef uae_u8(*pci_get_config_func)(uaecptr);
+typedef void(*pci_put_config_func)(uaecptr, uae_u8);
+typedef void(*pci_change_config_func)(struct pci_board_state*);
 
 typedef struct
 {
@@ -47,7 +50,12 @@ struct pci_board
 	pci_dev_free free;
 	pci_dev_reset reset;
 	pci_dev_hsync hsync;
-	pci_addrbank bars[MAX_PCI_BARS];
+	pci_addrbank bars[MAX_PCI_BARS + 1];
+	bool dont_mask_io;
+	pci_get_config_func pci_get_config;
+	pci_put_config_func pci_put_config;
+	pci_change_config_func pci_change_config;
+
 };
 
 struct pci_board_state
@@ -67,6 +75,8 @@ struct pci_board_state
 	bool io_map_active;
 	struct pci_bridge *bridge;
 	pci_dev_irq irq_callback;
+	struct pci_config dynamic_config;
+	void *userdata;
 };
 
 struct pci_bridge
@@ -75,8 +85,9 @@ struct pci_bridge
 	int type;
 	int endian_swap_config;
 	uae_u32 io_offset;
+	uae_u32 memory_start_offset;
 	int endian_swap_io;
-	uae_u32 memory_offset;
+	uae_u32 memory_window_offset;
 	int endian_swap_memory;
 	bool pcipcidma;
 	bool amigapicdma;
@@ -105,7 +116,8 @@ struct pci_bridge
 	uae_u8 acmemory_2[128];
 	struct romconfig *rc;
 	uae_u16 window;
-	int slot_cnt;
+	int log_slot_cnt;
+	int phys_slot_cnt;
 };
 
 extern void pci_irq_callback(struct pci_board_state *pcibs, bool irq);

@@ -352,6 +352,11 @@ static void debugreport(struct debugmemdata *dm, uaecptr addr, int rwi, int size
 		!(state & (DEBUGMEM_ALLOCATED | DEBUGMEM_INUSE)) ? 'I' : (state & DEBUGMEM_WRITE) ? 'W' : 'R',
 		(state & DEBUGMEM_WRITE) ? '*' : (state & DEBUGMEM_INITIALIZED) ? '+' : '-',
 		dm->unused_start, PAGE_SIZE - dm->unused_end - 1);
+
+	if (peekdma_data.mask && (peekdma_data.addr == addr || (size > 2 && peekdma_data.addr + 2 == addr))) {
+		console_out_f(_T("DMA DAT=%04x PTR=%04x\n"), peekdma_data.reg, peekdma_data.ptrreg);
+	}
+
 	debugmem_break(1);
 }
 
@@ -2114,6 +2119,8 @@ static bool debugger_load_library(const TCHAR *name)
 	bool ret = false;
 	int filelen;
 	struct zfile *zf = NULL;
+	struct libname* lvo = NULL;
+	int lvoid = 1;
 
 	if (libraries_loaded)
 		return true;
@@ -2145,8 +2152,6 @@ static bool debugger_load_library(const TCHAR *name)
 		libsymbols = xcalloc(struct libsymbol, 10000);
 	}
 
-	struct libname *lvo = NULL;
-	int lvoid = 1;
 	for (;;) {
 		if (p == file + filelen) {
 			ret = true;
@@ -3549,7 +3554,7 @@ static struct debugmemallocs *ismysegment(uaecptr addr)
 		return NULL;
 	addr -= debugmem_bank.start;
 	if (addr >= debugmem_bank.allocated_size)
-		return false;
+		return NULL;
 	for (int i = 1; i <= executable_last_segment; i++) {
 		struct debugmemallocs *alloc = allocs[i];
 		if (addr >= alloc->start && addr < alloc->start + alloc->size)
@@ -3851,11 +3856,17 @@ uae_u32 debugmem_chiphit(uaecptr addr, uae_u32 v, int size)
 		}
 	} else {
 		size = -size;
+
 		// execbase?
 		if (size == 4 && addr == 4) {
 			recursive--;
-			return do_get_mem_long((uae_u32*)(chipmem_bank.baseaddr + 4));
+			return do_get_mem_long((uae_u32*)(chipmem_bank.baseaddr + addr));
 		}
+		if (size == 2 && (addr == 4 || addr == 6) && (currprefs.cpu_model < 68020 || ce_banktype[0] == CE_MEMBANK_CHIP16)) {
+			recursive--;
+			return do_get_mem_word((uae_u16*)(chipmem_bank.baseaddr + addr));
+		}
+
 		// exception vectors
 		if (regs.vbr < 0x100) {
 			// vbr == 0 so skip aligned long reads
@@ -3863,7 +3874,12 @@ uae_u32 debugmem_chiphit(uaecptr addr, uae_u32 v, int size)
 				recursive--;
 				return do_get_mem_long((uae_u32*)(chipmem_bank.baseaddr + addr));
 			}
+			if (size == 2 && addr >= regs.vbr + 8 && addr < regs.vbr + 0xe0 && (currprefs.cpu_model < 68020 || ce_banktype[0] == CE_MEMBANK_CHIP16)) {
+				recursive--;
+				return do_get_mem_word((uae_u16*)(chipmem_bank.baseaddr + addr));
+			}
 		}
+
 		if (debugmem_active && debugmem_mapped) {
 			console_out_f(_T("%s read from %08x\n"), size == 4 ? _T("Long") : (size == 2 ? _T("Word") : _T("Byte")), addr);
 			dbg = debugmem_break(7);

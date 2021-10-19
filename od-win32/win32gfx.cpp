@@ -979,6 +979,7 @@ static BOOL CALLBACK monitorEnumProc (HMONITOR h, HDC hdc, LPRECT rect, LPARAM d
 	while (md - Displays < MAX_DISPLAYS && md->monitorid) {
 		if (!_tcscmp (md->adapterid, lpmi.szDevice)) {
 			TCHAR tmp[1000];
+			md->monitor = h;
 			md->rect = lpmi.rcMonitor;
 			md->workrect = lpmi.rcWork;
 			adjustappbar(&md->rect, &md->workrect);
@@ -1006,6 +1007,7 @@ static BOOL CALLBACK monitorEnumProc2(HMONITOR h, HDC hdc, LPRECT rect, LPARAM d
 		struct MultiDisplay *md = &Displays[i];
 		if (!_tcscmp (md->adapterid, lpmi.szDevice) && !memcmp(&md->rect, &lpmi.rcMonitor, sizeof RECT)) {
 			md->workrect = lpmi.rcWork;
+			md->monitor = h;
 			adjustappbar(&md->rect, &md->workrect);
 			return TRUE;
 		}
@@ -1599,7 +1601,7 @@ void unlockscr3d(struct vidbuffer *vb)
 	}
 }
 
-int lockscr(struct vidbuffer *vb, bool fullupdate, bool first)
+int lockscr(struct vidbuffer *vb, bool fullupdate, bool first, bool skip)
 {
 	struct AmigaMonitor *mon = &AMonitors[vb->monitor_id];
 	int ret = 0;
@@ -1618,7 +1620,7 @@ int lockscr(struct vidbuffer *vb, bool fullupdate, bool first)
 			ret = 1;
 		} else {
 			ret = 0;
-			vb->bufmem = D3D_locktexture(vb->monitor_id, &vb->rowbytes, NULL, fullupdate);
+			vb->bufmem = D3D_locktexture(vb->monitor_id, &vb->rowbytes, NULL, skip ? -1 : (fullupdate ? 1 : 0));
 			if (vb->bufmem) {
 				if (first)
 					init_row_map();
@@ -1659,7 +1661,7 @@ void flush_clear_screen (struct vidbuffer *vb)
 {
 	if (!vb)
 		return;
-	if (lockscr(vb, true, true)) {
+	if (lockscr(vb, true, true, false)) {
 		int y;
 		for (y = 0; y < vb->height_allocated; y++) {
 			memset(vb->bufmem + y * vb->rowbytes, 0, vb->width_allocated * vb->pixbytes);
@@ -1817,7 +1819,7 @@ static uae_u8 *gfx_lock_picasso2(int monid, bool fullupdate)
 		return DirectDraw_GetSurfacePointer ();
 	}
 }
-uae_u8 *gfx_lock_picasso(int monid, bool fullupdate, bool doclear)
+uae_u8 *gfx_lock_picasso(int monid, bool fullupdate)
 {
 	struct AmigaMonitor *mon = &AMonitors[monid];
 	struct picasso_vidbuf_description *vidinfo = &picasso_vidinfo[monid];
@@ -1831,13 +1833,6 @@ uae_u8 *gfx_lock_picasso(int monid, bool fullupdate, bool doclear)
 		gfx_unlock();
 	} else {
 		mon->rtg_locked = true;
-		if (doclear) {
-			uae_u8 *p2 = p;
-			for (int h = 0; h < vidinfo->height; h++) {
-				memset (p2, 0, vidinfo->width * vidinfo->pixbytes);
-				p2 += vidinfo->rowbytes;
-			}
-		}
 	}
 	return p;
 }
@@ -2249,8 +2244,9 @@ static int getstatuswindowheight(int monid, HWND hwnd)
 	if (!h)
 		return def;
 	wi.cbSize = sizeof wi;
-	if (GetWindowInfo (h, &wi))
+	if (GetWindowInfo(h, &wi)) {
 		def = wi.rcWindow.bottom - wi.rcWindow.top;
+	}
 	DestroyWindow(h);
 	return def;
 }
@@ -2383,6 +2379,7 @@ int check_prefs_changed_gfx (void)
 	c |= _tcsicmp(currprefs.genlock_video_file, changed_prefs.genlock_video_file) ? (2 | 8) : 0;
 
 	c |= currprefs.gfx_lores_mode != changed_prefs.gfx_lores_mode ? (2 | 8) : 0;
+	c |= currprefs.gfx_overscanmode != changed_prefs.gfx_overscanmode ? (2 | 8) : 0;
 	c |= currprefs.gfx_scandoubler != changed_prefs.gfx_scandoubler ? (2 | 8) : 0;
 	c |= currprefs.gfx_threebitcolors != changed_prefs.gfx_threebitcolors ? (256) : 0;
 	c |= currprefs.gfx_grayscale != changed_prefs.gfx_grayscale ? (512) : 0;
@@ -2483,6 +2480,7 @@ int check_prefs_changed_gfx (void)
 		_tcscpy(currprefs.genlock_video_file, changed_prefs.genlock_video_file);
 
 		currprefs.gfx_lores_mode = changed_prefs.gfx_lores_mode;
+		currprefs.gfx_overscanmode = changed_prefs.gfx_overscanmode;
 		currprefs.gfx_scandoubler = changed_prefs.gfx_scandoubler;
 		currprefs.gfx_threebitcolors = changed_prefs.gfx_threebitcolors;
 		currprefs.gfx_grayscale = changed_prefs.gfx_grayscale;
@@ -2808,7 +2806,7 @@ int picasso_palette(struct MyCLUTEntry *CLUT, uae_u32 *clut)
 {
 	int changed = 0;
 
-	for (int i = 0; i < 256; i++) {
+	for (int i = 0; i < 256 * 2; i++) {
 		int r = CLUT[i].Red;
 		int g = CLUT[i].Green;
 		int b = CLUT[i].Blue;
@@ -3173,6 +3171,7 @@ static void updatepicasso96(struct AmigaMonitor *mon)
 	vidinfo->width = mon->currentmode.current_width;
 	vidinfo->depth = mon->currentmode.current_depth;
 	vidinfo->offset = 0;
+	vidinfo->splitypos = -1;
 #endif
 }
 
@@ -3560,8 +3559,27 @@ static void movecursor (int x, int y)
 
 static void getextramonitorpos(struct AmigaMonitor *mon, RECT *r)
 {
+	TCHAR buf[100];
 	RECT r1, r2;
+	int x, y;
+	bool got = true;
 
+	_stprintf(buf, _T("MainPosX_%d"), mon->monitor_id);
+	if (!regqueryint(NULL, buf, &x)) {
+		got = false;
+	}
+	_stprintf(buf, _T("MainPosY_%d"), mon->monitor_id);
+	if (!regqueryint(NULL, buf, &y)) {
+		got = false;
+	}
+	if (got) {
+		POINT pt;
+		pt.x = x;
+		pt.y = y;
+		if (!MonitorFromPoint(pt, MONITOR_DEFAULTTONULL)) {
+			got = false;
+		}
+	}
 	// find rightmost window edge
 	int monid = MAX_AMIGAMONITORS - 1;
 	int rightmon = -1;
@@ -3580,7 +3598,7 @@ static void getextramonitorpos(struct AmigaMonitor *mon, RECT *r)
 			rightmon = monid;
 		}
 	}
-	if (rightmon < 0)
+	if (rightmon < 0 && !got)
 		return;
 	hwnd = AMonitors[rightmon].hMainWnd;
 	GetWindowRect(hwnd, &r1);
@@ -3590,8 +3608,13 @@ static void getextramonitorpos(struct AmigaMonitor *mon, RECT *r)
 	int width = r->right - r->left;
 	int height = r->bottom - r->top;
 
-	r->left = r1.right - ((r2.left - r1.left) + (r1.right - r2.right));
-	r->top = r1.top;
+	if (got) {
+		r->left = x;
+		r->top = y;
+	} else {
+		r->left = r1.right - ((r2.left - r1.left) + (r1.right - r2.right));
+		r->top = r1.top;
+	}
 	r->bottom = r->top + height;
 	r->right = r->left + width;
 }
@@ -3654,6 +3677,7 @@ static int create_windows_2(struct AmigaMonitor *mon)
 		GetWindowRect (mon->hAmigaWnd, &r);
 
 		int sbheight = currprefs.win32_statusbar ? getstatuswindowheight(mon->monitor_id, mon->hAmigaWnd) : 0;
+		int dpi = getdpiforwindow(mon->hAmigaWnd);
 
 		x = r.left;
 		y = r.top;
@@ -3689,15 +3713,31 @@ static int create_windows_2(struct AmigaMonitor *mon)
 			else
 				ny = rc.top + (rc.bottom - rc.top - nh);
 		}
-		if (w != nw || h != nh || x != nx || y != ny || sbheight != mon->prevsbheight) {
+		if (w != nw || h != nh || x != nx || y != ny || sbheight != mon->window_extra_height_bar || dpi != mon->dpi) {
 			w = nw;
 			h = nh;
 			x = nx;
 			y = ny;
 			mon->in_sizemove++;
-			if (mon->hMainWnd && !fsw && !dxfs && !d3dfs && !rp_isactive ()) {
-				mon->window_extra_height += (sbheight - mon->prevsbheight);
+			if (mon->hMainWnd && !fsw && !dxfs && !d3dfs && !rp_isactive()) {
+				if (dpi != mon->dpi) {
+					mon->window_extra_height -= mon->window_extra_height_bar;
+					mon->window_extra_height += sbheight;
+				} else {
+					mon->window_extra_height += (sbheight - mon->window_extra_height_bar);
+				}
+
 				GetWindowRect(mon->hMainWnd, &r);
+#if 0
+				RECT r2;
+				GetClientRect(mon->hMainWnd, &r2);
+				if (pAdjustWindowRectExForDpi) {
+					HMONITOR mon = MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST);
+					pAdjustWindowRectExForDpi(&r, borderless ? WS_POPUP : style, FALSE, exstyle, getdpiformonitor(mon));
+				} else {
+					AdjustWindowRectEx(&r, borderless ? WS_POPUP : style, FALSE, exstyle);
+				}
+#endif
 				x = r.left;
 				y = r.top;
 				SetWindowPos(mon->hMainWnd, HWND_TOP, x, y, w + mon->window_extra_width, h + mon->window_extra_height,
@@ -3708,6 +3748,7 @@ static int create_windows_2(struct AmigaMonitor *mon)
 			SetWindowPos(mon->hAmigaWnd, HWND_TOP, x, y, w, h,
 				SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING | SWP_NOZORDER);
 			mon->in_sizemove--;
+			mon->dpi = dpi;
 		} else {
 			w = nw;
 			h = nh;
@@ -3715,7 +3756,7 @@ static int create_windows_2(struct AmigaMonitor *mon)
 			y = ny;
 		}
 		createstatuswindow(mon);
-		createstatusline(mon->monitor_id);
+		createstatusline(mon->hAmigaWnd, mon->monitor_id);
 		updatewinrect(mon, false);
 		GetWindowRect (mon->hMainWnd, &mon->mainwin_rect);
 		if (d3dfs || dxfs)
@@ -3724,7 +3765,7 @@ static int create_windows_2(struct AmigaMonitor *mon)
 			mon->amigawin_rect.left, mon->amigawin_rect.top, mon->amigawin_rect.right - mon->amigawin_rect.left, mon->amigawin_rect.bottom - mon->amigawin_rect.top);
 		updatemouseclip(mon);
 		rp_screenmode_changed ();
-		mon->prevsbheight = sbheight;
+		mon->window_extra_height_bar = sbheight;
 		return 1;
 	}
 
@@ -3776,7 +3817,12 @@ static int create_windows_2(struct AmigaMonitor *mon)
 
 			oldx = rc.left;
 			oldy = rc.top;
-			AdjustWindowRect (&rc, borderless ? WS_POPUP : style, FALSE);
+			if (pAdjustWindowRectExForDpi) {
+				HMONITOR mon = MonitorFromRect(&rc, MONITOR_DEFAULTTONEAREST);
+				pAdjustWindowRectExForDpi(&rc, borderless ? WS_POPUP : style, FALSE, exstyle, getdpiformonitor(mon));
+			} else {
+				AdjustWindowRectEx(&rc, borderless ? WS_POPUP : style, FALSE, exstyle);
+			}
 			mon->win_x_diff = rc.left - oldx;
 			mon->win_y_diff = rc.top - oldy;
 
@@ -3822,6 +3868,8 @@ static int create_windows_2(struct AmigaMonitor *mon)
 						rc.bottom -= sbheight;
 						rc.bottom += sbheight2;
 						sbheight = sbheight2;
+						DestroyWindow(mon->hMainWnd);
+						mon->hMainWnd = NULL;
 						continue;
 					}
 				}
@@ -3831,7 +3879,7 @@ static int create_windows_2(struct AmigaMonitor *mon)
 			mon->window_extra_width = rc2.right - rc2.left - mon->currentmode.current_width;
 			mon->window_extra_height = rc2.bottom - rc2.top - mon->currentmode.current_height;
 			createstatuswindow(mon);
-			createstatusline(mon->monitor_id);
+			createstatusline(mon->hMainWnd, mon->monitor_id);
 		} else {
 			x = rc.left;
 			y = rc.top;
@@ -3890,7 +3938,8 @@ static int create_windows_2(struct AmigaMonitor *mon)
 	if (dxfs || d3dfs)
 		movecursor (x + w / 2, y + h / 2);
 	addnotifications (mon->hAmigaWnd, FALSE, FALSE);
-	mon->prevsbheight = sbheight;
+	mon->window_extra_height_bar = sbheight;
+	mon->dpi = getdpiforwindow(mon->hAmigaWnd);
 
 	if (mon->monitor_id) {
 		ShowWindow(mon->hMainWnd, SW_SHOWNOACTIVATE);
@@ -4140,7 +4189,7 @@ retry:
 				mon->currentmode.native_width, mon->currentmode.native_height, mon->currentmode.current_depth);
 		} else {
 			allocsoftbuffer(mon->monitor_id, _T("draw"), &avidinfo->drawbuffer, mon->currentmode.flags,
-				1600, 1280, mon->currentmode.current_depth);
+				1920, 1280, mon->currentmode.current_depth);
 		}
 		if (currprefs.monitoremu || currprefs.cs_cd32fmv || (currprefs.genlock && currprefs.genlock_image) || currprefs.cs_color_burst || currprefs.gfx_grayscale) {
 			allocsoftbuffer(mon->monitor_id, _T("monemu"), &avidinfo->tempbuffer, mon->currentmode.flags,
@@ -4199,7 +4248,7 @@ retry:
 
 	display_param_init(mon);
 
-	createstatusline(mon->monitor_id);
+	createstatusline(mon->hAmigaWnd, mon->monitor_id);
 	picasso_refresh(mon->monitor_id);
 #ifdef RETROPLATFORM
 	rp_set_hwnd_delayed ();
@@ -4424,9 +4473,13 @@ bool toggle_rtg (int monid, int mode)
 	return false;
 }
 
-void close_rtg(int monid)
+void close_rtg(int monid, bool reset)
 {
-	close_windows(&AMonitors[monid]);
+	struct AmigaMonitor *mon = &AMonitors[monid];
+	close_windows(mon);
+	if (reset) {
+		mon->screen_is_picasso = false;
+	}
 }
 
 void toggle_fullscreen(int monid, int mode)

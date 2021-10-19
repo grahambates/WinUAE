@@ -58,11 +58,15 @@ typedef uae_u32 REGPARAM3 cpuop_func (uae_u32) REGPARAM;
 typedef void REGPARAM3 cpuop_func_ce (uae_u32) REGPARAM;
 
 struct cputbl {
-	cpuop_func *handler;
+	cpuop_func *handler_ff;
+#ifdef NOFLAGS_SUPPORT_GENCPU
+	cpuop_func *handler_nf;
+#endif
 	uae_u16 opcode;
 	uae_s8 length;
 	uae_s8 disp020[2];
 	uae_s8 branch;
+	uae_u16 specific;
 };
 
 #ifdef JIT
@@ -193,7 +197,6 @@ struct regstruct
 	flagtype t0;
 	flagtype s;
 	flagtype m;
-	flagtype x;
 	flagtype stopped;
 	int halted;
 	int exception;
@@ -307,6 +310,7 @@ extern int mmu_enabled, mmu_triggered;
 extern int cpu_cycles;
 extern int cpucycleunit;
 extern int m68k_pc_indirect;
+extern bool m68k_interrupt_delay;
 
 extern void safe_interrupt_set(int, int, bool);
 
@@ -327,6 +331,13 @@ STATIC_INLINE void unset_special (uae_u32 x)
 
 #define m68k_dreg(r,num) ((r).regs[(num)])
 #define m68k_areg(r,num) (((r).regs + 8)[(num)])
+
+// JIT only
+#ifdef HAVE_GET_WORD_UNSWAPPED
+	#define GET_OPCODE (do_get_mem_word_unswapped((uae_u16*)(pc + pc_offset)));
+#else
+	#define GET_OPCODE (do_get_mem_word((uae_u16*)(pc + pc_offset)));
+#endif
 
 extern uae_u32(*x_prefetch)(int);
 extern uae_u32(*x_get_byte)(uaecptr addr);
@@ -636,9 +647,9 @@ extern void dfc_nommu_put_byte(uaecptr, uae_u32);
 extern void dfc_nommu_put_word(uaecptr, uae_u32);
 extern void dfc_nommu_put_long(uaecptr, uae_u32);
 
-extern void (*x_do_cycles)(unsigned long);
-extern void (*x_do_cycles_pre)(unsigned long);
-extern void (*x_do_cycles_post)(unsigned long, uae_u32);
+extern void (*x_do_cycles)(uae_u32);
+extern void (*x_do_cycles_pre)(uae_u32);
+extern void (*x_do_cycles_post)(uae_u32, uae_u32);
 
 extern uae_u32 REGPARAM3 x_get_disp_ea_020 (uae_u32 base, int idx) REGPARAM;
 extern uae_u32 REGPARAM3 x_get_disp_ea_ce020 (uae_u32 base, int idx) REGPARAM;
@@ -657,7 +668,7 @@ extern void REGPARAM3 put_bitfield (uae_u32 dst, uae_u32 bdata[2], uae_u32 val, 
 
 extern void m68k_disasm_ea (uaecptr addr, uaecptr *nextpc, int cnt, uae_u32 *seaddr, uae_u32 *deaddr, uaecptr lastpc);
 extern void m68k_disasm (uaecptr addr, uaecptr *nextpc, uaecptr lastpc, int cnt);
-extern uae_u32 m68k_disasm_2 (TCHAR *buf, int bufsize, uaecptr addr, uaecptr *nextpc, int cnt, uae_u32 *seaddr, uae_u32 *deaddr, uaecptr lastpc, int safemode);
+extern uae_u32 m68k_disasm_2(TCHAR *buf, int bufsize, uaecptr pc, uae_u16 *bufpc, int bufpccount, uaecptr *nextpc, int cnt, uae_u32 *seaddr, uae_u32 *deaddr, uaecptr lastpc, int safemode);
 extern void sm68k_disasm (TCHAR*, TCHAR*, uaecptr addr, uaecptr *nextpc, uaecptr lastpc);
 extern int m68k_asm(TCHAR *buf, uae_u16 *out, uaecptr pc);
 extern uaecptr ShowEA(void *f, uaecptr pc, uae_u16 opcode, int reg, amodes mode, wordsizes size, TCHAR *buf, uae_u32 *eaddr, int *actualea, int safemode);
@@ -672,6 +683,7 @@ extern void REGPARAM3 MakeFromSR_T0(void) REGPARAM;
 extern void REGPARAM3 MakeFromSR_intmask(uae_u16 oldsr, uae_u16 newsr) REGPARAM;
 extern void REGPARAM3 Exception (int) REGPARAM;
 extern void REGPARAM3 Exception_cpu(int) REGPARAM;
+extern void REGPARAM3 Exception_cpu_oldpc(int, uaecptr) REGPARAM;
 extern void REGPARAM3 ExceptionL (int, uaecptr) REGPARAM;
 extern void NMI (void);
 extern void NMI_delayed (void);
@@ -680,8 +692,8 @@ extern void doint (void);
 extern void dump_counts (void);
 extern int m68k_move2c (int, uae_u32 *);
 extern int m68k_movec2 (int, uae_u32 *);
-extern bool m68k_divl (uae_u32, uae_u32, uae_u16);
-extern bool m68k_mull (uae_u32, uae_u32, uae_u16);
+extern int m68k_divl (uae_u32, uae_u32, uae_u16, uaecptr);
+extern int m68k_mull (uae_u32, uae_u32, uae_u16);
 extern void init_m68k (void);
 extern void m68k_go (int);
 extern void m68k_dumpstate(uaecptr *, uaecptr);
@@ -748,7 +760,7 @@ extern void exception2_write(uae_u32 opcode, uaecptr addr, int size, uae_u32 val
 extern void exception2_fetch_opcode(uae_u32 opcode, int offset, int pcoffset);
 extern void exception2_fetch(uae_u32 opcode, int offset, int pcoffset);
 extern void m68k_reset (void);
-extern void cpureset (void);
+extern bool cpureset (void);
 extern void cpu_halt (int id);
 extern int cpu_sleep_millis(int ms);
 extern void cpu_change(int newmodel);
@@ -764,50 +776,49 @@ extern void fill_prefetch_030(void);
 #define CPU_OP_NAME(a) op ## a
 
 /* 68060 */
-extern const struct cputbl op_smalltbl_0_ff[];
-extern const struct cputbl op_smalltbl_40_ff[];
-extern const struct cputbl op_smalltbl_50_ff[];
-extern const struct cputbl op_smalltbl_24_ff[]; // CE
-extern const struct cputbl op_smalltbl_33_ff[]; // MMU
+extern const struct cputbl op_smalltbl_0[];
+extern const struct cputbl op_smalltbl_40[];
+extern const struct cputbl op_smalltbl_50[];
+extern const struct cputbl op_smalltbl_24[]; // CE
+extern const struct cputbl op_smalltbl_33[]; // MMU
 /* 68040 */
-extern const struct cputbl op_smalltbl_1_ff[];
-extern const struct cputbl op_smalltbl_41_ff[];
-extern const struct cputbl op_smalltbl_51_ff[];
-extern const struct cputbl op_smalltbl_25_ff[]; // CE
-extern const struct cputbl op_smalltbl_31_ff[]; // MMU
+extern const struct cputbl op_smalltbl_1[];
+extern const struct cputbl op_smalltbl_41[];
+extern const struct cputbl op_smalltbl_51[];
+extern const struct cputbl op_smalltbl_25[]; // CE
+extern const struct cputbl op_smalltbl_31[]; // MMU
 /* 68030 */
-extern const struct cputbl op_smalltbl_2_ff[];
-extern const struct cputbl op_smalltbl_42_ff[];
-extern const struct cputbl op_smalltbl_52_ff[];
-extern const struct cputbl op_smalltbl_22_ff[]; // prefetch
-extern const struct cputbl op_smalltbl_23_ff[]; // CE
-extern const struct cputbl op_smalltbl_32_ff[]; // MMU
-extern const struct cputbl op_smalltbl_34_ff[]; // MMU + cache
-extern const struct cputbl op_smalltbl_35_ff[]; // MMU + CE + cache
+extern const struct cputbl op_smalltbl_2[];
+extern const struct cputbl op_smalltbl_42[];
+extern const struct cputbl op_smalltbl_52[];
+extern const struct cputbl op_smalltbl_22[]; // prefetch
+extern const struct cputbl op_smalltbl_23[]; // CE
+extern const struct cputbl op_smalltbl_32[]; // MMU
+extern const struct cputbl op_smalltbl_34[]; // MMU + cache
+extern const struct cputbl op_smalltbl_35[]; // MMU + CE + cache
 /* 68020 */
-extern const struct cputbl op_smalltbl_3_ff[];
-extern const struct cputbl op_smalltbl_43_ff[];
-extern const struct cputbl op_smalltbl_53_ff[];
-extern const struct cputbl op_smalltbl_20_ff[]; // prefetch
-extern const struct cputbl op_smalltbl_21_ff[]; // CE
+extern const struct cputbl op_smalltbl_3[];
+extern const struct cputbl op_smalltbl_43[];
+extern const struct cputbl op_smalltbl_53[];
+extern const struct cputbl op_smalltbl_20[]; // prefetch
+extern const struct cputbl op_smalltbl_21[]; // CE
 /* 68010 */
-extern const struct cputbl op_smalltbl_4_ff[];
-extern const struct cputbl op_smalltbl_44_ff[];
-extern const struct cputbl op_smalltbl_54_ff[];
-extern const struct cputbl op_smalltbl_11_ff[]; // prefetch
-extern const struct cputbl op_smalltbl_13_ff[]; // CE
+extern const struct cputbl op_smalltbl_4[];
+extern const struct cputbl op_smalltbl_44[];
+extern const struct cputbl op_smalltbl_54[];
+extern const struct cputbl op_smalltbl_11[]; // prefetch
+extern const struct cputbl op_smalltbl_13[]; // CE
 /* 68000 */
-extern const struct cputbl op_smalltbl_5_ff[];
-extern const struct cputbl op_smalltbl_45_ff[];
-extern const struct cputbl op_smalltbl_55_ff[];
-extern const struct cputbl op_smalltbl_12_ff[]; // prefetch
-extern const struct cputbl op_smalltbl_14_ff[]; // CE
+extern const struct cputbl op_smalltbl_5[];
+extern const struct cputbl op_smalltbl_45[];
+extern const struct cputbl op_smalltbl_55[];
+extern const struct cputbl op_smalltbl_12[]; // prefetch
+extern const struct cputbl op_smalltbl_14[]; // CE
 
 extern cpuop_func *cpufunctbl[65536] ASM_SYM_FOR_FUNC ("cpufunctbl");
 
 #ifdef JIT
-extern void flush_icache(int);
-extern void flush_icache_hard(int);
+extern void (*flush_icache)(int);
 extern void compemu_reset(void);
 #else
 #define flush_icache(int) do {} while (0)

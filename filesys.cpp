@@ -1903,8 +1903,10 @@ bool filesys_heartbeat(void)
 // This uses filesystem process to reduce resource usage
 void setsystime (void)
 {
+	write_log("SETSYSTIME\n");
 	if (!currprefs.tod_hack || !rtarea_bank.baseaddr)
 		return;
+	write_log("SETSYSTIME2\n");
 	heartbeat = get_long_host(rtarea_bank.baseaddr + RTAREA_HEARTBEAT);
 	heartbeat_task = 1;
 	heartbeat_count = 10;
@@ -3225,7 +3227,7 @@ static bool mount_cd(UnitInfo *uinfo, int nr, struct mytimeval *ctime, uae_u64 *
 }
 
 #ifdef UAE_FILESYS_THREADS
-static void *filesys_thread (void *unit_v);
+static void filesys_thread (void *unit_v);
 #endif
 static void filesys_start_thread (UnitInfo *ui, int nr)
 {
@@ -7139,17 +7141,16 @@ static int filesys_iteration(UnitInfo *ui)
 }
 
 
-static void *filesys_thread (void *unit_v)
+static void filesys_thread (void *unit_v)
 {
 	UnitInfo *ui = (UnitInfo *)unit_v;
 
 	uae_set_thread_priority (NULL, 1);
 	for (;;) {
 		if (!filesys_iteration(ui)) {
-			return 0;
+			return;
 		}
 	}
-	return 0;
 }
 #endif
 
@@ -7571,7 +7572,8 @@ static uae_u32 REGPARAM2 filesys_diagentry (TrapContext *ctx)
 	* Resident structures and inject them to ResList in priority order
 	*/
 
-	if (kickstart_version >= 37) {
+	// KS 2.x RTF_AFTERDOS is broken
+	if (kickstart_version >= 39) {
 		trap_put_word(ctx, resaddr + 0x0, 0x4afc);
 		trap_put_long(ctx, resaddr + 0x2, resaddr);
 		trap_put_long(ctx, resaddr + 0x6, resaddr + 0x1A);
@@ -8359,6 +8361,7 @@ static int pt_rdsk (TrapContext *ctx, uae_u8 *bufrdb, int rdblock, UnitInfo *uip
 	int newversion, newrevision;
 	TCHAR *s;
 	bool showdebug = partnum == 0;
+	int cnt;
 
 	blocksize = rl (bufrdb + 16);
 	readblocksize = blocksize > hfd->ci.blocksize ? blocksize : hfd->ci.blocksize;
@@ -8521,7 +8524,7 @@ static int pt_rdsk (TrapContext *ctx, uae_u8 *bufrdb, int rdblock, UnitInfo *uip
 	/* we found required FSHD block */
 	fsmem = xmalloc (uae_u8, 262144);
 	lsegblock = rl (buf + 72);
-	int cnt = 0;
+	cnt = 0;
 	for (;;) {
 		int pb = lsegblock;
 		if (!legalrdbblock (uip, lsegblock))
@@ -9235,7 +9238,7 @@ void filesys_install (void)
 	cdfs_handlername = ds_bstr_ansi ("uaecdfs");
 
 	afterdos_name = ds_ansi("UAE afterdos");
-	afterdos_id = ds_ansi("UAE afterdos 0.1");
+	afterdos_id = ds_ansi("UAE afterdos 0.2");
 
 	keymaphook_name = ds_ansi("UAE keymaphook");
 	keymaphook_id = ds_ansi("UAE keymaphook 0.1");

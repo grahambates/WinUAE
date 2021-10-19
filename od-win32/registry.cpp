@@ -21,7 +21,7 @@ static HKEY gr (UAEREG *root)
 		return hWinUAEKey;
 	return root->fkey;
 }
-static TCHAR *gs (UAEREG *root)
+static const TCHAR *gs (UAEREG *root)
 {
 	if (!root)
 		return ROOT_TREE;
@@ -29,7 +29,8 @@ static TCHAR *gs (UAEREG *root)
 }
 static TCHAR *gsn (UAEREG *root, const TCHAR *name)
 {
-	TCHAR *r, *s;
+	const TCHAR *r;
+	TCHAR *s;
 	if (!root)
 		return my_strdup (name);
 	r = gs (root);
@@ -379,10 +380,13 @@ UAEREG *regcreatetree (UAEREG *root, const TCHAR *name)
 
 void regclosetree (UAEREG *key)
 {
+	if (inimode) {
+		if (inidata->modified) {
+			ini_save(inidata, inipath);
+		}
+	}
 	if (!key)
 		return;
-	if (inimode)
-		ini_save(inidata, inipath);
 	if (key->fkey)
 		RegCloseKey (key->fkey);
 	xfree (key->inipath);
