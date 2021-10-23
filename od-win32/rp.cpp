@@ -135,6 +135,7 @@ static const TCHAR *getmsg (int msg)
 	case RP_IPC_TO_HOST_KEYBOARDLAYOUT: return _T("RP_IPC_TO_HOST_KEYBOARDLAYOUT");
 	case RP_IPC_TO_HOST_MOUSEMOVE: return _T("RP_IPC_TO_HOST_MOUSEMOVE");
 	case RP_IPC_TO_HOST_MOUSEBUTTON: return _T("RP_IPC_TO_HOST_MOUSEBUTTON");
+	case RP_IPC_TO_HOST_EXECUTE_RESULT: return _T("RP_IPC_TO_HOST_EXECUTE_RESULT");
 
 	case RP_IPC_TO_GUEST_CLOSE: return _T("RP_IPC_TO_GUEST_CLOSE");
 	case RP_IPC_TO_GUEST_SCREENMODE: return _T("RP_IPC_TO_GUEST_SCREENMODE");
@@ -161,6 +162,7 @@ static const TCHAR *getmsg (int msg)
 	case RP_IPC_TO_GUEST_MOVESCREENOVERLAY: return _T("RP_IPC_TO_GUEST_MOVESCREENOVERLAY");
 	case RP_IPC_TO_GUEST_SENDMOUSEEVENTS: return _T("RP_IPC_TO_GUEST_SENDMOUSEEVENTS");
 	case RP_IPC_TO_GUEST_SHOWDEBUGGER: return _T("RP_IPC_TO_GUEST_SHOWDEBUGGER");
+	case RP_IPC_TO_GUEST_EXECUTE: return _T("RP_IPC_TO_GUEST_EXECUTE");
 	default: return _T("UNKNOWN");
 	}
 }
@@ -1251,6 +1253,87 @@ static int screenoverlay(LPCVOID pData)
 	return D3D_extoverlay(&eo);
 }
 
+static void dos_execute_callback(uae_u32 id, uae_u32 status, uae_u32 flags)
+{
+	RPExecuteResult *er;
+	int size = sizeof(RPExecuteResult);
+
+	if (flags & (RP_EXECUTE_RETURN_EXIT_CODE | RP_EXECUTE_RETURN_OUTPUT)) {
+		er = (RPExecuteResult *)xcalloc(uae_u8, size);
+		if (er) {
+			er->cbSize = size;
+			er->dwExecuteID = id;
+			er->dwExitCode = status;
+			er->dwOutputLength = 0;
+			er->hrExecuteResult = S_OK;
+			er->szOutput[0] = 0;
+			RPSendMessagex(RP_IPC_TO_HOST_EXECUTE_RESULT, 0, 0, er, size, &guestinfo, NULL);
+			xfree(er);
+		}
+	}
+}
+
+static int dosexecute(TCHAR *file, TCHAR *currentdir, TCHAR *parms, uae_u32 stack, uae_s32 priority, uae_u32 id, uae_u32 flags, uae_u8 *bin, uae_u32 binsize)
+{
+	if (flags & RP_EXECUTE_RETURN_OUTPUT) {
+		return 0;
+	}
+	int ret = filesys_shellexecute2(file, currentdir, parms, stack, priority, id, flags, bin, binsize, dos_execute_callback);
+	return ret;
+}
+
+static int execute(LPCVOID pData)
+{
+	struct RPExecuteInfo *ei = (struct RPExecuteInfo*)pData;
+	int v = dosexecute(ei->szFile, ei->szDirectory, ei->szParameters, ei->dwStackSize, ei->lPriority, ei->dwExecuteID, ei->dwFlags, ei->dwFileDataOffset ? (uae_u8*)pData + ei->dwFileDataOffset : NULL , ei->dwFileDataSize);
+	return v;
+}
+
+extern int screenshotf(int monid, const TCHAR *spath, int mode, int doprepare, int imagemode, struct vidbuffer *vb);
+extern int screenshotmode;
+static int screencap(LPCVOID pData, struct AmigaMonitor *mon)
+{
+	struct RPScreenCapture *rpsc = (struct RPScreenCapture *)pData;
+	if (rpsc->szScreenFiltered[0] || rpsc->szScreenRaw[0]) {
+		int ossm = screenshotmode;
+		DWORD ret = 0;
+		int ok = 0;
+		screenshotmode = 0;
+		if (log_rp & 2)
+			write_log(_T("'%s' '%s'\n"), rpsc->szScreenFiltered, rpsc->szScreenRaw);
+		if (rpsc->szScreenFiltered[0])
+			ok = screenshotf(0, rpsc->szScreenFiltered, 1, 1, 0, NULL);
+		if (rpsc->szScreenRaw[0]) {
+			struct vidbuf_description *avidinfo = &adisplays[0].gfxvidinfo;
+			struct vidbuffer vb;
+			int w = avidinfo->drawbuffer.inwidth;
+			int h = get_vertical_visible_height();
+			allocvidbuffer(0, &vb, w, h, avidinfo->drawbuffer.pixbytes * 8);
+			set_custom_limits(0, 0, 0, 0);
+			draw_frame(&vb);
+			ok |= screenshotf(0, rpsc->szScreenRaw, 1, 1, 1, &vb);
+			if (log_rp & 2)
+				write_log(_T("Rawscreenshot %dx%d\n"), w, h);
+			//ok |= screenshotf (_T("c:\\temp\\1.bmp"), 1, 1, 1, &vb);
+			freevidbuffer(0, &vb);
+		}
+		screenshotmode = ossm;
+		if (log_rp & 2)
+			write_log(_T("->%d\n"), ok);
+		if (!ok)
+			return RP_SCREENCAPTURE_ERROR;
+		if (WIN32GFX_IsPicassoScreen(mon)) {
+			ret |= RP_GUESTSCREENFLAGS_MODE_DIGITAL;
+		} else {
+			ret |= currprefs.gfx_resolution == RES_LORES ? RP_GUESTSCREENFLAGS_HORIZONTAL_LORES : ((currprefs.gfx_resolution == RES_SUPERHIRES) ? RP_GUESTSCREENFLAGS_HORIZONTAL_SUPERHIRES : 0);
+			ret |= currprefs.ntscmode ? RP_GUESTSCREENFLAGS_MODE_NTSC : RP_GUESTSCREENFLAGS_MODE_PAL;
+			ret |= currprefs.gfx_vresolution ? RP_GUESTSCREENFLAGS_VERTICAL_INTERLACED : 0;
+		}
+		return ret;
+	}
+	return RP_SCREENCAPTURE_ERROR;
+}
+
 static LRESULT CALLBACK RPHostMsgFunction2 (UINT uMessage, WPARAM wParam, LPARAM lParam,
 	LPCVOID pData, DWORD dwDataSize, LPARAM lMsgFunctionParam)
 {
@@ -1362,53 +1445,7 @@ static LRESULT CALLBACK RPHostMsgFunction2 (UINT uMessage, WPARAM wParam, LPARAM
 		}
 	case RP_IPC_TO_GUEST_SCREENCAPTURE:
 		{
-			extern int screenshotf(int monid, const TCHAR *spath, int mode, int doprepare, int imagemode, struct vidbuffer *vb);
-			extern int screenshotmode;
-			struct RPScreenCapture *rpsc = (struct RPScreenCapture*)pData;
-			if (rpsc->szScreenFiltered[0] || rpsc->szScreenRaw[0]) {
-				int ossm = screenshotmode;
-				DWORD ret = 0;
-				int ok = 0;
-				screenshotmode = 0;
-				if (log_rp & 2)
-					write_log (_T("'%s' '%s'\n"), rpsc->szScreenFiltered, rpsc->szScreenRaw);
-				if (rpsc->szScreenFiltered[0])
-					ok = screenshotf(0, rpsc->szScreenFiltered, 1, 1, 0, NULL);
-				if (rpsc->szScreenRaw[0]) {
-					struct vidbuf_description *avidinfo = &adisplays[0].gfxvidinfo;
-					struct vidbuffer vb;
-					int w = avidinfo->drawbuffer.inwidth;
-					int h = avidinfo->drawbuffer.inheight;
-					if (programmedmode <= 1) {
-						h = (maxvpos + lof_store - minfirstline) << currprefs.gfx_vresolution;
-					}
-					if (interlace_seen && currprefs.gfx_vresolution > 0) {
-						h -= 1 << (currprefs.gfx_vresolution - 1);
-					}
-					allocvidbuffer (0, &vb, w, h, avidinfo->drawbuffer.pixbytes * 8);
-					set_custom_limits(0, 0, 0, 0);
-					draw_frame (&vb);
-					ok |= screenshotf(0, rpsc->szScreenRaw, 1, 1, 1, &vb);
-					if (log_rp & 2)
-						write_log (_T("Rawscreenshot %dx%d\n"), w, h);
-					//ok |= screenshotf (_T("c:\\temp\\1.bmp"), 1, 1, 1, &vb);
-					freevidbuffer(0, &vb);
-				}
-				screenshotmode = ossm;
-				if (log_rp & 2)
-					write_log (_T("->%d\n"), ok);
-				if (!ok)
-					return RP_SCREENCAPTURE_ERROR;
-				if (WIN32GFX_IsPicassoScreen(mon)) {
-					ret |= RP_GUESTSCREENFLAGS_MODE_DIGITAL;
-				} else {
-					ret |= currprefs.gfx_resolution == RES_LORES ? RP_GUESTSCREENFLAGS_HORIZONTAL_LORES : ((currprefs.gfx_resolution == RES_SUPERHIRES) ? RP_GUESTSCREENFLAGS_HORIZONTAL_SUPERHIRES : 0);
-					ret |= currprefs.ntscmode ? RP_GUESTSCREENFLAGS_MODE_NTSC : RP_GUESTSCREENFLAGS_MODE_PAL;
-					ret |= currprefs.gfx_vresolution ? RP_GUESTSCREENFLAGS_VERTICAL_INTERLACED : 0;
-				}
-				return ret;
-			}
-			return RP_SCREENCAPTURE_ERROR;
+			return screencap(pData, mon);
 		}
 	case RP_IPC_TO_GUEST_SAVESTATE:
 		{
@@ -1488,6 +1525,8 @@ static LRESULT CALLBACK RPHostMsgFunction2 (UINT uMessage, WPARAM wParam, LPARAM
 	case RP_IPC_TO_GUEST_SHOWDEBUGGER:
 		activate_debugger();
 		return 1;
+	case RP_IPC_TO_GUEST_EXECUTE:
+		return execute(pData);
 	}
 	return FALSE;
 }
@@ -2331,4 +2370,20 @@ void rp_reset(void)
 	if (!initialized)
 		return;
 	device_add_vsync_pre(rp_vsync);
+}
+
+void rp_test(void)
+{
+#if 0
+	struct AmigaMonitor *mon = &AMonitors[0];
+	struct RPScreenCapture rpsc = { 0 };
+
+	_tcscpy(rpsc.szScreenRaw, _T("c:\\temp\\test.png"));
+	
+	screencap((void*)&rpsc, mon);
+#endif
+#if 1
+	dosexecute(_T("c:list"), _T("sys:"), _T(""), 4000, 3, 0x12345678, 0, NULL, 0);
+
+#endif
 }
