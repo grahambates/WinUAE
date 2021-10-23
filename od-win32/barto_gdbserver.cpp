@@ -968,12 +968,13 @@ start_profile:
 						// need to flip bits and swap rgb channels
 						const auto w = bi->bmiHeader.biWidth;
 						const auto h = bi->bmiHeader.biHeight;
+						const auto pitch = bi->bmiHeader.biSizeImage / bi->bmiHeader.biHeight;
 						auto bits = std::make_unique<uint8_t[]>(w * 3 * h);
 						for(int y = 0; y < bi->bmiHeader.biHeight; y++) {
 							for(int x = 0; x < bi->bmiHeader.biWidth; x++) {
-								bits[y * w * 3 + x * 3 + 0] = bi_bits[(h - 1 - y) * w * 3 + x * 3 + 2];
-								bits[y * w * 3 + x * 3 + 1] = bi_bits[(h - 1 - y) * w * 3 + x * 3 + 1];
-								bits[y * w * 3 + x * 3 + 2] = bi_bits[(h - 1 - y) * w * 3 + x * 3 + 0];
+								bits[y * w * 3 + x * 3 + 0] = bi_bits[(h - 1 - y) * pitch + x * 3 + 2];
+								bits[y * w * 3 + x * 3 + 1] = bi_bits[(h - 1 - y) * pitch + x * 3 + 1];
+								bits[y * w * 3 + x * 3 + 2] = bi_bits[(h - 1 - y) * pitch + x * 3 + 0];
 							}
 						}
 						struct write_context_t {
