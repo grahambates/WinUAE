@@ -158,9 +158,12 @@ struct cpu_profiler {
 				cpu_profiler_output.push_back(0x7fffffff);
 				cpu_profiler_output.push_back(~0 - cycles_for_instr);
 			}
+			// record PC & unwind callstack
 			auto r13 = regs.regs[13] /* a5 = fp */, r15 = regs.regs[15] /* a7 = sp */;
 			while(pc >= cpu_profiler_start_addr && pc < cpu_profiler_end_addr) {
 				callstack[callstack_depth++] = pc - cpu_profiler_start_addr;
+				if(!cpu_profiler_unwind_buffer)
+					break;
 				const auto& unwind = cpu_profiler_unwind_buffer[(pc - cpu_profiler_start_addr) >> 1];
 				if(unwind.cfa == ~0 || unwind.ra == ~0) break; // should not happen
 				uae_u32 new_cfa;
