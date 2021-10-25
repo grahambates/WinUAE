@@ -144,7 +144,7 @@ struct cpu_profiler {
 	uae_u32 callstack_depth = 0;
 
 	cpu_profiler(uae_u32 pc) {
-		if(cpu_profiler_start_addr) {
+		if(cpu_profiler_end_addr) {
 			auto get_long_debug_no_custom = [](uaecptr addr) -> int {
 				if(&get_mem_bank(addr) == &custom_bank)
 					return -1;
@@ -184,7 +184,7 @@ struct cpu_profiler {
 	}
 
 	~cpu_profiler() {
-		if(cpu_profiler_start_addr && cycles) { // profiling may have been switched on or off in vsync (which is called from 'r->opcode' above)
+		if(cpu_profiler_end_addr && cycles) { // profiling may have been switched on or off in vsync (which is called from 'r->opcode' above)
 			cpu_profiler_last_cycles = get_cycles();
 			auto cycles_for_instr = (cpu_profiler_last_cycles - cycles) / cpucycleunit;
 			for(int i = 0; i < callstack_depth; i++)
