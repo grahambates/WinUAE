@@ -106,6 +106,7 @@ struct ncr9x_state
 	uaecptr dma_ptr;
 	bool dma_on;
 	int dma_cnt;
+	uae_u32 dma_mask;
 	uae_u8 states[16];
 	struct romconfig *rc;
 	struct ncr9x_state **self_ptr;
@@ -477,7 +478,7 @@ static int masoboshi_dma_read(void *opaque, uint8_t *buf, int len)
 	if (ncr->dma_on) {
 		m68k_cancel_idle();
 		while (len > 0) {
-			uae_u16 v = get_word(ncr->dma_ptr & ~1);
+			uae_u16 v = dma_get_word((ncr->dma_ptr & ~1) & ncr->dma_mask);
 			*buf++ = v >> 8;
 			len--;
 			if (len > 0) {
@@ -510,7 +511,7 @@ static int masoboshi_dma_write(void *opaque, uint8_t *buf, int len)
 				v |= *buf++;
 				len--;
 			}
-			put_word(ncr->dma_ptr & ~1, v);
+			dma_put_word((ncr->dma_ptr & ~1) & ncr->dma_mask, v);
 			ncr->dma_ptr += 2;
 		}
 		return -1;
@@ -532,7 +533,7 @@ static int trifecta_dma_read(void *opaque, uint8_t *buf, int len)
 		//write_log(_T("Trifecta DMA from %08x, %d bytes\n"), ncr->dma_ptr, len);
 		m68k_cancel_idle();
 		while (len > 0) {
-			uae_u16 v = get_word(ncr->dma_ptr & ~1);
+			uae_u16 v = dma_get_word((ncr->dma_ptr & ~1) & ncr->dma_mask);
 			*buf++ = v >> 8;
 			len--;
 			if (len > 0) {
@@ -560,7 +561,7 @@ static int trifecta_dma_write(void *opaque, uint8_t *buf, int len)
 				v |= *buf++;
 				len--;
 			}
-			put_word(ncr->dma_ptr & ~1, v);
+			dma_put_word((ncr->dma_ptr & ~1) & ncr->dma_mask, v);
 			ncr->dma_ptr += 2;
 		}
 		return -1;
@@ -578,7 +579,7 @@ static int fastlane_dma_read(void *opaque, uint8_t *buf, int len)
 	}
 	m68k_cancel_idle();
 	while (len > 0) {
-		uae_u16 v = get_word(ncr->dma_ptr & ~1);
+		uae_u16 v = dma_get_word(ncr->dma_ptr & ~1);
 		*buf++ = v >> 8;
 		len--;
 		if (len > 0) {
@@ -606,7 +607,7 @@ static int fastlane_dma_write(void *opaque, uint8_t *buf, int len)
 			v |= *buf++;
 			len--;
 		}
-		put_word(ncr->dma_ptr & ~1, v);
+		dma_put_word(ncr->dma_ptr & ~1, v);
 		ncr->dma_ptr += 2;
 	}
 	return -1;
@@ -621,7 +622,7 @@ static int cyberstorm_mk1_mk2_dma_read(void *opaque, uint8_t *buf, int len)
 	}
 	m68k_cancel_idle();
 	while (len > 0) {
-		uae_u16 v = get_word(ncr->dma_ptr & ~1);
+		uae_u16 v = dma_get_word(ncr->dma_ptr & ~1);
 		*buf++ = v >> 8;
 		len--;
 		if (len > 0) {
@@ -649,7 +650,7 @@ static int cyberstorm_mk1_mk2_dma_write(void *opaque, uint8_t *buf, int len)
 			v |= *buf++;
 			len--;
 		}
-		put_word(ncr->dma_ptr & ~1, v);
+		dma_put_word(ncr->dma_ptr & ~1, v);
 		ncr->dma_ptr += 2;
 	}
 	return -1;
@@ -664,7 +665,7 @@ static int blizzard_dma_read(void *opaque, uint8_t *buf, int len)
 	}
 	m68k_cancel_idle();
 	while (len > 0) {
-		uae_u16 v = get_word((ncr->dma_ptr & 0x7fffffff) * 2);
+		uae_u16 v = dma_get_word((ncr->dma_ptr & 0x7fffffff) * 2);
 		*buf++ = v >> 8;
 		len--;
 		if (len > 0) {
@@ -692,7 +693,7 @@ static int blizzard_dma_write(void *opaque, uint8_t *buf, int len)
 			v |= *buf++;
 			len--;
 		}
-		put_word((ncr->dma_ptr & 0x7fffffff) * 2, v);
+		dma_put_word((ncr->dma_ptr & 0x7fffffff) * 2, v);
 		ncr->dma_ptr++;
 	}
 	return -1;
@@ -954,9 +955,11 @@ static void ncr9x_io_bput3(struct ncr9x_state *ncr, uaecptr addr, uae_u32 val, i
 			esp_dma_enable(ncr->devobject.lsistate, ncr->dma_on);
 			ncr->states[0] = val;
 			ncr->dma_cnt = 0;
+#if NCR_DEBUG
 			if (ncr->dma_on) {
 				write_log(_T("Trifecta DMA %08x %c\n"), ncr->dma_ptr, (val & 1) ? 'R' : 'W');
 			}
+#endif
 		} else if (addr == 0x402) {
 			ncr->dma_ptr &= 0xffff00;
 			ncr->dma_ptr |= val;
@@ -2452,7 +2455,7 @@ static void ncr9x_esp_scsi_init(struct ncr9x_state *ncr, ESPDMAMemoryReadWriteFu
 	ncr->board_mask = 0xffff;
 	ncr->irq_func = irq_func ? irq_func : set_irq2;
 	if (!ncr->devobject.lsistate)
-		esp_scsi_init(&ncr->devobject, read, write, mode > 0);
+		esp_scsi_init(&ncr->devobject, read, write, mode > 0 ? mode : 0);
 	esp_scsi_reset(&ncr->devobject, ncr);
 }
 
@@ -2505,6 +2508,7 @@ static void ncr9x_add_scsi_unit(struct ncr9x_state **ncrp, int ch, struct uaedev
 {
 	struct ncr9x_state *ncr = allocscsi(ncrp, rc, ch);
 	if (ch >= 0 && ncr) {
+		ncr->dma_mask = rc->dma24bit ? 0x00ffffff : 0xffffffff;
 		if (ci->type == UAEDEV_CD)
 			add_ncr_scsi_cd (ncr, ch, ci->device_emu_unit, ci->uae_unitnum);
 		else if (ci->type == UAEDEV_TAPE)
@@ -2535,7 +2539,7 @@ void cpuboard_ncr9x_add_scsi_unit(int ch, struct uaedev_config_info *ci, struct 
 void cpuboard_dkb_add_scsi_unit(int ch, struct uaedev_config_info *ci, struct romconfig *rc)
 {
 	ncr9x_add_scsi_unit(&ncr_dkb1200_scsi, ch, ci, rc);
-	ncr9x_esp_scsi_init(ncr_dkb1200_scsi, fake_dma_read, fake_dma_write, set_irq2_dkb1200, 0);
+	ncr9x_esp_scsi_init(ncr_dkb1200_scsi, fake_dma_read, fake_dma_write, set_irq2_dkb1200, 2);
 }
 
 void fastlane_add_scsi_unit (int ch, struct uaedev_config_info *ci, struct romconfig *rc)
@@ -2600,7 +2604,7 @@ void scram5394_add_scsi_unit(int ch, struct uaedev_config_info *ci, struct romco
 void rapidfire_add_scsi_unit(int ch, struct uaedev_config_info *ci, struct romconfig *rc)
 {
 	ncr9x_add_scsi_unit(&ncr_rapidfire_scsi[ci->controller_type_unit], ch, ci, rc);
-	ncr9x_esp_scsi_init(ncr_rapidfire_scsi[ci->controller_type_unit], fake_dma_read, fake_dma_write, set_irq2, 0);
+	ncr9x_esp_scsi_init(ncr_rapidfire_scsi[ci->controller_type_unit], fake_dma_read, fake_dma_write, set_irq2, 2);
 	esp_dma_enable(ncr_rapidfire_scsi[ci->controller_type_unit]->devobject.lsistate, 1);
 }
 

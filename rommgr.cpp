@@ -95,7 +95,7 @@ struct romdata *getromdatabypath (const TCHAR *path)
 	return NULL;
 }
 
-#define NEXT_ROM_ID 260
+#define NEXT_ROM_ID 269
 
 #define ALTROM(id,grp,num,size,flags,crc32,a,b,c,d,e) \
 { _T("X"), 0, 0, 0, 0, 0, size, id, 0, 0, flags, (grp << 16) | num, 0, NULL, crc32, a, b, c, d, e },
@@ -319,6 +319,10 @@ static struct romdata roms[] = {
 	ALTROMPN(217, 1, 1, 16384, ROMTYPE_ODD  | ROMTYPE_8BIT, NULL, 0xe4df7cb8,0xd6795d9c,0x5892f41b,0x256aff7f,0x56faacb3,0x1f024a3b)
 	ALTROMPN(217, 1, 2, 16384, ROMTYPE_EVEN | ROMTYPE_8BIT, NULL, 0x0924e479,0x6f2642c8,0xa977cf12,0x418fffff,0x3bafe846,0xfde1f1e5)
 
+	{ _T("A590/A2091 v4.4"), 4, 4, 4, 4, _T("A590\0A2091\0"), 16384, 268, 0, 0, ROMTYPE_A2091, 0, 0, NULL,
+	0x9fd5c76b, 0x0e4190ed,0x156b65cf,0x57aba1e7,0x8513355c,0xf5e0b366 },
+	ALTROMPN(268, 1, 1, 8192, ROMTYPE_ODD  | ROMTYPE_8BIT, _T("390389-01"), 0x0dbc6d28,0x79378b86,0x93b334fe,0x12ee8d39,0x3235e3b5,0x71bfb55b)
+	ALTROMPN(268, 1, 2, 8192, ROMTYPE_EVEN | ROMTYPE_8BIT, _T("390388-01"), 0x4d1b9757,0x43ff80f7,0xc5770566,0x012d8711,0x8552842b,0xb01010f5)
 	{ _T("A590/A2091 v4.6"), 4, 6, 4, 6, _T("A590\0A2091\0"), 16384, 202, 0, 0, ROMTYPE_A2091, 0, 0, NULL,
 	0x00a38212, 0xa029a4de,0x56e5539d,0x0ee00588,0xc2634f13,0x29f06269 },
 	ALTROMPN(202, 1, 1, 8192, ROMTYPE_ODD  | ROMTYPE_8BIT, _T("390389-02"), 0x26013266,0x60dedda8,0xd406b276,0x2ad1504a,0x88a4d6e2,0x9c0fb10d)
@@ -413,6 +417,8 @@ static struct romdata roms[] = {
 	0xa2ba67d1, 0x2015685f, 0xaadfbaf6, 0x8b19b07e, 0x5f4e888f, 0x738b99d7, NULL, NULL },
 	{ _T("GVP A1230 Turbo+ Series II"), 0, 0, 0, 0, _T("A1230SII\0"), 16384, 230, 0, 0, ROMTYPE_CB_A1230S2, 0, 0, NULL,
 	0x96bd351f, 0xb7648daf, 0x52d0732d, 0x897548f3, 0x29ebf624, 0x101474d5, NULL, NULL },
+	{ _T("GVP A1230 Turbo+"), 0, 0, 0, 0, _T("A1230SI\0"), 16384, 260, 0, 0, ROMTYPE_CB_A1230S1, 0, 0, NULL,
+	0x3f0b8d7a, 0x258c6ee7, 0x5d8dfee5, 0x7871c5be, 0x79a83fa3, 0xca53a1a9, NULL, NULL },
 	{ _T("Harms 3000 Professional"), 0, 0, 0, 00, _T("HARMS3000PRO\0"), 65536, 248, 0, 0, ROMTYPE_CB_HARMS3KP, 0, 0, NULL,
 	0x80da32b5,0x0a3ded88,0x20a24238,0xd3e43baf,0x7163226c,0x861e2d88, NULL, NULL },
 	ALTROMPN(248, 1, 1, 32768, ROMTYPE_ODD  | ROMTYPE_8BIT, NULL, 0xc22c5ee5, 0xc211f305, 0xacb2ce10, 0x32b1b296, 0xc5780dde, 0x78dba814)
@@ -526,6 +532,8 @@ static struct romdata roms[] = {
 	0xf99c6f11, 0x77098a9e,0x35acaef2,0x11a546f0,0xc564cdac,0xf52836c4, NULL, NULL },
 	{ _T("GVP Series I/II v3.7"), 3, 7, 3, 7, _T("GVPII\0GVPI\0"), 16384, 238, 0, 0, ROMTYPE_GVPS12, 0, 0, NULL,
 	0xe136b9c4, 0xabcc0b52,0xa99dba6f,0xc2eb8428,0x63c7c805,0xb7f4d770, NULL, NULL },
+	{ _T("GVP Series II v4.13"), 4, 13, 4, 13, _T("GVPII\0"), 16384, 263, 0, 0, ROMTYPE_GVPS2, 0, 0, NULL,
+	0xfc20b5e2, 0x85c050ba, 0x894ced53, 0x359fd7d6, 0x730250e7, 0x4c4b66bf, NULL, NULL },
 	{ _T("GVP Series II v4.15"), 4, 15, 4, 15, _T("GVPII\0"), 16384, 109, 0, 0, ROMTYPE_GVPS2, 0, 0, NULL,
 	0xf89f44d6, 0xbf10c12c,0xc72dd040,0x549ea17c,0x24947633,0xe3773297, NULL, NULL },
 	{ _T("GVP Series II Guru ROM"), 6, 14, 6, 14, _T("GVPII\0"), 32768, 110, 0, 0, ROMTYPE_GVPS2, 0, 0, NULL,
@@ -568,6 +576,10 @@ static struct romdata roms[] = {
 	0x4a15f224, 0x29500b47, 0x289e84ac, 0x575e3c7d, 0x82199b45, 0x605d8fc9, NULL, NULL },
 	{ _T("IVS Trumpcard v4.9"), 4, 9, 4, 9, _T("IVSTC\0"), 16384, 249, 0, 0, ROMTYPE_IVSTC, 0, 0, NULL,
 	0x5282febc, 0x9d69a534, 0x60529d66, 0x13b64723, 0xb0c8dfa5, 0x80274048, NULL, NULL },
+	{ _T("IVS Trumpcard v3.1"), 3, 1, 3, 1, _T("IVSTC\0"), 8192, 261, 0, 0, ROMTYPE_IVSTC, 0, 0, NULL,
+	0xfe48dd5d, 0x03e6c1b1, 0xf3300c94, 0x4cc176ea, 0xb3082e91, 0xe75d5e62, NULL, NULL },
+	{ _T("IVS Trumpcard v1.5"), 1, 5, 1, 5, _T("IVSTC\0"), 8192, 262, 0, 0, ROMTYPE_IVSTC, 0, 0, NULL,
+	0x6f37eb74, 0xbf510c23, 0x1c2134d7, 0xed4b4158, 0xba4acf14, 0xa34824d2, NULL, NULL },
 	{ _T("Expansion Systems Dataflyer+ v1.5"), 1, 5, 1, 5, _T("DATAFLYERPLUS\0"), 32768, 170, 0, 0, ROMTYPE_DATAFLYER, 0, 0, NULL,
 	0x00888f19, 0x54b73354, 0xb3592691, 0x59a80909, 0x0bdb67df, 0x8ac22aa9, NULL, NULL },
 	{ _T("Expansion Systems Dataflyer+ v1.7"), 1, 7, 1, 7, _T("DATAFLYERPLUS\0"), 32768, 171, 0, 0, ROMTYPE_DATAFLYER, 0, 0, NULL,
@@ -579,7 +591,7 @@ static struct romdata roms[] = {
 	{ _T("Microbotics HardFrame v1.5"), 1, 5, 1, 5, _T("HARDFRAME\0"), 32768, 173, 0, 0, ROMTYPE_HARDFRAME, 0, 0, NULL,
 	0x8d144212, 0xc5a4f497, 0x5216c1b1, 0xe08760d0, 0x0bd579ef, 0xea226354, NULL, NULL },
 	{ _T("Microbotics HardFrame v1.8"), 1, 8, 1, 8, _T("HARDFRAME\0"), 32768, 258, 0, 0, ROMTYPE_HARDFRAME, 0, 0, NULL,
-	0x10de5e2d, 0x3e25af5, 0x9e6bb0d69, 0xd925f07b, 0x200b1b0e, 0x45e57d33, NULL, NULL },
+	0x10de5e2d, 0x3e25af59, 0xe6bb0d69, 0xd925f07b, 0x200b1b0e, 0x45e57d33, NULL, NULL },
 	{ _T("Microbotics HardFrame v1.9"), 1, 9, 1, 9, _T("HARDFRAME\0"), 32768, 256, 0, 0, ROMTYPE_HARDFRAME, 0, 0, NULL,
 	0x948a3de8, 0xc34cb0ef, 0xa0ebdd71, 0x9d604d38, 0x625a160d, 0x9e2ca95d, NULL, NULL },
 	{ _T("Mainhattan Data A-Team v1.8"), 1, 8, 1, 8, _T("ATEAM\0"), 65536, 174, 0, 0, ROMTYPE_ATEAM, 0, 0, NULL,
@@ -636,6 +648,14 @@ static struct romdata roms[] = {
 	0x4837cc3d, 0xeea5e9ab,0xb3ffb4ed,0xdf09825c,0x7e8de75d,0x0d08c01f, NULL, NULL },
 	{ _T("Hardital Dotto"), 0, 0, 0, 0, _T("DOTTO\0"), 32768, 257, 0, 0, ROMTYPE_DOTTO, 0, 0, NULL,
 	0xee803484, 0x62822cb9,0x0b095efa,0x455496ea,0xd5b22740,0x77d86375, NULL, NULL },
+	{ _T("A.L.F. 2"), 0, 0, 0, 0, _T("ALF2\0"), 65536, 264, 0, 0, ROMTYPE_ALF2, 0, 0, NULL,
+	0x9cf8a7b7, 0x3df4667c,0xd3436367,0x7896da65,0x94994769,0x13bc6746, NULL, NULL },
+	{ _T("M.A.S.T. Fireball"), 0, 0, 0, 0, _T("MASTFB\0"), 8192, 265, 0, 0, ROMTYPE_MASTFB, 0, 0, NULL,
+	0xb475ff5f, 0x63609553,0x98b06812,0x23ade9ac,0x6ee31364,0x5375fce3, NULL, NULL },
+	{ _T("Hardital Synthesis"), 0, 0, 0, 0, _T("SYNTHESIS\0"), 32768, 266, 0, 0, ROMTYPE_SYNTHESIS, 0, 0, NULL,
+	0x667c7616, 0x0eb1cb38,0x3133f070,0x7cb57944,0xc516f236,0xbad4d4f6, NULL, NULL },
+	{ _T("Combitec HD20A/HD40A"), 0, 0, 0, 0, _T("HD20A\0"), 32768, 267, 0, 0, ROMTYPE_HD20A, 0, 0, NULL,
+	0x0e7391b4, 0x7c365adb,0x3496c479,0x5e94a166,0xd834254a,0x6112d91c, NULL, NULL },
 
 	{ _T("CyberStorm MK I 68040"), 0, 0, 0, 0, _T("CSMKI\0"), 32768, 95, 0, 0, ROMTYPE_CB_CSMK1, 0, 0, NULL,
 	  0, 0, 0, 0, 0, 0, NULL, _T("cyberstormmk1_040.rom") },
@@ -1899,6 +1919,32 @@ struct zfile *read_rom (struct romdata *prd)
 					ok = 1;
 				if (!ok)
 					byteswap(buf, size);
+			}
+			if (ok) {
+				if (rd->id == 197) {
+					// ALG Platoon
+					uae_u8 *tmp = xmalloc(uae_u8, size);
+					if (tmp) {
+						memcpy(tmp, buf, size);
+						static const int platoon[] = { 0,8,4,12,2,10,6,14,1,9,5,13,3,11,7,15,16,24,20,28,18,26,22,30,17,25,21,29,19,27,23,31 };
+						for (int i = 0; i < 32; i++) {
+							memcpy(buf + i * 0x2000, tmp + platoon[i] * 0x2000, 0x2000);
+						}
+						xfree(tmp);
+					}
+				} else if (rd->id == 182) {
+					// ALG Space Pirates
+					uae_u8 *tmp = xmalloc(uae_u8, size);
+					if (tmp) {
+						memcpy(tmp, buf, size);
+						static const int sp[] = { 33,32,34,35,49,48,50,51,45,44,46,47,61,60,62,63,37,36,38,39,53,52,54,55,41,40,42,43,57,56,58,59,
+						33,32,34,35,49,48,50,51,45,44,46,47,61,60,62,63,37,36,38,39,53,52,54,55,41,40,42,43,57,56,58,59 };
+						for (int i = 0; i < 64; i++) {
+							memcpy(buf + i * 0x1000, tmp + sp[i] * 0x1000, 0x1000);
+						}
+						xfree(tmp);
+					}
+				}
 			}
 			if (ok) {
 				struct zfile *zf = zfile_fopen_empty (NULL, name, size);

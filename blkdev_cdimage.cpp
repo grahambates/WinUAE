@@ -45,8 +45,6 @@
 
 #define scsi_log write_log
 
-#define CDDA_BUFFERS 12
-
 enum audenc { AUDENC_NONE, AUDENC_PCM, AUDENC_MP3, AUDENC_FLAC, ENC_CHD };
 
 struct cdtoc
@@ -391,7 +389,7 @@ static int setstate (struct cdunit *cdu, int state, int playpos)
 	return 0;
 }
 
-static void *cdda_unpack_func (void *v)
+static void cdda_unpack_func (void *v)
 {
 	cdimage_unpack_thread = 1;
 	mp3decoder *mp3dec = NULL;
@@ -432,7 +430,6 @@ static void *cdda_unpack_func (void *v)
 	}
 	delete mp3dec;
 	cdimage_unpack_thread = -1;
-	return 0;
 }
 
 static void audio_unpack (struct cdunit *cdu, struct cdtoc *t)
@@ -753,7 +750,7 @@ end:
 	return restart;
 }
 
-static void *cdda_play_func (void *v)
+static void cdda_play_func (void *v)
 {
 	int outpos = -1;
 	struct cdunit *cdu = (struct cdunit*)v;
@@ -773,7 +770,6 @@ static void *cdda_play_func (void *v)
 		cdu->cdda_play = 1;
 	}
 	cdu->thread_active = false;
-	return NULL;
 }
 
 static void cdda_stop (struct cdunit *cdu)

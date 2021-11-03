@@ -47,7 +47,7 @@ void(*D3D_refresh)(int);
 bool(*D3D_renderframe)(int, int,bool);
 void(*D3D_showframe)(int);
 void(*D3D_showframe_special)(int, int);
-uae_u8* (*D3D_locktexture)(int, int*, int*, bool);
+uae_u8* (*D3D_locktexture)(int, int*, int*, int);
 void (*D3D_unlocktexture)(int, int, int);
 void (*D3D_flushtexture)(int, int miny, int maxy);
 void (*D3D_guimode)(int, int);
@@ -965,6 +965,7 @@ static void fxremoveline(char *s, char *dst, const char **lines)
 	*d = 0;
 }
 
+#if 1
 
 static bool psEffect_LoadEffect(struct d3d11struct *d3d, const TCHAR *shaderfile, struct shaderdata11 *s, int num)
 {
@@ -979,6 +980,9 @@ static bool psEffect_LoadEffect(struct d3d11struct *d3d, const TCHAR *shaderfile
 	char *fx1 = NULL;
 	char *fx2 = NULL;
 	char *name = NULL;
+	int layout = 0;
+	char *fx;
+	int size;
 
 	if (!pD3DCompileFromFile || !ppD3DCompile) {
 		write_log(_T("D3D11 No shader compiler available (D3DCompiler_46.dll or D3DCompiler_47.dll).\n"));
@@ -1014,7 +1018,7 @@ static bool psEffect_LoadEffect(struct d3d11struct *d3d, const TCHAR *shaderfile
 		write_log(_T("Failed to open '%s'\n"), tmp);
 		goto end;
 	}
-	int size = zfile_size(z);
+	size = zfile_size(z);
 	fx1 = xcalloc(char, size * 4);
 	fx2 = xcalloc(char, size * 4);
 	if (zfile_fread(fx1, 1, size, z) != size) {
@@ -1025,7 +1029,7 @@ static bool psEffect_LoadEffect(struct d3d11struct *d3d, const TCHAR *shaderfile
 	zfile_fclose(z);
 	z = NULL;
 
-	char *fx = fx1;
+	fx = fx1;
 	if (fxneedconvert(fx1)) {
 		static const char *converts1[] = { "technique", "vs_3_0", "vs_2_0", "vs_1_1", "ps_3_0", "ps_2_0", NULL };
 		static const char *converts2[] = { "technique10", "vs_4_0_level_9_3", "vs_4_0_level_9_3", "vs_4_0_level_9_3", "ps_4_0_level_9_3", "ps_4_0_level_9_3", NULL };
@@ -1069,7 +1073,6 @@ static bool psEffect_LoadEffect(struct d3d11struct *d3d, const TCHAR *shaderfile
 
 	s->effect = g_pEffect;
 
-	int layout = 0;
 	s->CombineTechniqueEffectIndex = layout;
 	layout = createfxlayout(d3d, s, s->m_CombineTechniqueEffectHandle, layout);
 	s->PreprocessTechnique1EffectIndex = layout;
@@ -1115,6 +1118,16 @@ end:
 	xfree(name);
 	return false;
 }
+
+#else
+
+static bool psEffect_LoadEffect(struct d3d11struct* d3d, const TCHAR* shaderfile, struct shaderdata11* s, int num)
+{
+	write_log(_T("FX11 disabled\n"));
+	return false;
+}
+
+#endif
 
 static bool psEffect_SetMatrices(D3DXMATRIX *matProj, D3DXMATRIX *matView, D3DXMATRIX *matWorld, struct shaderdata11 *s)
 {
@@ -1583,13 +1596,13 @@ static void updateleds(struct d3d11struct *d3d)
 		write_log(_T("Led Map failed %08x\n"), hr);
 		return;
 	}
-	for (int y = 0; y < TD_TOTAL_HEIGHT * d3d->statusbar_vx; y++) {
+	for (int y = 0; y < d3d->osd.height; y++) {
 		uae_u8 *buf = (uae_u8*)map.pData + y * map.RowPitch;
 		statusline_single_erase(d3d - d3d11data, buf, 32 / 8, y, d3d->ledwidth);
 	}
 	statusline_render(d3d - d3d11data, (uae_u8*)map.pData, 32 / 8, map.RowPitch, d3d->ledwidth, d3d->ledheight, rc, gc, bc, a);
 
-	for (int y = 0; y < TD_TOTAL_HEIGHT * d3d->statusbar_vx; y++) {
+	for (int y = 0; y < d3d->osd.height; y++) {
 		uae_u8 *buf = (uae_u8*)map.pData + y * map.RowPitch;
 		draw_status_line_single(d3d - d3d11data, buf, 32 / 8, y, d3d->ledwidth, rc, gc, bc, a);
 	}
@@ -1985,7 +1998,7 @@ static bool CreateTexture(struct d3d11struct *d3d)
 		return false;
 	}
 
-	ID3D11Texture2D* pSurface;
+	ID3D11Texture2D *pSurface;
 	hr = d3d->m_swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast< void** >(&pSurface));
 	if (SUCCEEDED(hr)) {
 		memset(&desc, 0, sizeof desc);
@@ -2003,7 +2016,7 @@ static bool CreateTexture(struct d3d11struct *d3d)
 
 	UpdateVertexArray(d3d, d3d->m_vertexBuffer, 0, 0, 0, 0, 0, 0, 0, 0);
 
-	d3d->statusbar_hx = d3d->statusbar_vx = statusline_set_multiplier(mon->monitor_id, d3d->m_screenWidth, d3d->m_screenHeight);
+	d3d->statusbar_hx = d3d->statusbar_vx = statusline_set_multiplier(mon->monitor_id, d3d->m_screenWidth, d3d->m_screenHeight) / 100;
 	d3d->ledwidth = d3d->m_screenWidth;
 	d3d->ledheight = TD_TOTAL_HEIGHT * d3d->statusbar_vx;
 	allocsprite(d3d, &d3d->osd, d3d->ledwidth, d3d->ledheight, true);
@@ -2472,6 +2485,7 @@ static int createmask2texture(struct d3d11struct *d3d, const TCHAR *filename)
 	ID3D11Texture2D *tx = NULL;
 	HRESULT hr;
 	TCHAR filepath[MAX_DPATH];
+	float xmult, ymult;
 
 	freesprite(&d3d->mask2texture);
 	for (int i = 0; overlayleds[i]; i++) {
@@ -2601,8 +2615,8 @@ static int createmask2texture(struct d3d11struct *d3d, const TCHAR *filename)
 		allocsprite(d3d, &d3d->blanksprite, d3d->mask2texture_offsetw + 1, d3d->m_screenHeight, false);
 	}
 
-	float xmult = d3d->mask2texture_multx;
-	float ymult = d3d->mask2texture_multy;
+	xmult = d3d->mask2texture_multx;
+	ymult = d3d->mask2texture_multy;
 
 	d3d->mask2rect.left *= xmult;
 	d3d->mask2rect.right *= xmult;
@@ -3240,9 +3254,11 @@ static void do_present(struct d3d11struct *d3d)
 	d3d->syncinterval = syncinterval;
 	if (currprefs.turbo_emulation) {
 		static int skip;
+		static int toggle;
 		if (--skip > 0)
 			return;
-		skip = 10;
+		skip = 10 + toggle;
+		toggle = !toggle;
 		if (os_win8)
 			presentFlags |= DXGI_PRESENT_DO_NOT_WAIT;
 		syncinterval = 0;
@@ -3294,12 +3310,13 @@ static int xxD3D11_init2(HWND ahwnd, int monid, int w_w, int w_h, int t_w, int t
 	ComPtr<IDXGIFactory2> factory2;
 	ComPtr<IDXGIFactory4> factory4;
 	ComPtr<IDXGIFactory5> factory5;
-	IDXGIAdapter1* adapter;
-	IDXGIOutput* adapterOutput;
+	IDXGIAdapter1 *adapter;
+	IDXGIOutput *adapterOutput;
+	IDXGIOutput2 *adapterOutput2;
 	DXGI_ADAPTER_DESC1 adesc;
 	DXGI_OUTPUT_DESC odesc;
 	unsigned int numModes;
-	DXGI_MODE_DESC1* displayModeList;
+	DXGI_MODE_DESC1 *displayModeList;
 	DXGI_ADAPTER_DESC adapterDesc;
 
 	write_log(_T("D3D11 init start. (%d*%d) (%d*%d) RTG=%d Depth=%d.\n"), w_w, w_h, t_w, t_h, ad->picasso_on, depth);
@@ -3729,8 +3746,8 @@ static int xxD3D11_init2(HWND ahwnd, int monid, int w_w, int w_h, int t_w, int t
 	}
 
 	CComPtr<IDXGISwapChain3> m_swapChain3;
-	if (d3d->hdr) {
-		if (SUCCEEDED(d3d->m_swapChain->QueryInterface(&m_swapChain3))) {
+	if (SUCCEEDED(d3d->m_swapChain->QueryInterface(&m_swapChain3))) {
+		if (d3d->hdr) {
 			UINT cps;
 			result = m_swapChain3->CheckColorSpaceSupport(DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709, &cps);
 			if (SUCCEEDED(result)) {
@@ -3743,18 +3760,30 @@ static int xxD3D11_init2(HWND ahwnd, int monid, int w_w, int w_h, int t_w, int t
 			} else {
 				write_log(_T("CheckColorSpaceSupport failed %08x\n"), result);
 			}
-		} else {
-			write_log(_T("QueryInterface(IDXGISwapChain3) failed %08x\n"), result);
+		}
+		IDXGIOutput* dxgiOutput = NULL;
+		result = m_swapChain3->GetContainingOutput(&dxgiOutput);
+		if (SUCCEEDED(result)) {
+			IDXGIOutput2* dxgiOutput2;
+			result = dxgiOutput->QueryInterface(IID_PPV_ARGS(&dxgiOutput2));
+			if (SUCCEEDED(result)) {
+				BOOL mpo = dxgiOutput2->SupportsOverlays();
+				if (mpo) {
+					write_log(_T("MultiPlane Overlays supported\n"));
+				}
+				dxgiOutput2->Release();
+			}
+			dxgiOutput->Release();
 		}
 	}
+
 
 	{
 		ComPtr<IDXGIDevice1> dxgiDevice;
 		result = d3d->m_device->QueryInterface(__uuidof(IDXGIDevice1), &dxgiDevice);
 		if (FAILED(result)) {
 			write_log(_T("QueryInterface IDXGIDevice1 %08x\n"), result);
-		}
-		else {
+		} else {
 			int f = apm->gfx_backbuffers <= 1 ? 1 : 2;
 			if (d3d->blackscreen)
 				f++;
@@ -4759,7 +4788,7 @@ static bool xD3D11_alloctexture(int monid, int w, int h)
 	return true;
 }
 
-static uae_u8 *xD3D11_locktexture(int monid, int *pitch, int *height, bool fullupdate)
+static uae_u8 *xD3D11_locktexture(int monid, int *pitch, int *height, int fullupdate)
 {
 	struct d3d11struct *d3d = &d3d11data[monid];
 
@@ -4792,6 +4821,10 @@ static void xD3D11_unlocktexture(int monid, int y_start, int y_end)
 	d3d->texturelocked--;
 
 	d3d->m_deviceContext->Unmap(d3d->texture2dstaging, 0);
+
+	if (y_start < -1 || y_end < -1) {
+		return;
+	}
 
 	bool rtg = WIN32GFX_IsPicassoScreen(mon);
 	if (((currprefs.leds_on_screen & STATUSLINE_CHIPSET) && !rtg) || ((currprefs.leds_on_screen & STATUSLINE_RTG) && rtg)) {

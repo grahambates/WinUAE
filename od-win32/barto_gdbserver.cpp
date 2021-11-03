@@ -47,17 +47,8 @@ extern struct uae_prefs currprefs;
 extern uae_u8 *get_real_address_debug(uaecptr addr);
 extern void initialize_memwatch(int mode);
 extern void memwatch_setup(void);
-#define TRACE_SKIP_INS 1
-#define TRACE_MATCH_PC 2
-#define TRACE_MATCH_INS 3
-#define TRACE_RANGE_PC 4
-#define TRACE_SKIP_LINE 5
-#define TRACE_RAM_PC 6
-#define TRACE_NRANGE_PC 7
-#define TRACE_CHECKONLY 10
 /*static*/ extern int trace_mode;
-/*static*/ extern uae_u32 trace_param1;
-/*static*/ extern uae_u32 trace_param2;
+/*static*/ extern uae_u32 trace_param[3];
 /*static*/ extern uaecptr processptr;
 /*static*/ extern uae_char *processname;
 /*static*/ extern int memwatch_triggered;
@@ -631,6 +622,7 @@ namespace barto_gdbserver {
 			}
 		} else if(cmd == "reset") {
 			savestate_quick(0, 0); // restore state saved at process entry
+			barto_debug_resources_count = 0;
 			return GDB_OK;
 		} else {
 			// unknown monitor command
@@ -678,7 +670,7 @@ namespace barto_gdbserver {
 				}
 				else {
 					// step in
-					trace_param1 = 1;
+					trace_param[0] = 1;
 					trace_mode = TRACE_SKIP_INS;
 
 					exception_debugging = 1;
@@ -715,8 +707,8 @@ namespace barto_gdbserver {
 					else {
 						if (start != end) {
 							trace_mode = TRACE_NRANGE_PC;
-							trace_param1 = start;
-							trace_param2 = end;
+							trace_param[0] = start;
+							trace_param[1] = end;
 						}
 						else {
 							// step over
@@ -739,7 +731,7 @@ namespace barto_gdbserver {
 									&& !cctrue((opcode >> 8) & 0xf)
 									&& (uae_s16)m68k_dreg(regs, opcode & 7) != 0)) {
 								// A step to next instruction is needed in this case
-								trace_param1 = 1;
+								trace_param[0] = 1;
 								trace_mode = TRACE_SKIP_INS;
 								exception_debugging = 1;
 							}
@@ -747,8 +739,8 @@ namespace barto_gdbserver {
 								// step one instruction after this pc
 								m68k_disasm(pc, &nextpc, 0xffffffff, 1);
 								trace_mode = TRACE_RANGE_PC;
-								trace_param1 = nextpc;
-								trace_param2 = nextpc + 10;
+								trace_param[0] = nextpc;
+								trace_param[1] = nextpc + 10;
 							}
 						}
 					}
@@ -784,8 +776,8 @@ namespace barto_gdbserver {
 			if (adr == 0xffffffff) {
 				// step out of kickstart
 				trace_mode = TRACE_RANGE_PC;
-				trace_param1 = 0;
-				trace_param2 = 0xF80000;
+				trace_param[0] = 0;
+				trace_param[1] = 0xF80000;
 				response = GDB_OK;
 			}
 			else {
@@ -1355,6 +1347,17 @@ namespace barto_gdbserver {
 		}
 	}
 
+	// called during pause_emulation
+	void vsync() {
+		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
+			return;
+
+		if(debugger_state == state::connected && data_available()) {
+			resumepaused(9);
+			// handle_packet will be called in next call to vsync_pre
+		}
+	}
+
 	void vsync_pre() {
 		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
 			return;
@@ -1497,12 +1500,13 @@ start_profile:
 						// need to flip bits and swap rgb channels
 						const auto w = bi->bmiHeader.biWidth;
 						const auto h = bi->bmiHeader.biHeight;
+						const auto pitch = bi->bmiHeader.biSizeImage / bi->bmiHeader.biHeight;
 						auto bits = std::make_unique<uint8_t[]>(w * 3 * h);
 						for(int y = 0; y < bi->bmiHeader.biHeight; y++) {
 							for(int x = 0; x < bi->bmiHeader.biWidth; x++) {
-								bits[y * w * 3 + x * 3 + 0] = bi_bits[(h - 1 - y) * w * 3 + x * 3 + 2];
-								bits[y * w * 3 + x * 3 + 1] = bi_bits[(h - 1 - y) * w * 3 + x * 3 + 1];
-								bits[y * w * 3 + x * 3 + 2] = bi_bits[(h - 1 - y) * w * 3 + x * 3 + 0];
+								bits[y * w * 3 + x * 3 + 0] = bi_bits[(h - 1 - y) * pitch + x * 3 + 2];
+								bits[y * w * 3 + x * 3 + 1] = bi_bits[(h - 1 - y) * pitch + x * 3 + 1];
+								bits[y * w * 3 + x * 3 + 2] = bi_bits[(h - 1 - y) * pitch + x * 3 + 0];
 							}
 						}
 						struct write_context_t {

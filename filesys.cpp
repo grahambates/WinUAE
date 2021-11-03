@@ -481,6 +481,156 @@ typedef struct _unit {
 } Unit;
 
 
+struct ShellExecute2
+{
+	uae_u32 size;
+	char *file, *parms, *currentdir;
+	char *fileparms;
+	uae_u32 stack;
+	uae_s32 priority;
+	uae_u32 flags;
+	uae_u32 id;
+	uae_u32 binsize;
+	uae_u8 *bin;
+
+	uaecptr process;
+	uaecptr buffer;
+	uae_u32 exitcode;
+	shellexecute2_callback cb;
+};
+
+static struct ShellExecute2 shellexecute2[1];
+
+static void shellexecute2_free(struct ShellExecute2 *se2)
+{
+	xfree(se2->file);
+	xfree(se2->currentdir);
+	xfree(se2->parms);
+	xfree(se2->bin);
+	memset(se2, 0, sizeof(struct ShellExecute2));
+}
+
+#define ShellExecute2_Struct_Start (5 * 4)
+#define ShellExecute2_Struct_Start2 (4 * 4)
+
+static int filesys_shellexecute2_process(int mode, TrapContext *ctx)
+{
+	struct ShellExecute2 *se2 = &shellexecute2[0];
+
+	write_log(_T("filesys_shellexecute2_process %d\n"), mode);
+
+	if (mode == 30) {
+		// request Amiga side buffer size
+		int size = ShellExecute2_Struct_Start + ShellExecute2_Struct_Start2;
+		size += 2 * (strlen(se2->file) + 1);
+		size += strlen(se2->currentdir) + 1;
+		size += 2 * (strlen(se2->parms) + 1);
+		size++;
+		size += se2->binsize + 4;
+		return size;
+	}
+	if (mode == 31) {
+		// a0 = buffer
+		// d1 = process pointer
+		se2->buffer = trap_get_areg(ctx, 0);
+		se2->process = trap_get_dreg(ctx, 1);
+		if (!se2->buffer) {
+			// amiga side out of memory
+			shellexecute2_free(se2);
+			return 0;
+		}
+		uaecptr dptr = se2->buffer + ShellExecute2_Struct_Start + ShellExecute2_Struct_Start2;
+		trap_put_long(ctx, se2->buffer + 4, dptr);
+		dptr += trap_put_string(ctx, se2->file, dptr, -1) + 1;
+		trap_put_long(ctx, se2->buffer + 8, dptr);
+		dptr += trap_put_string(ctx, se2->parms, dptr, -1) + 1;
+		trap_put_long(ctx, se2->buffer + 12, dptr);
+		dptr += trap_put_string(ctx, se2->currentdir, dptr, -1) + 1;
+
+		trap_put_long(ctx, se2->buffer + 16, dptr);
+		dptr += trap_put_string(ctx, se2->file, dptr, -1) + 1;
+		if (se2->parms[0]) {
+			trap_put_byte(ctx, dptr - 1, ' ');
+			trap_put_long(ctx, se2->buffer + 20, dptr);
+			dptr += trap_put_string(ctx, se2->parms, dptr, -1) + 1;
+		}
+		dptr += 3;
+		dptr &= ~3;
+
+		uaecptr ptr = se2->buffer + ShellExecute2_Struct_Start;
+		trap_put_long(ctx, ptr, se2->stack);
+		ptr += 4;
+		trap_put_long(ctx, ptr, se2->priority);
+		ptr += 4;
+		trap_put_long(ctx, ptr, se2->id);
+		ptr += 4;
+
+		if (se2->bin) {
+			trap_put_long(ctx, ptr, se2->binsize);
+			ptr += 4;
+			trap_put_long(ctx, ptr, dptr);
+			ptr += 4;
+			trap_put_bytes(ctx, se2->bin, dptr, se2->binsize);
+		} else {
+			trap_put_long(ctx, ptr, 0);
+			ptr += 4;
+			trap_put_long(ctx, ptr, 0);
+			ptr += 4;
+		}
+		return 1;
+	}
+	if (mode == 32) {
+		// called by new process, requests buffer
+		return se2->buffer;
+	}
+	if (mode == 33) {
+		// exit status
+		// d0 = status
+		// a1 = buffer
+		se2->exitcode = trap_get_dreg(ctx, 1);
+		if (se2->cb) {
+			se2->cb(se2->id, se2->exitcode, se2->flags);
+		}
+		shellexecute2_free(se2);
+	}
+
+	return 0;
+}
+
+int filesys_shellexecute2(TCHAR *file, TCHAR *currentdir, TCHAR *parms, uae_u32 stack, uae_s32 priority, uae_u32 id, uae_u32 flags, uae_u8 *bin, uae_u32 binsize, shellexecute2_callback cb)
+{
+	struct ShellExecute2 *se2 = &shellexecute2[0];
+
+	if (uae_boot_rom_type <= 0) {
+		return 0;
+	}
+	if (se2->file) {
+		return 0;
+	}
+
+	se2->file = ua(file);
+	se2->currentdir = ua(currentdir);
+	se2->parms = ua(parms);
+
+	se2->id = id;
+	se2->stack = stack;
+	se2->priority = priority;
+	se2->flags = flags;
+	if (bin && binsize > 0) {
+		se2->bin = xmalloc(uae_u8, binsize);
+		memcpy(se2->bin, bin, binsize);
+		se2->binsize = binsize;
+	}
+
+	se2->cb = cb;
+
+	uae_ShellExecute2(se2->id);
+
+	return 1;
+}
+
+
+
 int nr_units (void)
 {
 	int cnt = 0;
@@ -1903,8 +2053,10 @@ bool filesys_heartbeat(void)
 // This uses filesystem process to reduce resource usage
 void setsystime (void)
 {
+	write_log("SETSYSTIME\n");
 	if (!currprefs.tod_hack || !rtarea_bank.baseaddr)
 		return;
+	write_log("SETSYSTIME2\n");
 	heartbeat = get_long_host(rtarea_bank.baseaddr + RTAREA_HEARTBEAT);
 	heartbeat_task = 1;
 	heartbeat_count = 10;
@@ -3225,7 +3377,7 @@ static bool mount_cd(UnitInfo *uinfo, int nr, struct mytimeval *ctime, uae_u64 *
 }
 
 #ifdef UAE_FILESYS_THREADS
-static void *filesys_thread (void *unit_v);
+static void filesys_thread (void *unit_v);
 #endif
 static void filesys_start_thread (UnitInfo *ui, int nr)
 {
@@ -6797,6 +6949,8 @@ static uae_u32 REGPARAM2 exter_int_helper(TrapContext *ctx)
 	} else if (n == 22) {
 		// ack
 		return 0;
+	} else if (n >= 30 && n <= 39) {
+		return filesys_shellexecute2_process(n, ctx);
 	}
 
 	if (n == 1) {
@@ -6903,6 +7057,12 @@ static uae_u32 REGPARAM2 exter_int_helper(TrapContext *ctx)
 					}
 					shell_execute_data = uaeboard_alloc_ram(SHELLEXEC_MAX_CMD_LEN);
 					return 6; // create process
+				}
+
+				case 6: /* shell execute 2 */
+				{
+					trap_set_areg(ctx, 0, read_comm_pipe_u32_blocking(&native2amiga_pending));
+					return 7;
 				}
 
 				default:
@@ -7139,17 +7299,16 @@ static int filesys_iteration(UnitInfo *ui)
 }
 
 
-static void *filesys_thread (void *unit_v)
+static void filesys_thread (void *unit_v)
 {
 	UnitInfo *ui = (UnitInfo *)unit_v;
 
 	uae_set_thread_priority (NULL, 1);
 	for (;;) {
 		if (!filesys_iteration(ui)) {
-			return 0;
+			return;
 		}
 	}
-	return 0;
 }
 #endif
 
@@ -7571,7 +7730,8 @@ static uae_u32 REGPARAM2 filesys_diagentry (TrapContext *ctx)
 	* Resident structures and inject them to ResList in priority order
 	*/
 
-	if (kickstart_version >= 37) {
+	// KS 2.x RTF_AFTERDOS is broken
+	if (kickstart_version >= 39) {
 		trap_put_word(ctx, resaddr + 0x0, 0x4afc);
 		trap_put_long(ctx, resaddr + 0x2, resaddr);
 		trap_put_long(ctx, resaddr + 0x6, resaddr + 0x1A);
@@ -8359,6 +8519,7 @@ static int pt_rdsk (TrapContext *ctx, uae_u8 *bufrdb, int rdblock, UnitInfo *uip
 	int newversion, newrevision;
 	TCHAR *s;
 	bool showdebug = partnum == 0;
+	int cnt;
 
 	blocksize = rl (bufrdb + 16);
 	readblocksize = blocksize > hfd->ci.blocksize ? blocksize : hfd->ci.blocksize;
@@ -8521,7 +8682,7 @@ static int pt_rdsk (TrapContext *ctx, uae_u8 *bufrdb, int rdblock, UnitInfo *uip
 	/* we found required FSHD block */
 	fsmem = xmalloc (uae_u8, 262144);
 	lsegblock = rl (buf + 72);
-	int cnt = 0;
+	cnt = 0;
 	for (;;) {
 		int pb = lsegblock;
 		if (!legalrdbblock (uip, lsegblock))
@@ -9235,7 +9396,7 @@ void filesys_install (void)
 	cdfs_handlername = ds_bstr_ansi ("uaecdfs");
 
 	afterdos_name = ds_ansi("UAE afterdos");
-	afterdos_id = ds_ansi("UAE afterdos 0.1");
+	afterdos_id = ds_ansi("UAE afterdos 0.2");
 
 	keymaphook_name = ds_ansi("UAE keymaphook");
 	keymaphook_id = ds_ansi("UAE keymaphook 0.1");

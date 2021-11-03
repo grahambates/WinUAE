@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <memory.h>
 #include <string.h>
 #include <ctype.h>
@@ -95,7 +96,7 @@ static uae_u32 cpustatearraystore[16];
 static uae_u32 cpustatearraynew[] = {
 	0x00000005, // SFC
 	0x00000005, // DFC
-	0x00000009, // CACR
+	0x00000000, // CACR
 	0x00000000, // CAAR
 	0x00000000, // MSP
 };
@@ -133,6 +134,7 @@ static short quit;
 static uae_u8 ccr_mask;
 static uae_u32 addressing_mask = 0x00ffffff;
 static uae_u32 interrupt_mask;
+static short loop_mode_jit, loop_mode_68010, loop_mode_cnt;
 static short instructionsize;
 static short disasm;
 static short basicexcept;
@@ -146,7 +148,6 @@ static int exitcnt;
 static short cycles, cycles_range, cycles_adjust;
 static short gotcycles;
 static short interrupttest;
-static short randomizetest;
 static uae_u32 cyclecounter_addr;
 static int errorcnt;
 static short uaemode;
@@ -154,6 +155,9 @@ static short uaemode;
 static short interrupt_count;
 static uae_u16 main_intena;
 #endif
+static int prealloc_test_data_size = 1001000;
+static int prealloc_gzip_size = 500000;
+static int prealloc;
 
 #define SIZE_STORED_ADDRESS_OFFSET 6
 #define SIZE_STORED_ADDRESS 20
@@ -255,7 +259,7 @@ struct accesshistory
 };
 static int ahcnt;
 
-#define MAX_ACCESSHIST 48
+#define MAX_ACCESSHIST 64
 static struct accesshistory ahist[MAX_ACCESSHIST];
 
 static int is_valid_test_addr_read(uae_u32 a)
@@ -410,7 +414,7 @@ static void start_test(void)
 		safe_memcpy(low_memory_back + low_memory_offset, low_memory + low_memory_offset, low_memory_size - low_memory_offset);
 
 	// always copy exception vectors if 68000
-	if (cpu_lvl == 0 && low_memory_offset > 0x08)
+	if (cpu_lvl == 0 && (low_memory_offset > 0x08 || test_low_memory_start == 0xffffffff))
 		safe_memcpy(low_memory_back + 8, low_memory + 8, (192 - 2) * 4);
 
 	if (!hmem_rom && test_high_memory_start != 0xffffffff)
@@ -472,6 +476,18 @@ static void start_test(void)
 			}
 		}
 	}
+	if (cpu_lvl >= 4) {
+		// 68040/060 CACR (IE=1)
+		cpustatearraynew[2] = 0x00008000;
+	} else {
+		// 68020/30 CACR (CI=1,IE=1)
+		cpustatearraynew[2] = 0x0009;
+		if (cpu_lvl == 3) {
+			// 68030 CACR CD=1
+			cpustatearraynew[2] |= 0x0800;
+		}
+	}
+
 	setcpu(cpu_lvl, cpustatearraynew, cpustatearraystore);
 }
 
@@ -484,7 +500,7 @@ static void end_test(void)
 	if (test_low_memory_start != 0xffffffff)
 		safe_memcpy(low_memory + low_memory_offset, low_memory_back + low_memory_offset, low_memory_size - low_memory_offset);
 
-	if (cpu_lvl == 0 && low_memory_offset > 0x08)
+	if (cpu_lvl == 0 && (low_memory_offset > 0x08 || test_low_memory_start == 0xffffffff))
 		safe_memcpy(low_memory + 8, low_memory_back + 8, (192 - 2) * 4);
 
 	if (!hmem_rom && test_high_memory_start != 0xffffffff)
@@ -552,6 +568,7 @@ static uae_u8 *parse_gzip(uae_u8 *gzbuf, int *sizep)
 
 #define INFLATE_STACK_SIZE 3000
 static uae_u8 *inflatestack;
+static uae_u8 *prealloc_gzip;
 
 #ifdef AMIGA
 extern void uae_command(char*);
@@ -588,13 +605,35 @@ static uae_u8 *load_file(const char *path, const char *file, uae_u8 *p, int *siz
 	int unpackoffset = 0;
 	int size = 0;
 
-	sprintf(fname, "%s%s.gz", path, file);
+	strcpy(fname, path);
+	strcat(fname, file);
+	if (strchr(file, '.')) {
+		fname[strlen(fname) - 1] = 'z';
+	} else {
+		strcat(fname, ".gz");
+	}
 	FILE *f = fopen(fname, "rb");
 	if (f) {
 		fseek(f, 0, SEEK_END);
 		int gsize = ftell(f);
 		fseek(f, 0, SEEK_SET);
-		uae_u8 *gzbuf = malloc(gsize);
+		uae_u8 *gzbuf = NULL;
+		if (prealloc) {
+			if (!prealloc_gzip) {
+				prealloc_gzip = malloc(prealloc_gzip_size);
+				if (!prealloc_gzip) {
+					printf("Couldn't preallocate gzip temp memory, %d bytes.\n", prealloc_gzip_size);
+					exit(0);
+				}
+			}
+			if (gsize > prealloc_gzip_size) {
+				printf("Preallocated gzip temp memory space is too small %d < %d\n", prealloc_gzip_size, gsize);
+				exit(0);
+			}
+			gzbuf = prealloc_gzip;
+		} else {
+			gzbuf = malloc(gsize);
+		}
 		if (!gzbuf) {
 			printf("Couldn't allocate %d bytes (packed), file '%s'\n", gsize, fname);
 			exit(0);
@@ -644,6 +683,9 @@ static uae_u8 *load_file(const char *path, const char *file, uae_u8 *p, int *siz
 			callinflate(unpack, gzdata, inflatestack);
 			*sizep = size;
 		}
+		if (!prealloc_gzip) {
+			free(gzbuf);
+		}
 	}
 	if (!unpack) {
 		sprintf(fname, "%s%s", path, file);
@@ -666,6 +708,11 @@ static uae_u8 *load_file(const char *path, const char *file, uae_u8 *p, int *siz
 		p = calloc(1, size);
 		if (!p) {
 			printf("Couldn't allocate %d bytes, file '%s'\n", size, fname);
+			exit(0);
+		}
+	} else {
+		if (prealloc_test_data_size < size) {
+			printf("Preallocated memory space is too small %d < %d\n", prealloc_test_data_size, size);
 			exit(0);
 		}
 	}
@@ -1259,6 +1306,8 @@ static short is_valid_word(uae_u8 *p)
 	return 1;
 }
 
+#define MAX_DISM_LINES 15
+
 static void out_disasm(uae_u8 *mem)
 {
 	uae_u16 *code;
@@ -1274,7 +1323,8 @@ static void out_disasm(uae_u8 *mem)
 	uae_u8 *p = mem;
 	int offset = 0;
 	int lines = 0;
-	while (lines++ < 15) {
+	short last = 0;
+	while (lines++ < MAX_DISM_LINES) {
 		int v = 0;
 		if (!is_valid_word(p)) {
 			sprintf(outbp, "%08x -- INACCESSIBLE --\n", (uae_u32)p);
@@ -1301,8 +1351,12 @@ static void out_disasm(uae_u8 *mem)
 			outbp += strlen(outbp);
 			if (!is_valid_word((uae_u8*)(code + offset)))
 				break;
-			if (v <= 0 || code[offset] == ILLG_OPCODE)
+			if (v <= 0)
 				break;
+			if (last)
+				break;
+			if (code[offset] == ILLG_OPCODE)
+				last = 1;
 			while (v > 0) {
 				offset++;
 				p += 2;
@@ -1619,7 +1673,7 @@ static uae_u8 *validate_exception(struct registers *regs, uae_u8 *p, short excnu
 				p += 2;
 				v = opcode_memory_addr;
 				p = restore_rel_ordered(p, &v);
-				if (vsr != sr) {
+				if ((vsr & test_ccrignoremask) != (sr & test_ccrignoremask)) {
 					sprintf(outbp, "Trace (non-stacked) SR mismatch: %04x != %04x (PC=%08x)\n", sr, vsr, v);
 					outbp += strlen(outbp);
 					*experr = 1;
@@ -1711,12 +1765,24 @@ static uae_u8 *validate_exception(struct registers *regs, uae_u8 *p, short excnu
 						alts += 2;
 					}
 				}
+			} else {
+				// sr
+				exc[0] = regs->sr >> 8;
+				exc[1] = regs->sr;
+				// program counter
+				v = opcode_memory_addr;
+				p = restore_rel_ordered(p, &v);
+				pl(exc + 2, v);
+				exclen = 6;
 			}
 		} else if (cpu_lvl > 0) {
 			// sr
 			exc[0] = regs->sr >> 8;
 			exc[1] = regs->sr;
-			pl(exc + 2, regs->pc);
+			// program counter
+			v = opcode_memory_addr;
+			p = restore_rel_ordered(p, &v);
+			pl(exc + 2, v);
 			const uae_u16 t0 = *p++;
 			const uae_u16 t1 = *p++;
 			// frame type
@@ -2163,9 +2229,9 @@ static short fpucheckextra(struct fpureg *f1, struct fpureg *f2)
 	m2[1] = f2->m[1];
 	uae_u16 exp1 = f1->exp & 0x7fff;
 	uae_u16 exp2 = f2->exp & 0x7fff;
-	// NaN or Infinite: both must match
+	// NaN or Infinite: both must match but skip possible last bits
 	if (exp1 == 0x7fff || exp2 == 0x7fff) {
-		return 0;
+		goto lastbits;
 	}
 	// Zero: both must match
 	if ((!exp1 && !m1[0] && !m1[1]) || (!exp2 && !m2[0] && !m2[1])) {
@@ -2225,6 +2291,7 @@ static short fpucheckextra(struct fpureg *f1, struct fpureg *f2)
 			return 0;
 	}
 
+lastbits:
 	// skip n bits from the end
 	if (fpu_adjust_man >= 0) {
 		short shift = zb1 < zb2 ? zb1 : zb2;
@@ -2255,6 +2322,58 @@ static short fpucheckextra(struct fpureg *f1, struct fpureg *f2)
 	return 1;
 }
 
+static void loop_mode_error(uae_u32 ov, uae_u32 nv)
+{
+	strcpy(outbp, " expected ");
+	outbp += strlen(outbp);
+	for (short i = loop_mode_cnt - 1; i >= 0; i--) {
+		if ((ov >> i) & 1) {
+			*outbp++ = '1';
+		} else {
+			*outbp++ = '0';
+		}
+	}
+	strcpy(outbp, " got ");
+	outbp += strlen(outbp);
+	for (short i = loop_mode_cnt - 1; i >= 0; i--) {
+		if ((nv >> i) & 1) {
+			*outbp++ = '1';
+		} else {
+			*outbp++ = '0';
+		}
+	}
+	*outbp++ = '\n';
+}
+
+static const char cvzn[] = { "CVZN" };
+static void loop_mode_error_CVZN(uae_u32 ov, uae_u32 nv)
+{
+	// Swap V<>Z
+	ov = (ov & 0xff0000ff) | ((ov >> 8) & 0x0000ff00) | ((ov << 8) & 0x00ff0000);
+	nv = (nv & 0xff0000ff) | ((nv >> 8) & 0x0000ff00) | ((nv << 8) & 0x00ff0000);
+
+	for (short i = 0; i < 4; i++) {
+		if ((ov & 0xff) != (nv & 0xff)) {
+			sprintf(outbp, "Loop mode %c:", cvzn[i]);
+			outbp += strlen(outbp);
+			loop_mode_error(ov, nv);
+		}
+		ov >>= 8;
+		nv >>= 8;
+	}
+}
+static void loop_mode_error_X(uae_u32 ov, uae_u32 nv)
+{
+	sprintf(outbp, "Loop mode X:");
+	outbp += strlen(outbp);
+	ov >>= 4;
+	nv >>= 4;
+	loop_mode_error(ov, nv);
+}
+
+static uae_u16 lmtable1[LM_BUFFER / 2];
+static uae_u16 lmtable2[LM_BUFFER / 2];
+
 // sregs: registers before execution of test code
 // tregs: registers used during execution of test code, also modified by test code.
 // lregs: registers after modifications from data files. Test ok if tregs == lregs.
@@ -2266,6 +2385,11 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 	uae_u8 sr_changed = 0, ccr_changed = 0, pc_changed = 0;
 	uae_u8 fpiar_changed = 0, fpsr_changed = 0, fpcr_changed = 0;
 	short exc = -1;
+
+	if (loop_mode_jit) {
+		memset(lmtable1, 0xff, sizeof(lmtable1));
+		memset(lmtable2, 0xff, sizeof(lmtable2));
+	}
 
 	// Register modified in test? (start register != test register)
 	for (short i = 0; i < 16; i++) {
@@ -2545,6 +2669,7 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 			uae_u8 *addr;
 			uae_u32 val = 0, mval = 0, oldval = 0;
 			int size;
+			short lm = 0;
 			p = get_memory_addr(p, &addr);
 			p = restore_value(p, &oldval, &size);
 			p = restore_value(p, &val, &size);
@@ -2563,9 +2688,16 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 				break;
 				case 1:
 				mval = (addr[0] << 8) | (addr[1]);
+				if (loop_mode_jit && addr >= test_memory && addr < test_memory + LM_BUFFER) {
+					lmtable1[(addr - test_memory) / 2] = val;
+					lmtable2[(addr - test_memory) / 2] = mval;
+					lm = 1;
+				}
 				if (mval != val && !ignore_errors && !skipmemwrite) {
 					if (dooutput) {
-						sprintf(outbp, "Memory word write: address %08x, expected %04x but got %04x\n", (uae_u32)addr, val, mval);
+						if (!lm || (lm && (val == 0xffff || mval == 0xffff))) {
+							sprintf(outbp, "Memory word write: address %08x, expected %04x but got %04x\n", (uae_u32)addr, val, mval);
+						}
 						outbp += strlen(outbp);
 					}
 					errflag |= 1 << 6;
@@ -2598,6 +2730,7 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 					if (dooutput) {
 						uae_u32 val = lregs->regs[mode];
 						sprintf(outbp, "%c%d: expected %08x but got %08x\n", mode < CT_AREG ? 'D' : 'A', mode & 7, val, tregs->regs[mode]);
+						outbp += strlen(outbp);
 					}
 					errflag |= 1 << 0;
 				}
@@ -2673,6 +2806,38 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 			}
 		}
 		errflag_orig |= errflag;
+	}
+
+	if (loop_mode_jit) {
+		short idx = 0, cnt = 0, end = loop_mode_cnt * 2;
+		for (;;) {
+			uae_u16 v1, v2;
+			v1 = lmtable1[idx];
+			v2 = lmtable2[idx];
+			idx++;
+			if (idx >= LM_BUFFER / 2) {
+				break;
+			}
+			if (v1 == 0xffff && v2 == 0xffff) {
+				continue;
+			}
+			cnt++;
+			if (v1 != v2) {
+				sprintf(outbp, "LM %02d/%02d CCR: %02x != %02x",
+					cnt, end, v1, v2);
+				outbp += strlen(outbp);
+				sprintf(outbp, " X%c%d N%c%d Z%c%d V%c%d C%c%d\n",
+					(v1 & 0x10) != (v2 & 0x10) ? '!' : '=', (v2 & 0x10) != 0,
+					(v1 & 0x08) != (v2 & 0x08) ? '!' : '=', (v2 & 0x08) != 0,
+					(v1 & 0x04) != (v2 & 0x04) ? '!' : '=', (v2 & 0x04) != 0,
+					(v1 & 0x02) != (v2 & 0x02) ? '!' : '=', (v2 & 0x02) != 0,
+					(v1 & 0x01) != (v2 & 0x01) ? '!' : '=', (v2 & 0x01) != 0);
+				outbp += strlen(outbp);
+			}
+			if (cnt >= end) {
+				break;
+			}
+		}
 	}
 
 	// if excskipccr + bus, address, divide by zero or chk + only CCR mismatch detected: clear error
@@ -2937,7 +3102,7 @@ static void process_test(uae_u8 *p)
 						test_regs.fpcr = ((ccr & 1) ? 15 : 0) << 4;
 					} else {
 						if (ccrmode & 0x40) {
-							// condition modes
+							// condition codes
 							test_regs.fpsr = (ccr & 15) << 24;
 						} else {
 							// precision and rounding
@@ -3238,9 +3403,10 @@ static int test_mnemo(const char *opcode)
 	interrupt_mask = (lvl_mask >> 20) & 7;
 	addressing_mask = (lvl_mask & 0x80000000) ? 0xffffffff : 0x00ffffff;
 	interrupttest = (lvl_mask >> 26) & 1;
-	randomizetest = (lvl_mask >> 28) & 1;
 	sr_undefined_mask = lvl_mask & 0xffff;
 	safe_memory_mode = (lvl_mask >> 23) & 7;
+	loop_mode_jit = (lvl_mask >> 28) & 1;
+	loop_mode_68010 = (lvl_mask >> 29) & 1;
 	fpu_model = read_u32(headerfile, &headoffset);
 	test_low_memory_start = read_u32(headerfile, &headoffset);
 	test_low_memory_end = read_u32(headerfile, &headoffset);
@@ -3251,7 +3417,10 @@ static int test_mnemo(const char *opcode)
 	user_stack_memory = read_u32(headerfile, &headoffset);
 	super_stack_memory = read_u32(headerfile, &headoffset);
 	exception_vectors = read_u32(headerfile, &headoffset);
-	read_u32(headerfile, &headoffset);
+	v = read_u32(headerfile, &headoffset);
+	if (loop_mode_jit || loop_mode_68010) {
+		loop_mode_cnt = v & 0xff;
+	}
 	read_u32(headerfile, &headoffset);
 	read_u32(headerfile, &headoffset);
 	memcpy(inst_name, headerfile + headoffset, sizeof(inst_name) - 1);
@@ -3302,7 +3471,7 @@ static int test_mnemo(const char *opcode)
 	if (!absallocated) {
 		test_memory = allocate_absolute(test_memory_addr, test_memory_size);
 		if (!test_memory) {
-			printf("Couldn't allocate tmem area %08x-%08x\n", (uae_u32)test_memory_addr, test_memory_size);
+			printf("Couldn't allocate tmem area %08x-%08x\n", test_memory_addr, test_memory_addr + test_memory_size - 1);
 			exit(0);
 		}
 		absallocated = test_memory;
@@ -3323,11 +3492,11 @@ static int test_mnemo(const char *opcode)
 		cpu_lvl, addressing_mask, (uae_u32)opcode_memory,
 		user_stack_memory, super_stack_memory);
 	printf(" Low: %08x-%08x High: %08x-%08x\n",
-		test_low_memory_start, test_low_memory_end,
-		test_high_memory_start, test_high_memory_end);
+		test_low_memory_start, test_low_memory_end - 1,
+		test_high_memory_start, test_high_memory_end - 1);
 	printf("Test: %08x-%08x Safe: %08x-%08x\n",
-		test_memory_addr, test_memory_end,
-		(uae_u32)safe_memory_start, (uae_u32)safe_memory_end);
+		test_memory_addr, test_memory_end - 1,
+		(uae_u32)safe_memory_start, (uae_u32)safe_memory_end - 1);
 	printf("%s (%s):\n", inst_name, group);
 
 	testcnt = 0;
@@ -3335,13 +3504,23 @@ static int test_mnemo(const char *opcode)
 	memset(exceptioncount, 0, sizeof(exceptioncount));
 	supercnt = 0;
 
+	uae_u8 *test_data_prealloc = NULL;
+
+	if (prealloc) {
+		test_data_prealloc = malloc(prealloc_test_data_size);
+		if (!test_data_prealloc) {
+			printf("Couldn't preallocate test data memory, %d bytes.\n", prealloc_test_data_size);
+			exit(0);
+		}
+	}
+
 	for (;;) {
 		printf("%s (%s). %u...\n", tfname, group, testcnt);
 
 		sprintf(tfname, "%s/%04d.dat", opcode, filecnt);
 
 		test_data_size = -1;
-		test_data = load_file(path, tfname, NULL, &test_data_size, 0, 1);
+		test_data = load_file(path, tfname, test_data_prealloc, &test_data_size, 0, 1);
 		if (!test_data) {
 			if (askifmissing) {
 				printf("Couldn't open '%s%s'. Type new path and press enter.\n", path, tfname);
@@ -3384,7 +3563,10 @@ static int test_mnemo(const char *opcode)
 		process_test(test_data);
 		test_data -= 16;
 
-		free(test_data);
+		if (!prealloc) {
+			free(test_data);
+		}
+		test_data = NULL;
 
 		if (errors || quit || last) {
 			break;
@@ -3564,6 +3746,8 @@ int main(int argc, char *argv[])
 				exitcnt = atoi(next);
 				i++;
 			}
+		} else if (!_stricmp(s, "-prealloc")) {
+			prealloc = 1;
 		} else if (!_stricmp(s, "-fpuadj")) {
 			if (next) {
 				fpu_adjust_exp = atol(next);
@@ -3647,7 +3831,7 @@ int main(int argc, char *argv[])
 		groupd = opendir(path);
 	}
 
-	int cpumodel = 68000 + (cpu_lvl == 5 ? 6 : cpu_lvl) * 10;
+	int cpumodel = cpu_lvl == 5 ? 6 : cpu_lvl;
 	sprintf(cpustr, "%u_", cpumodel);
 	char *pathptr = path + strlen(path);
 
@@ -3682,12 +3866,24 @@ int main(int argc, char *argv[])
 #endif
 
 		low_memory_back = calloc(1, 32768);
+		if (!low_memory_back) {
+			printf("Couldn't allocate low_memory_back.\n");
+			return 0;
+		}
 		if (!low_memory_temp) {
 			low_memory_temp = calloc(1, 32768);
+			if (!low_memory_temp) {
+				printf("Couldn't allocate low_memory_temp.\n");
+				return 0;
+			}
 		}
 
 		if (high_memory_size > 0) {
 			high_memory_back = calloc(1, high_memory_size);
+			if (!high_memory_back) {
+				printf("Couldn't allocate high_memory_back.\n");
+				return 0;
+			}
 		}
 
 		if (!_stricmp(opcode, "all")) {

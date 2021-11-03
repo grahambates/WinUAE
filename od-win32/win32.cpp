@@ -104,6 +104,9 @@
 #include "fsdb.h"
 #include "uae/time.h"
 #include "specialmonitors.h"
+#include "barto_gdbserver.h"
+#include "debug.h"
+#include "disasm.h"
 
 const static GUID GUID_DEVINTERFACE_HID =  { 0x4D1E55B2L, 0xF16F, 0x11CF,
 { 0x88, 0xCB, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30 } };
@@ -136,6 +139,7 @@ OSVERSIONINFO osVersion;
 static SYSTEM_INFO SystemInfo;
 static int logging_started;
 static MINIDUMP_TYPE minidumpmode = MiniDumpNormal;
+static int nocrashdump;
 static int doquit;
 static int console_started;
 void *globalipc;
@@ -235,6 +239,12 @@ static GETTOUCHINPUTINFO pGetTouchInputInfo;
 static CLOSETOUCHINPUTHANDLE pCloseTouchInputHandle;
 #endif
 
+ADJUSTWINDOWRECTEXFORDPI pAdjustWindowRectExForDpi;
+typedef HRESULT(CALLBACK* GETDPIFORMONITOR)(HMONITOR, MONITOR_DPI_TYPE, UINT*, UINT*);
+static GETDPIFORMONITOR pGetDpiForMonitor;
+typedef UINT(CALLBACK* GETDPIFORWINDOW)(HWND);
+static GETDPIFORWINDOW pGetDpiForWindow;
+
 int getdpiformonitor(HMONITOR mon)
 {
 	if (mon) {
@@ -242,8 +252,9 @@ int getdpiformonitor(HMONITOR mon)
 		if (!shcore)
 			shcore = LoadLibrary(_T("Shcore.dll"));
 		if (shcore) {
-			typedef HRESULT(CALLBACK *GETDPIFORMONITOR)(HMONITOR, MONITOR_DPI_TYPE, UINT *, UINT *);
-			GETDPIFORMONITOR pGetDpiForMonitor = (GETDPIFORMONITOR)GetProcAddress(shcore, "GetDpiForMonitor");
+			if (!pGetDpiForMonitor) {
+				pGetDpiForMonitor = (GETDPIFORMONITOR)GetProcAddress(shcore, "GetDpiForMonitor");
+			}
 			if (pGetDpiForMonitor) {
 				UINT x, y;
 				if (SUCCEEDED(pGetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &x, &y)))
@@ -259,8 +270,9 @@ int getdpiformonitor(HMONITOR mon)
 
 int getdpiforwindow(HWND hwnd)
 {
-	typedef UINT(CALLBACK *GETDPIFORWINDOW)(HWND);
-	GETDPIFORWINDOW pGetDpiForWindow = (GETDPIFORWINDOW)GetProcAddress(userdll, "GetDpiForWindow");
+	if (!pGetDpiForWindow) {
+		pGetDpiForWindow = (GETDPIFORWINDOW)GetProcAddress(userdll, "GetDpiForWindow");
+	}
 	if (pGetDpiForWindow)
 		return pGetDpiForWindow(hwnd);
 	HDC hdc = GetDC(NULL);
@@ -2427,7 +2439,10 @@ static LRESULT CALLBACK AmigaWindowProc(HWND hWnd, UINT message, WPARAM wParam, 
 			else if ((int)lParam > 0)
 				monitor_off = 1;
 			break;
-
+		case SC_KEYMENU:
+			if (HIWORD(lParam) <= 0 && isfocus() > 1)
+				return 0;
+			break;
 		default:
 		{
 			LRESULT lr;
@@ -2537,6 +2552,7 @@ static LRESULT CALLBACK AmigaWindowProc(HWND hWnd, UINT message, WPARAM wParam, 
 			winuae_inactive(mon, hWnd, 0);
 			break;
 		}
+		break;
 	}
 
 	case WT_PROXIMITY:
@@ -2714,6 +2730,7 @@ static LRESULT CALLBACK MainWindowProc (HWND hWnd, UINT message, WPARAM wParam, 
 		return 0;
 
 	case WM_POWERBROADCAST:
+		write_log("POWERBROADCAST: %08x %08x %08x\n", message, lParam, wParam);
 		if (wParam == PBT_APMRESUMEAUTOMATIC) {
 			setsystime ();
 			return TRUE;
@@ -2727,6 +2744,7 @@ static LRESULT CALLBACK MainWindowProc (HWND hWnd, UINT message, WPARAM wParam, 
 			SetWindowPos(hWnd, NULL, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
 			return 0;
 		}
+		break;
 	}
 
 	case WM_GETMINMAXINFO:
@@ -2777,9 +2795,17 @@ static LRESULT CALLBACK MainWindowProc (HWND hWnd, UINT message, WPARAM wParam, 
 						DWORD top = rc2.top - mon->win_y_diff;
 						DWORD width = rc2.right - rc2.left;
 						DWORD height = rc2.bottom - rc2.top;
-						if (store_xy++ && !mon->monitor_id) {
-							regsetint (NULL, _T("MainPosX"), left);
-							regsetint (NULL, _T("MainPosY"), top);
+						if (store_xy++) {
+							if (!mon->monitor_id) {
+								regsetint(NULL, _T("MainPosX"), left);
+								regsetint(NULL, _T("MainPosY"), top);
+							} else {
+								TCHAR buf[100];
+								_stprintf(buf, _T("MainPosX_%d"), mon->monitor_id);
+								regsetint(NULL, buf, left);
+								_stprintf(buf, _T("MainPosY_%d"), mon->monitor_id);
+								regsetint(NULL, buf, top);
+							}
 						}
 						changed_prefs.gfx_monitor[mon->monitor_id].gfx_size_win.x = left;
 						changed_prefs.gfx_monitor[mon->monitor_id].gfx_size_win.y = top;
@@ -2858,7 +2884,7 @@ static LRESULT CALLBACK MainWindowProc (HWND hWnd, UINT message, WPARAM wParam, 
 					SetTextColor(lpDIS->hDC, oc);
 				}
 			} else if (lpDIS->itemID > 0 && lpDIS->itemID <= window_led_joy_start) {
-				int port = lpDIS->itemID - 1;
+				int port = 1 - (lpDIS->itemID - (window_led_msg_start + 1));
 				int x = (lpDIS->rcItem.right - lpDIS->rcItem.left + 1) / 2 + lpDIS->rcItem.left - 1;
 				int y = (lpDIS->rcItem.bottom - lpDIS->rcItem.top + 1) / 2 + lpDIS->rcItem.top - 1;
 				RECT r = lpDIS->rcItem;
@@ -2872,28 +2898,28 @@ static LRESULT CALLBACK MainWindowProc (HWND hWnd, UINT message, WPARAM wParam, 
 					int m = i == 0 ? 1 : 2;
 					bool got = false;
 					if (buttons & (1 << JOYBUTTON_CD32_BLUE)) {
-						plot (lpDIS, x - 1, y,  0,  0, 0);
+						plot(lpDIS, x - 1, y,  0,  0, 0);
 						got = true;
 					}
 					if (buttons & (1 << JOYBUTTON_CD32_RED)) {
-						plot (lpDIS, x + 1, y,  0,  0, 1);
+						plot(lpDIS, x + 1, y,  0,  0, 1);
 						got = true;
 					}
 					if (buttons & (1 << JOYBUTTON_CD32_YELLOW)) {
-						plot (lpDIS, x, y - 1,  0,  0, 2);
+						plot(lpDIS, x, y - 1,  0,  0, 2);
 						got = true;
 					}
 					if (buttons & (1 << JOYBUTTON_CD32_GREEN)) {
-						plot (lpDIS, x, y + 1,  0,  0, 3);
+						plot(lpDIS, x, y + 1,  0,  0, 3);
 						got = true;
 					}
 					if (!got) {
 						if (buttons & 1)
-							plot (lpDIS, x, y,  0,  0, 1);
+							plot(lpDIS, x, y,  0,  0, 1);
 						if (buttons & 2)
-							plot (lpDIS, x, y,  0,  0, 0);
+							plot(lpDIS, x, y,  0,  0, 0);
 						if (buttons & ~(1 | 2))
-							plot (lpDIS, x, y,  0,  0, -1);
+							plot(lpDIS, x, y,  0,  0, -1);
 					}
 					for (int j = 0; j < 4; j++) {
 						int dx = 0, dy = 0;
@@ -2909,7 +2935,7 @@ static LRESULT CALLBACK MainWindowProc (HWND hWnd, UINT message, WPARAM wParam, 
 						if (axis && (dx || dy)) {
 							dx *= axis * 8 / 127;
 							dy *= axis * 8 / 127;
-							plot (lpDIS, x, y,  dx, dy, -1);
+							plot(lpDIS, x, y,  dx, dy, -1);
 						}
 					}
 				}
@@ -3100,6 +3126,7 @@ bool handle_events (void)
 #ifdef RETROPLATFORM
 		rp_vsync ();
 #endif
+		barto_gdbserver::vsync();
 		cnt1 = 0;
 		while (checkIPC (globalipc, &currprefs));
 //		if (quit_program)
@@ -3261,7 +3288,7 @@ int WIN32_CleanupLibraries (void)
 /* HtmlHelp Initialization - optional component */
 int WIN32_InitHtmlHelp (void)
 {
-	TCHAR *chm = _T("WinUAE.chm");
+	const TCHAR *chm = _T("WinUAE.chm");
 	int result = 0;
 	_stprintf(help_file, _T("%s%s"), start_path_data, chm);
 	if (!zfile_exists (help_file))
@@ -3347,7 +3374,7 @@ const struct winuae_lang langs[] =
 	{ 0x400, _T("guidll.dll") },
 	{ 0, NULL }
 };
-static TCHAR *getlanguagename(DWORD id)
+static const TCHAR *getlanguagename(DWORD id)
 {
 	int i;
 	for (i = 0; langs[i].name; i++) {
@@ -3382,7 +3409,7 @@ HMODULE language_load (WORD language)
 
 #if LANG_DLL > 0
 	TCHAR dllbuf[MAX_DPATH];
-	TCHAR *dllname;
+	const TCHAR *dllname;
 	dllname = getlanguagename (language);
 	if (dllname) {
 		DWORD  dwVersionHandle, dwFileVersionInfoSize;
@@ -3599,7 +3626,7 @@ void logging_init (void)
 		SystemInfo.wProcessorArchitecture, SystemInfo.wProcessorLevel, SystemInfo.wProcessorRevision,
 		SystemInfo.dwNumberOfProcessors, filedate, os_touch);
 	write_log (_T("\n(c) 1995-2001 Bernd Schmidt   - Core UAE concept and implementation.")
-		_T("\n(c) 1998-2020 Toni Wilen      - Win32 port, core code updates.")
+		_T("\n(c) 1998-2021 Toni Wilen      - Win32 port, core code updates.")
 		_T("\n(c) 1996-2001 Brian King      - Win32 port, Picasso96 RTG, and GUI.")
 		_T("\n(c) 1996-1999 Mathias Ortmann - Win32 port and bsdsocket support.")
 		_T("\n(c) 2000-2001 Bernd Meyer     - JIT engine.")
@@ -3772,7 +3799,7 @@ uae_u8 *target_load_keyfile (struct uae_prefs *p, const TCHAR *path, int *sizep,
 	HMODULE h;
 	PFN_GetKey pfnGetKey;
 	int size;
-	TCHAR *libname = _T("amigaforever.dll");
+	const TCHAR *libname = _T("amigaforever.dll");
 
 	h = WIN32_LoadLibrary(libname);
 	if (!h) {
@@ -4158,6 +4185,21 @@ void target_fixup_options (struct uae_prefs *p)
 		nojoy = true;
 	}
 	
+	if (p->rtg_hardwaresprite && !p->gfx_api) {
+		error_log(_T("DirectDraw is not RTG hardware sprite compatible."));
+		p->rtg_hardwaresprite = false;
+	}
+	if (p->rtgboards[0].rtgmem_type >= GFXBOARD_HARDWARE) {
+		p->rtg_hardwareinterrupt = false;
+		p->rtg_hardwaresprite = false;
+		p->win32_rtgmatchdepth = false;
+		p->color_mode = 5;
+		if (p->ppc_model && !p->gfx_api) {
+			error_log(_T("Graphics board and PPC: Direct3D enabled."));
+			p->gfx_api = os_win7 ? 2 : 1;
+		}
+	}
+
 	struct MultiDisplay *md = getdisplay(p, 0);
 	for (int j = 0; j < MAX_AMIGADISPLAYS; j++) {
 		if (p->gfx_monitor[j].gfx_size_fs.special == WH_NATIVE) {
@@ -4190,22 +4232,7 @@ void target_fixup_options (struct uae_prefs *p)
 			p->color_mode = p->color_mode == 5 ? 2 : 5;
 		}
 	}
-	if (p->rtg_hardwaresprite && !p->gfx_api) {
-		error_log (_T("DirectDraw is not RTG hardware sprite compatible."));
-		p->rtg_hardwaresprite = false;
-	}
-	if (p->rtgboards[0].rtgmem_type >= GFXBOARD_HARDWARE) {
-		p->rtg_hardwareinterrupt = false;
-		p->rtg_hardwaresprite = false;
-		p->win32_rtgmatchdepth = false;
-		if (gfxboard_need_byteswap (&p->rtgboards[0]))
-			p->color_mode = 5;
-		if (p->ppc_model && !p->gfx_api) {
-			error_log (_T("Graphics board and PPC: Direct3D enabled."));
-			p->gfx_api = os_win7 ? 2 : 1;
-		}
 
-	}
 	if ((p->gfx_apmode[0].gfx_vsyncmode || p->gfx_apmode[1].gfx_vsyncmode) ) {
 		if (p->produce_sound && sound_devices[p->win32_soundcard]->type == SOUND_DEVICE_DS) {
 			p->win32_soundcard = 0;
@@ -4319,9 +4346,9 @@ void target_save_options (struct zfile *f, struct uae_prefs *p)
 	cfgfile_target_dwrite_bool (f, _T("map_net_drives"), p->win32_automount_netdrives);
 	cfgfile_target_dwrite_bool (f, _T("map_removable_drives"), p->win32_automount_removabledrives);
 	serdevtoname (p->sername);
-	cfgfile_target_dwrite_str (f, _T("serial_port"), p->sername[0] ? p->sername : _T("none"));
+	cfgfile_target_dwrite_str(f, _T("serial_port"), p->sername[0] ? p->sername : _T("none"));
 	sernametodev (p->sername);
-	cfgfile_target_dwrite_str (f, _T("parallel_port"), p->prtname[0] ? p->prtname : _T("none"));
+	cfgfile_target_dwrite_str_escape(f, _T("parallel_port"), p->prtname[0] ? p->prtname : _T("none"));
 
 	cfgfile_target_dwrite (f, _T("active_priority"), _T("%d"), priorities[p->win32_active_capture_priority].value);
 #if 0
@@ -4349,17 +4376,17 @@ void target_save_options (struct zfile *f, struct uae_prefs *p)
 
 	midp = getmidiport (midioutportinfo, p->win32_midioutdev);
 	if (p->win32_midioutdev < -1)
-		cfgfile_target_dwrite_str (f, _T("midiout_device_name"), _T("none"));
+		cfgfile_target_dwrite_str_escape(f, _T("midiout_device_name"), _T("none"));
 	else if (p->win32_midioutdev == -1 || midp == NULL)
-		cfgfile_target_dwrite_str (f, _T("midiout_device_name"), _T("default"));
+		cfgfile_target_dwrite_str_escape(f, _T("midiout_device_name"), _T("default"));
 	else
-		cfgfile_target_dwrite_str (f, _T("midiout_device_name"), midp->name);
+		cfgfile_target_dwrite_str_escape(f, _T("midiout_device_name"), midp->name);
 
 	midp = getmidiport (midiinportinfo, p->win32_midiindev);
 	if (p->win32_midiindev < 0 || midp == NULL)
-		cfgfile_target_dwrite_str (f, _T("midiin_device_name"), _T("none"));
+		cfgfile_target_dwrite_str_escape(f, _T("midiin_device_name"), _T("none"));
 	else
-		cfgfile_target_dwrite_str (f, _T("midiin_device_name"), midp->name);
+		cfgfile_target_dwrite_str_escape(f, _T("midiin_device_name"), midp->name);
 	cfgfile_target_dwrite_bool (f, _T("midirouter"), p->win32_midirouter);
 			
 	cfgfile_target_dwrite_bool (f, _T("rtg_match_depth"), p->win32_rtgmatchdepth);
@@ -4737,7 +4764,7 @@ int target_parse_option (struct uae_prefs *p, const TCHAR *option, const TCHAR *
 	if (cfgfile_yesno (option, value, _T("start_not_captured"), &p->win32_start_uncaptured))
 		return 1;
 
-	if (cfgfile_string (option, value, _T("serial_port"), &p->sername[0], 256)) {
+	if (cfgfile_string_escape(option, value, _T("serial_port"), &p->sername[0], 256)) {
 		sernametodev (p->sername);
 		if (p->sername[0])
 			p->use_serial = 1;
@@ -4746,7 +4773,7 @@ int target_parse_option (struct uae_prefs *p, const TCHAR *option, const TCHAR *
 		return 1;
 	}
 
-	if (cfgfile_string (option, value, _T("parallel_port"), &p->prtname[0], 256)) {
+	if (cfgfile_string_escape(option, value, _T("parallel_port"), &p->prtname[0], 256)) {
 		if (!_tcscmp (p->prtname, _T("none")))
 			p->prtname[0] = 0;
 		if (!_tcscmp (p->prtname, _T("default"))) {
@@ -4757,7 +4784,7 @@ int target_parse_option (struct uae_prefs *p, const TCHAR *option, const TCHAR *
 		return 1;
 	}
 
-	if (cfgfile_string (option, value, _T("midiout_device_name"), tmpbuf, 256)) {
+	if (cfgfile_string_escape(option, value, _T("midiout_device_name"), tmpbuf, 256)) {
 		p->win32_midioutdev = -2;
 		if (!_tcsicmp (tmpbuf, _T("default")) || (midioutportinfo[0] && !_tcsicmp (tmpbuf, midioutportinfo[0]->name)))
 			p->win32_midioutdev = -1;
@@ -4768,7 +4795,7 @@ int target_parse_option (struct uae_prefs *p, const TCHAR *option, const TCHAR *
 		}
 		return 1;
 	}
-	if (cfgfile_string (option, value, _T("midiin_device_name"), tmpbuf, 256)) {
+	if (cfgfile_string_escape(option, value, _T("midiin_device_name"), tmpbuf, 256)) {
 		p->win32_midiindev = -1;
 		for (int i = 0; i < MAX_MIDI_PORTS && midiinportinfo[i]; i++) {
 			if (!_tcsicmp (midiinportinfo[i]->name, tmpbuf)) {
@@ -5190,7 +5217,7 @@ static int shell_deassociate (const TCHAR *extension)
 	return 1;
 }
 
-static int shell_associate_2 (const TCHAR *extension, TCHAR *shellcommand, TCHAR *command, struct contextcommand *cc, const TCHAR *perceivedtype,
+static int shell_associate_2 (const TCHAR *extension, const TCHAR *shellcommand, const TCHAR *command, struct contextcommand *cc, const TCHAR *perceivedtype,
 	const TCHAR *description, const TCHAR *ext2, int icon)
 {
 	TCHAR rpath1[MAX_DPATH], rpath2[MAX_DPATH], progid2[MAX_DPATH];
@@ -5291,7 +5318,7 @@ static int shell_associate_2 (const TCHAR *extension, TCHAR *shellcommand, TCHAR
 	regclosetree (fkey);
 	return 1;
 }
-static int shell_associate (const TCHAR *extension, TCHAR *command, struct contextcommand *cc, const TCHAR *perceivedtype, const TCHAR *description, const TCHAR *ext2, int icon)
+static int shell_associate (const TCHAR *extension, const TCHAR *command, struct contextcommand *cc, const TCHAR *perceivedtype, const TCHAR *description, const TCHAR *ext2, int icon)
 {
 	int v = shell_associate_2 (extension, NULL, command, cc, perceivedtype, description, ext2, icon);
 	if (!_tcscmp (extension, _T(".uae")))
@@ -5516,6 +5543,42 @@ static void resetgui(void)
 	resetgui_pending = false;
 }
 
+static void target_load_debugger_config(void)
+{
+	int size;
+
+	disasm_flags = DISASM_FLAG_LC_MNEMO | DISASM_FLAG_LC_REG | DISASM_FLAG_LC_SIZE | DISASM_FLAG_LC_HEX | DISASM_FLAG_CC | DISASM_FLAG_EA | DISASM_FLAG_VAL | DISASM_FLAG_WORDS;
+	disasm_min_words = 5;
+	disasm_max_words = 16;
+	disasm_hexprefix[0] = '$';
+	disasm_hexprefix[1] = 0;
+
+	UAEREG *fkey = regcreatetree(NULL, _T("Debugger"));
+	if (fkey) {
+		regqueryint(fkey, _T("Disasm_flags"), &disasm_flags);
+		regqueryint(fkey, _T("Disasm_min_words"), &disasm_min_words);
+		regqueryint(fkey, _T("Disasm_max_words"), &disasm_max_words);
+		size = sizeof(disasm_hexprefix) / sizeof(TCHAR);
+		regquerystr(fkey, _T("Hex_prefix"), disasm_hexprefix, &size);
+		regclosetree(fkey);
+	}
+}
+
+static void target_save_debugger_config(void)
+{
+	if (!debugger_used) {
+		return;
+	}
+	UAEREG *fkey = regcreatetree(NULL, _T("Debugger"));
+	if (fkey) {
+		regsetint(fkey, _T("Disasm_flags"), disasm_flags);
+		regsetint(fkey, _T("Disasm_min_words"), disasm_min_words);
+		regsetint(fkey, _T("Disasm_max_words"), disasm_max_words);
+		regsetstr(fkey, _T("Hex_prefix"), disasm_hexprefix);
+		regclosetree(fkey);
+	}
+}
+
 static void WIN32_HandleRegistryStuff (void)
 {
 	RGBFTYPE colortype = RGBFB_NONE;
@@ -5523,6 +5586,7 @@ static void WIN32_HandleRegistryStuff (void)
 	DWORD dwDisplayInfoSize = sizeof (colortype);
 	int size;
 	TCHAR path[MAX_DPATH] = _T("");
+	TCHAR tmp[MAX_DPATH];
 	TCHAR version[100];
 
 	initpath (_T("FloppyPath"), start_path_data);
@@ -5631,6 +5695,15 @@ static void WIN32_HandleRegistryStuff (void)
 
 	if (!regqueryint (NULL, _T("QuickStartMode"), &quickstart))
 		quickstart = 1;
+
+	tmp[0] = 0;
+	size = sizeof(tmp) / sizeof(TCHAR);
+	if (regquerystr(NULL, _T("FloppyBridge"), tmp, &size)) {
+		char *c = ua(tmp);
+		floppybridge_set_config(c);
+		xfree(c);
+	}
+
 	reopen_console ();
 	fetch_path (_T("ConfigurationPath"), path, sizeof (path) / sizeof (TCHAR));
 	if (path[0])
@@ -5656,10 +5729,11 @@ static void WIN32_HandleRegistryStuff (void)
 	associate_init_extensions ();
 	read_rom_list ();
 	load_keyring (NULL, NULL);
+	target_load_debugger_config();
 }
 
 #if WINUAEPUBLICBETA > 0
-static TCHAR *BETAMESSAGE = {
+static const TCHAR *BETAMESSAGE = {
 	_T("This is unstable beta software. Click cancel if you are not comfortable using software that is incomplete and can have serious programming errors.")
 };
 #endif
@@ -6588,6 +6662,10 @@ static int parseargs(const TCHAR *argx, const TCHAR *np, const TCHAR *np2)
 		resetgui_pending = true;
 		return 1;
 	}
+	if (!_tcscmp(arg, _T("nocrashdump"))) {
+		nocrashdump = 1;
+		return 1;
+	}
 	if (!np)
 		return 0;
 
@@ -7080,6 +7158,7 @@ end:
 	closeIPC (globalipc);
 	shmem_serial_delete();
 	write_disk_history ();
+	target_save_debugger_config();
 	timeend ();
 #ifdef AVIOUTPUT
 	AVIOutput_Release ();
@@ -7103,6 +7182,7 @@ end:
 	//_CrtSetDbgFlag ( _CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF );
 #endif
 	close_console();
+	regclosetree(NULL);
 	if (hWinUAEKey)
 		RegCloseKey(hWinUAEKey);
 	_fcloseall();
@@ -7306,6 +7386,8 @@ static void create_dump (struct _EXCEPTION_POINTERS *pExceptionPointers)
 
 LONG WINAPI WIN32_ExceptionFilter (struct _EXCEPTION_POINTERS * pExceptionPointers, DWORD ec)
 {
+	if (nocrashdump || isfullscreen() > 0)
+		EXCEPTION_CONTINUE_SEARCH;
 	write_log (_T("EVALEXCEPTION %08x!\n"), ec);
 	create_dump  (pExceptionPointers);
 	return EXCEPTION_CONTINUE_SEARCH;
@@ -7329,6 +7411,9 @@ static void efix (DWORD *regp, void *p, void *ps, int *got)
 
 LONG WINAPI WIN32_ExceptionFilter (struct _EXCEPTION_POINTERS *pExceptionPointers, DWORD ec)
 {
+	if (nocrashdump)
+		EXCEPTION_CONTINUE_SEARCH;
+
 	static uae_u8 *prevpc;
 	LONG lRet = EXCEPTION_CONTINUE_SEARCH;
 	PEXCEPTION_RECORD er = pExceptionPointers->ExceptionRecord;
@@ -7871,7 +7956,7 @@ static SETPROCESSMITIGATIONPOLICY pSetProcessMitigationPolicy;
 #endif
 
 int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow)
-{
+ {
 	DWORD_PTR sys_aff;
 	HANDLE thread;
 
@@ -7926,6 +8011,7 @@ int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdL
 			}
 		}
 	}
+	pAdjustWindowRectExForDpi = (ADJUSTWINDOWRECTEXFORDPI)GetProcAddress(userdll, "AdjustWindowRectExForDpi");
 
 	InitCommonControls ();
 

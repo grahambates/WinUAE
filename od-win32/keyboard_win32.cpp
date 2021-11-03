@@ -57,8 +57,8 @@ static struct uae_input_device_kbr_default keytrans_amiga[] = {
 	{  DIK_F3,  INPUTEVENT_KEY_F3, 0, INPUTEVENT_SPC_FLOPPY2, ID_FLAG_QUALIFIER_SPECIAL, INPUTEVENT_SPC_EFLOPPY2, ID_FLAG_QUALIFIER_SPECIAL | ID_FLAG_QUALIFIER_SHIFT },
 	{  DIK_F4,  INPUTEVENT_KEY_F4, 0, INPUTEVENT_SPC_FLOPPY3, ID_FLAG_QUALIFIER_SPECIAL, INPUTEVENT_SPC_EFLOPPY3, ID_FLAG_QUALIFIER_SPECIAL | ID_FLAG_QUALIFIER_SHIFT },
 
-	{  DIK_F5,  INPUTEVENT_KEY_F5, 0, INPUTEVENT_SPC_STATERESTOREDIALOG, ID_FLAG_QUALIFIER_SPECIAL, INPUTEVENT_SPC_STATESAVEDIALOG, ID_FLAG_QUALIFIER_SPECIAL | ID_FLAG_QUALIFIER_SHIFT },
-	{  DIK_F6,  INPUTEVENT_KEY_F6 },
+	{  DIK_F5,  INPUTEVENT_KEY_F5, 0, INPUTEVENT_SPC_CD0, ID_FLAG_QUALIFIER_SPECIAL, INPUTEVENT_SPC_ECD0, ID_FLAG_QUALIFIER_SPECIAL | ID_FLAG_QUALIFIER_SHIFT },
+	{  DIK_F6,  INPUTEVENT_KEY_F6, 0, INPUTEVENT_SPC_STATERESTOREDIALOG, ID_FLAG_QUALIFIER_SPECIAL, INPUTEVENT_SPC_STATESAVEDIALOG, ID_FLAG_QUALIFIER_SPECIAL | ID_FLAG_QUALIFIER_SHIFT },
 	{  DIK_F7,  INPUTEVENT_KEY_F7 },
 	{  DIK_F8,  INPUTEVENT_KEY_F8 },
 	{  DIK_F9,  INPUTEVENT_KEY_F9 },
@@ -404,15 +404,8 @@ bool my_kbd_handler (int keyboard, int scancode, int newstate, bool alwaysreleas
 #if 0
 	if (scancode == DIK_F1) {
 		if (newstate) {
-			char msg[20000];
-			FILE *f = fopen("test.txt", "rb");
-			memset(msg, 0, sizeof msg);
-			fread(msg, 1, sizeof msg, f);
-			void parse_guest_event(const TCHAR *ss);
-			TCHAR *txt = au(msg);
-			parse_guest_event(txt);
-			free(txt);
-			fclose(f);
+			extern void rp_test(void);
+			rp_test();
 		}
 		return true;
 	}

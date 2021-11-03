@@ -43,6 +43,7 @@ Copyright(c) 2001 - 2002; §ane
 #include "threaddep/thread.h"
 #include "zfile.h"
 #include "savestate.h"
+#include "gfxboard.h"
 
 #define MAX_AVI_SIZE (0x80000000 - 0x1000000)
 
@@ -536,13 +537,13 @@ static int AVIOutput_AllocateVideo(void)
 
 	avioutput_fps = (int)(vblank_hz + 0.5);
 	if (!avioutput_fps)
-		avioutput_fps = ispal() ? 50 : 60;
+		avioutput_fps = ispal(NULL) ? 50 : 60;
 	if (avioutput_originalsize || WIN32GFX_IsPicassoScreen(mon)) {
 		int pitch;
-		if (!WIN32GFX_IsPicassoScreen(mon)) {
+		if (!gfxboard_isgfxboardscreen(0)) {
 			getfilterbuffer(0, &avioutput_width, &avioutput_height, &pitch, &avioutput_bits);
 		} else {
-			freertgbuffer(0, getrtgbuffer(0, &avioutput_width, &avioutput_height, &pitch, &avioutput_bits, NULL));
+			gfxboard_freertgbuffer(0, gfxboard_getrtgbuffer(0, &avioutput_width, &avioutput_height, &pitch, &avioutput_bits, NULL));
 		}
 	}
 
@@ -1105,12 +1106,12 @@ static int getFromBuffer(struct avientry *ae, int original)
 	mem = NULL;
 	dpitch = ((aviout_width_out * avioutput_bits + 31) & ~31) / 8;
 	if (original || WIN32GFX_IsPicassoScreen(mon)) {
-		if (!WIN32GFX_IsPicassoScreen(mon)) {
+		if (!gfxboard_isgfxboardscreen(aviout_monid)) {
 			src = getfilterbuffer(aviout_monid, &w, &h, &spitch, &d);
 			maxw = vidinfo->outbuffer->outwidth;
 			maxh = vidinfo->outbuffer->outheight;
 		} else {
-			src = mem = getrtgbuffer(aviout_monid, &w, &h, &spitch, &d, NULL);
+			src = mem = gfxboard_getrtgbuffer(aviout_monid, &w, &h, &spitch, &d, NULL);
 			maxw = w;
 			maxh = h;
 		}
@@ -1188,7 +1189,7 @@ static int getFromBuffer(struct avientry *ae, int original)
 		src += spitch;
 	}
 	if (mem)
-		freertgbuffer(aviout_monid, mem);
+		gfxboard_freertgbuffer(aviout_monid, mem);
 	return 1;
 }
 #endif
@@ -1385,7 +1386,7 @@ void AVIOutput_End(void)
 	AVIOutput_End2(true);
 }
 
-static void *AVIOutput_worker (void *arg);
+static void AVIOutput_worker (void *arg);
 
 static void AVIOutput_Begin2(bool fullstart, bool immediate)
 {
@@ -1636,7 +1637,7 @@ void AVIOutput_Initialize (void)
 }
 
 
-static void *AVIOutput_worker (void *arg)
+static void AVIOutput_worker (void *arg)
 {
 	bool quit = false;
 	write_log (_T("AVIOutput worker thread started\n"));
@@ -1675,7 +1676,6 @@ static void *AVIOutput_worker (void *arg)
 	AVIOutput_AVIWriteAudio_Thread_End();
 	write_log (_T("AVIOutput worker thread killed. quit=%d\n"), quit);
 	alive = 0;
-	return 0;
 }
 
 void AVIOutput_Toggle (int mode, bool immediate)

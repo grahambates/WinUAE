@@ -468,8 +468,8 @@ enum {
 #define PSSO_BoardInfo_Reserved0		    PSSO_BoardInfo_BlitPlanar2DirectDefault + 4
 #define PSSO_BoardInfo_Reserved0Default		    PSSO_BoardInfo_Reserved0 + 4
 #define PSSO_BoardInfo_Reserved1		    PSSO_BoardInfo_Reserved0Default + 4
-#define PSSO_BoardInfo_Reserved1Default		    PSSO_BoardInfo_Reserved1 + 4
-#define PSSO_BoardInfo_Reserved2		    PSSO_BoardInfo_Reserved1Default + 4
+#define PSSO_SetSplitPosition		    PSSO_BoardInfo_Reserved1 + 4
+#define PSSO_BoardInfo_Reserved2		    PSSO_SetSplitPosition + 4
 #define PSSO_BoardInfo_Reserved2Default		    PSSO_BoardInfo_Reserved2 + 4
 #define PSSO_BoardInfo_Reserved3		    PSSO_BoardInfo_Reserved2Default + 4
 #define PSSO_BoardInfo_Reserved3Default		    PSSO_BoardInfo_Reserved3 + 4
@@ -504,10 +504,10 @@ enum {
 #define PSSO_BoardInfo_Depth			    PSSO_BoardInfo_YOffset + 2
 #define PSSO_BoardInfo_ClearMask		    PSSO_BoardInfo_Depth + 1
 #define PSSO_BoardInfo_Border			    PSSO_BoardInfo_ClearMask + 1
-#define PSSO_BoardInfo_Mask			    PSSO_BoardInfo_Border + 2 /* BOOL type is only 2-bytes! */
-#define PSSO_BoardInfo_CLUT			    PSSO_BoardInfo_Mask + 4
+#define PSSO_BoardInfo_Mask		    	    PSSO_BoardInfo_Border + 2 /* BOOL type is only 2-bytes! */
+#define PSSO_BoardInfo_CLUT	    		    PSSO_BoardInfo_Mask + 4
 #define PSSO_BoardInfo_ViewPort			    PSSO_BoardInfo_CLUT + 3*256
-#define PSSO_BoardInfo_VisibleBitMap		    PSSO_BoardInfo_ViewPort + 4
+#define PSSO_BoardInfo_VisibleBitMap		PSSO_BoardInfo_ViewPort + 4
 #define PSSO_BoardInfo_BitMapExtra		    PSSO_BoardInfo_VisibleBitMap + 4
 #define PSSO_BoardInfo_BitMapList		    PSSO_BoardInfo_BitMapExtra + 4
 #define PSSO_BoardInfo_MemList			    PSSO_BoardInfo_BitMapList + 12 /* BitMapList is 12-bytes */
@@ -521,18 +521,29 @@ enum {
 #define PSSO_BoardInfo_MousePens		    PSSO_BoardInfo_MouseImage + 4
 #define PSSO_BoardInfo_MouseRect		    PSSO_BoardInfo_MousePens + 4
 #define PSSO_BoardInfo_MouseChunky		    PSSO_BoardInfo_MouseRect + 8 /* MouseRect is 8-bytes */
-#define PSSO_BoardInfo_MouseRendered		    PSSO_BoardInfo_MouseChunky + 4
-#define PSSO_BoardInfo_MouseSaveBuffer		    PSSO_BoardInfo_MouseRendered + 4
+#define PSSO_BoardInfo_MouseRendered		PSSO_BoardInfo_MouseChunky + 4
+#define PSSO_BoardInfo_MouseSaveBuffer		PSSO_BoardInfo_MouseRendered + 4
 
 #define PSSO_BoardInfo_ChipData			    PSSO_BoardInfo_MouseSaveBuffer + 4
 #define PSSO_BoardInfo_CardData			    PSSO_BoardInfo_ChipData + 16 * 4
-#define PSSO_BoardInfo_MemorySpaceBase		    PSSO_BoardInfo_CardData + 16 * 4
-#define PSSO_BoardInfo_MemorySpaceSize		    PSSO_BoardInfo_MemorySpaceBase + 4
-#define PSSO_BoardInfo_DoubleBufferList		    PSSO_BoardInfo_MemorySpaceSize + 4
+#define PSSO_BoardInfo_MemorySpaceBase		PSSO_BoardInfo_CardData + 16 * 4
+#define PSSO_BoardInfo_MemorySpaceSize		PSSO_BoardInfo_MemorySpaceBase + 4
+#define PSSO_BoardInfo_DoubleBufferList		PSSO_BoardInfo_MemorySpaceSize + 4
 #define PSSO_BoardInfo_SyncTime			    PSSO_BoardInfo_DoubleBufferList + 4
-#define PSSO_BoardInfo_SyncPeriod		    PSSO_BoardInfo_SyncTime + 4
-#define PSSO_BoardInfo_SoftVBlankPort		    PSSO_BoardInfo_SyncPeriod + 8
-#define PSSO_BoardInfo_SizeOf			    PSSO_BoardInfo_SoftVBlankPort + 34
+#define PSSO_BoardInfo_SyncPeriod		    PSSO_BoardInfo_SyncTime + 8
+#define PSSO_BoardInfo_SoftVBlankPort		PSSO_BoardInfo_SyncPeriod + 4
+#define PSSO_BoardInfo_WaitQ                PSSO_BoardInfo_SoftVBlankPort + 34
+#define PSSO_BoardInfo_EssentialFormats     PSSO_BoardInfo_WaitQ + 3 * 4
+#define PSSO_BoardInfo_MouseImageBuffer     PSSO_BoardInfo_EssentialFormats + 4
+#define PSSO_BoardInfo_BackViewPort         PSSO_BoardInfo_MouseImageBuffer + 4
+#define PSSO_BoardInfo_BackBitMap           PSSO_BoardInfo_BackViewPort + 4
+#define PSSO_BoardInfo_BackBitMapExtra      PSSO_BoardInfo_BackBitMap + 4
+#define PSSO_BoardInfo_YSplit               PSSO_BoardInfo_BackBitMapExtra + 4
+#define PSSO_BoardInfo_MaxPlanarMemory      PSSO_BoardInfo_YSplit + 2
+#define PSSO_BoardInfo_MaxBMWidth           PSSO_BoardInfo_MaxPlanarMemory + 4
+#define PSSO_BoardInfo_MaxBMHeight          PSSO_BoardInfo_MaxBMWidth + 4
+#define PSSO_BoardInfo_SecondaryCLUT        PSSO_BoardInfo_MaxBMHeight + 4
+#define PSSO_BoardInfo_SizeOf			    PSSO_BoardInfo_SecondaryCLUT + 3 * 256
 
 /* BoardInfo flags */
 /*  0-15: hardware flags */
@@ -542,6 +553,8 @@ enum {
 #define BIB_NEEDSALIGNMENT		 2	/* bitmaps have to be aligned (not yet supported!) */
 #define BIB_CACHEMODECHANGE		 3	/* board memory may be set to Imprecise (060) or Nonserialised (040) */
 #define BIB_VBLANKINTERRUPT		 4	/* board can cause a hardware interrupt on a vertical retrace */
+#define BIB_HASSPRITEBUFFER      5  /* board has allocated memory for software sprite image and save buffer */
+#define BIB_VGASCREENSPLIT       6  /* has a screen B with fixed screen position for split-screens */
 #define BIB_DBLSCANDBLSPRITEY	 8	/* hardware sprite y position is doubled on doublescan display modes */
 #define BIB_ILACEHALFSPRITEY	 9	/* hardware sprite y position is halved on interlace display modes */
 #define BIB_ILACEDBLROWOFFSET	10	/* doubled row offset in interlaced display modes needs additional horizontal bit */
@@ -560,6 +573,7 @@ enum {
 #define BIB_NOBLITTER			24	/* disable all blitter functions */
 #define BIB_SYSTEM2SCREENBLITS	25	/* allow data to be written to screen memory for cpu as blitter source */
 #define BIB_GRANTDIRECTACCESS	26	/* all data on the board can be accessed at any time without bi->SetMemoryMode() */
+#define BIB_PALETTESWITCH		27
 #define BIB_OVERCLOCK			31	/* enable overclocking for some boards */
 
 #define BIB_IGNOREMASK	BIB_NOMASKBLITS
@@ -569,6 +583,8 @@ enum {
 #define BIF_NEEDSALIGNMENT		(1 << BIB_NEEDSALIGNMENT)
 #define BIF_CACHEMODECHANGE		(1 << BIB_CACHEMODECHANGE)
 #define BIF_VBLANKINTERRUPT		(1 << BIB_VBLANKINTERRUPT)
+#define BIF_HASSPRITEBUFFER		(1 << BIB_HASSPRITEBUFFER)
+#define BIF_VGASCREENSPLIT		(1 << BIB_VGASCREENSPLIT)
 #define BIF_DBLSCANDBLSPRITEY	(1 << BIB_DBLSCANDBLSPRITEY)
 #define BIF_ILACEHALFSPRITEY	(1 << BIB_ILACEHALFSPRITEY)
 #define BIF_ILACEDBLROWOFFSET	(1 << BIB_ILACEDBLROWOFFSET)
@@ -587,6 +603,7 @@ enum {
 #define BIF_NOBLITTER			(1 << BIB_NOBLITTER)
 #define BIF_SYSTEM2SCREENBLITS	(1 << BIB_SYSTEM2SCREENBLITS)
 #define BIF_GRANTDIRECTACCESS	(1 << BIB_GRANTDIRECTACCESS)
+#define BIF_PALETTESWITCH		(1 << BIB_PALETTESWITCH)
 #define BIF_OVERCLOCK			(1 << BIB_OVERCLOCK)
 
 #define BIF_IGNOREMASK 	BIF_NOMASKBLITS
@@ -595,7 +612,7 @@ enum {
 struct picasso96_state_struct
 {
     RGBFTYPE            RGBFormat;   /* true-colour, CLUT, hi-colour, etc.*/
-    struct MyCLUTEntry  CLUT[256];   /* Duh! */
+    struct MyCLUTEntry  CLUT[2 * 256];   /* Duh! */
     uaecptr             Address;     /* Active screen address (Amiga-side)*/
     uaecptr             Extent;      /* End address of screen (Amiga-side)*/
     uae_u16             Width;       /* Active display width  (From SetGC)*/
@@ -619,6 +636,7 @@ struct picasso96_state_struct
     // every time windows can remove your surface from card so the mainrender place
     // must be in memory
     long		XYOffset;
+    bool        dualclut;
 };
 
 extern void InitPicasso96(int monid);
@@ -636,7 +654,7 @@ extern bool picasso_is_active(int monid);
 extern int picasso_setwincursor(int monid);
 extern int picasso_palette(struct MyCLUTEntry *MCLUT, uae_u32 *clut);
 extern void picasso_allocatewritewatch (int index, int gfxmemsize);
-extern void picasso_getwritewatch (int index, int offset);
+extern int picasso_getwritewatch(int index, int offset, uae_u8 ***gwwbufp, uae_u8 **startp);
 extern bool picasso_is_vram_dirty (int index, uaecptr addr, int size);
 extern void picasso_statusline (int monid, uae_u8 *dst);
 extern void picasso_invalidate(int monid, int x, int y, int w, int h);
@@ -649,7 +667,7 @@ struct picasso_vidbuf_description {
 	int extra_mem; /* nonzero if there's a second buffer that must be updated */
 	uae_u32 rgbformat;
 	uae_u32 selected_rgbformat;
-	uae_u32 clut[256];
+	uae_u32 clut[256 * 2];
 	int picasso_convert, host_mode;
 	int ohost_mode, orgbformat;
 	int full_refresh;
@@ -657,6 +675,7 @@ struct picasso_vidbuf_description {
 	int rtg_clear_flag;
 	bool picasso_active;
 	bool picasso_changed;
+    uae_s16 splitypos;
 	uae_atomic picasso_state_change;
 };
 
@@ -665,7 +684,7 @@ extern struct picasso_vidbuf_description picasso_vidinfo[MAX_AMIGAMONITORS];
 extern void gfx_set_picasso_modeinfo(int monid, RGBFTYPE rgbfmt);
 extern void gfx_set_picasso_colors(int monid, RGBFTYPE rgbfmt);
 extern void gfx_set_picasso_state(int monid,int on);
-extern uae_u8 *gfx_lock_picasso(int monid, bool, bool);
+extern uae_u8 *gfx_lock_picasso(int monid, bool);
 extern void gfx_unlock_picasso(int monid, bool);
 extern int createwindowscursor(int monid, uaecptr src, int w, int h, int hiressprite, int doubledsprite, int chipset);
 

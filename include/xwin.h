@@ -29,7 +29,7 @@ extern void setup_brkhandler (void);
 extern int isfullscreen (void);
 extern void toggle_fullscreen(int monid, int);
 extern bool toggle_rtg(int monid, int);
-extern void close_rtg(int monid);
+extern void close_rtg(int monid, bool reset);
 
 extern void toggle_mousegrab (void);
 void setmouseactivexy(int monid, int x, int y, int dir);
@@ -53,7 +53,7 @@ extern bool render_screen(int monid, int, bool);
 extern void show_screen(int monid, int mode);
 extern bool show_screen_maybe(int monid, bool);
 
-extern int lockscr(struct vidbuffer*, bool, bool);
+extern int lockscr(struct vidbuffer*, bool, bool, bool);
 extern void unlockscr(struct vidbuffer*, int, int);
 extern bool target_graphics_buffer_update(int monid);
 extern float target_adjust_vblank_hz(int monid, float);
@@ -126,12 +126,12 @@ struct vidbuffer
 	/* tempbuffer in use */
 	bool tempbufferinuse;
 	/* extra width, chipset hpos extra in right border */
-	int extrawidth;
+	int extrawidth, extraheight;
 
 	int xoffset; /* superhires pixels from left edge */
 	int yoffset; /* lines from top edge */
 
-	int inxoffset; /* positive if sync positioning */
+	int inxoffset; /* sync positioning */
 	int inyoffset;
 
 	int monitor_id;

@@ -13,6 +13,7 @@ void devices_update_sound(double clk, double syncadjust);
 void devices_update_sync(double svpos, double syncadjust);
 void do_leave_program(void);
 void virtualdevice_init(void);
+void virtualdevice_free(void);
 void devices_restore_start(void);
 void device_check_config(void);
 void devices_pause(void);
@@ -46,7 +47,8 @@ void device_add_exit(DEVICE_VOID p);
 #define IRQ_SOURCE_CIA 12
 #define IRQ_SOURCE_CD32CDTV 13
 #define IRQ_SOURCE_IDE 14
-#define IRQ_SOURCE_MAX 15
+#define IRQ_SOURCE_GFX 15
+#define IRQ_SOURCE_MAX 16
 
 
 #endif /* UAE_DEVICES_H */

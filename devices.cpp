@@ -227,13 +227,13 @@ void devices_reset(int hardreset)
 
 void devices_vsync_pre(void)
 {
-	audio_vsync ();
-	blkdev_vsync ();
-	CIA_vsync_prehandler ();
-	inputdevice_vsync ();
-	filesys_vsync ();
-	sampler_vsync ();
-	clipboard_vsync ();
+	audio_vsync();
+	blkdev_vsync();
+	CIA_vsync_prehandler();
+	inputdevice_vsync();
+	filesys_vsync();
+	sampler_vsync();
+	clipboard_vsync();
 	statusline_vsync();
 
 	execute_device_items(device_vsyncs_pre, device_vsync_pre_cnt);
@@ -252,8 +252,8 @@ void devices_hsync(void)
 	audio_hsync();
 	CIA_hsync_prehandler();
 
-	decide_blitter (-1);
-	serial_hsynchandler ();
+	decide_blitter(-1);
+	serial_hsynchandler();
 
 	execute_device_items(device_hsyncs, device_hsync_cnt);
 }
@@ -287,52 +287,57 @@ void devices_update_sync(double svpos, double syncadjust)
 	cd32_fmv_set_sync(svpos, syncadjust);
 }
 
-void do_leave_program (void)
+void virtualdevice_free(void)
 {
 #ifdef WITH_PPC
 	// must be first
 	uae_ppc_free();
 #endif
 	free_traps();
-	sampler_free ();
-	graphics_leave ();
-	inputdevice_close ();
-	DISK_free ();
-	close_sound ();
-	dump_counts ();
+	sampler_free();
+	inputdevice_close();
+	DISK_free();
+	dump_counts();
 	barto_gdbserver::close();
 #ifdef SERIAL_PORT
-	serial_exit ();
-#endif
-	if (! no_gui)
-		gui_exit ();
-#ifdef USE_SDL
-	SDL_Quit ();
+	serial_exit();
 #endif
 #ifdef AUTOCONFIG
-	expansion_cleanup ();
+	expansion_cleanup();
 #endif
 #ifdef FILESYS
-	filesys_cleanup ();
+	filesys_cleanup();
 #endif
 #ifdef BSDSOCKET
-	bsdlib_reset ();
+	bsdlib_reset();
 #endif
 	device_func_free();
 #ifdef WITH_LUA
-	uae_lua_free ();
+	uae_lua_free();
 #endif
 	gfxboard_free();
-	savestate_free ();
-	memory_cleanup ();
-	free_shm ();
-	cfgfile_addcfgparam (0);
-	machdep_free ();
+	savestate_free();
+	memory_cleanup();
+	free_shm();
+	cfgfile_addcfgparam(0);
 	driveclick_free();
 	ethernet_enumerate_free();
 	rtarea_free();
 
 	execute_device_items(device_leaves, device_leave_cnt);
+}
+
+void do_leave_program (void)
+{
+	virtualdevice_free();
+	graphics_leave();
+	close_sound();
+	if (! no_gui)
+		gui_exit();
+#ifdef USE_SDL
+	SDL_Quit();
+#endif
+	machdep_free();
 }
 
 void virtualdevice_init (void)
@@ -384,14 +389,14 @@ void devices_restore_start(void)
 {
 	restore_cia_start();
 	restore_blkdev_start();
-	changed_prefs.bogomem_size = 0;
-	changed_prefs.chipmem_size = 0;
+	changed_prefs.bogomem.size = 0;
+	changed_prefs.chipmem.size = 0;
 	for (int i = 0; i < MAX_RAM_BOARDS; i++) {
 		changed_prefs.fastmem[i].size = 0;
 		changed_prefs.z3fastmem[i].size = 0;
 	}
-	changed_prefs.mbresmem_low_size = 0;
-	changed_prefs.mbresmem_high_size = 0;
+	changed_prefs.mbresmem_low.size = 0;
+	changed_prefs.mbresmem_high.size = 0;
 	restore_expansion_boards(NULL);
 }
 

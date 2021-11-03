@@ -438,7 +438,7 @@ int isharddrive (const TCHAR *name)
 	return -1;
 }
 
-static TCHAR *hdz[] = { _T("hdz"), _T("zip"), _T("rar"), _T("7z"), NULL };
+static const TCHAR *hdz[] = { _T("hdz"), _T("zip"), _T("rar"), _T("7z"), NULL };
 
 static int progressdialogreturn;
 static int progressdialogactive;
@@ -891,7 +891,7 @@ static bool hd_get_meta_hack_realtek(HWND hDlg, HANDLE h, uae_u8 *data, uae_u8 *
 	int state = 0;
 
 	memset(cmd, 0, 6); // TEST UNIT READY
-	TCHAR *infotxt;
+	const TCHAR *infotxt;
 	if (do_scsi_in(h, cmd, 6, data, 0, true) < 0) {
 		state = 1;
 		infotxt = _T("Realtek hack, insert card.");
@@ -1402,6 +1402,8 @@ static int gethdfchs(HWND hDlg, struct uae_driveinfo *udi, HANDLE h, int *cylsp,
 	int cyls = 0, heads = 0, secs = 0;
 	uae_u8 *data = (uae_u8*)VirtualAlloc(NULL, 65536, MEM_COMMIT, PAGE_READWRITE);
 	DWORD err = 0;
+	HFONT font;
+	HWND hwnd;
 
 	memset(data, 0, 512);
 	memset(cmd, 0, sizeof(cmd));
@@ -1429,12 +1431,12 @@ static int gethdfchs(HWND hDlg, struct uae_driveinfo *udi, HANDLE h, int *cylsp,
 	}
 
 	chsdialogactive = 1;
-	HWND hwnd = CustomCreateDialog(IDD_CHSQUERY, hDlg, CHSDialogProc);
+	hwnd = CustomCreateDialog(IDD_CHSQUERY, hDlg, CHSDialogProc);
 	if (hwnd == NULL) {
 		err = -15;
 		goto end;
 	}
-	HFONT font = CreateFont(getscaledfontsize(-1), 0, 0, 0, 0, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, _T("Lucida Console"));
+	font = CreateFont(getscaledfontsize(-1), 0, 0, 0, 0, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, _T("Lucida Console"));
 	if (font)
 		SendMessage(GetDlgItem(hwnd, IDD_CHSQUERY), WM_SETFONT, WPARAM(font), FALSE);
 	while (chsdialogactive == 1) {
@@ -1533,6 +1535,8 @@ void hd_get_meta(HWND hDlg, int idx, TCHAR *geometryfile)
 	TCHAR *text, *tptr;
 	struct ini_data *ini = NULL;
 	bool atapi = false;
+	HWND hwnd;
+	bool empty = true;
 
 	geometryfile[0] = 0;
 	text = xcalloc(TCHAR, 100000);
@@ -1594,7 +1598,6 @@ void hd_get_meta(HWND hDlg, int idx, TCHAR *geometryfile)
 		goto doout;
 	}
 
-	bool empty = true;
 	for (int i = 0; i < 512; i++) {
 		if (data[i] != 0)
 			empty = false;
@@ -1661,7 +1664,7 @@ doout:
 
 	stringboxdialogactive = 1;
 	hdini = ini;
-	HWND hwnd = CustomCreateDialog (IDD_DISKINFO, hDlg, StringBoxDialogProc);
+	hwnd = CustomCreateDialog (IDD_DISKINFO, hDlg, StringBoxDialogProc);
 	if (hwnd != NULL) {
 		HFONT font = CreateFont (getscaledfontsize(-1), 0, 0, 0, 0, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, _T("Lucida Console"));
 		if (font)
@@ -2026,19 +2029,23 @@ int hdf_open_target (struct hardfiledata *hfd, const TCHAR *pname)
 				NULL, OPEN_EXISTING, flags, NULL);
 			hfd->handle->h = h;
 			if (h == INVALID_HANDLE_VALUE && !hfd->ci.readonly) {
-				DWORD err = GetLastError ();
+				DWORD err = GetLastError();
+				write_log(_T("Real HD open (RW) error: %d\n"), err);
 				if (err == ERROR_WRITE_PROTECT || err == ERROR_SHARING_VIOLATION) {
 					h = CreateFile (udi->device_path,
 						GENERIC_READ,
 						FILE_SHARE_READ,
 						NULL, OPEN_EXISTING, flags, NULL);
-					if (h != INVALID_HANDLE_VALUE)
+					if (h != INVALID_HANDLE_VALUE) {
 						hfd->ci.readonly = true;
+						write_log(_T("Real HD open succeeded in read-only mode\n"));
+					}
 				}
 			}
 
 			if (h == INVALID_HANDLE_VALUE) {
 				DWORD err = GetLastError ();
+				write_log(_T("Real HD open error: %d\n"), err);
 				if (err == ERROR_WRITE_PROTECT)
 					ret = -2;
 				if (err == ERROR_SHARING_VIOLATION)
@@ -2558,7 +2565,7 @@ static int hdf_write_2 (struct hardfiledata *hfd, void *buffer, uae_u64 offset, 
 	poscheck (hfd, len);
 	memcpy (hfd->cache, buffer, len);
 	if (hfd->handle_valid == HDF_HANDLE_WIN32_NORMAL) {
-		TCHAR *name = hfd->emptyname == NULL ? _T("<unknown>") : hfd->emptyname;
+		const TCHAR *name = hfd->emptyname == NULL ? _T("<unknown>") : hfd->emptyname;
 		if (offset == 0) {
 			if (!hfd->handle->firstwrite && (hfd->flags & HFD_FLAGS_REALDRIVE) && !(hfd->flags & HFD_FLAGS_REALDRIVEPARTITION)) {
 				hfd->handle->firstwrite = true;
@@ -2878,7 +2885,7 @@ static BOOL GetDevicePropertyFromName(const TCHAR *DevicePath, DWORD Index, DWOR
 	ULONG                               length = 0, returned = 0, returnedLength;
 	BOOL showonly = FALSE;
 	struct uae_driveinfo tmpudi = { 0 };
-
+	struct uae_driveinfo* udi2;
 	udi = &tmpudi;
 	int udiindex = *index2;
 
@@ -2974,7 +2981,7 @@ static BOOL GetDevicePropertyFromName(const TCHAR *DevicePath, DWORD Index, DWOR
 	}
 	udi = &uae_drives[udiindex < 0 ? *index2 : udiindex];
 	memcpy (udi, &tmpudi, sizeof (struct uae_driveinfo));
-	struct uae_driveinfo *udi2 = udi;
+	udi2 = udi;
 
 	_tcscpy (orgname, udi->device_name);
 	udi->bytespersector = 512;
@@ -3326,8 +3333,8 @@ TCHAR *hdf_getnameharddrive (int index, int flags, int *sectorsize, int *dangero
 	TCHAR tmp[32];
 	uae_u64 size = udi->size;
 	int nomedia = udi->nomedia;
-	TCHAR *dang = _T("?");
-	TCHAR *rw = _T("RW");
+	const TCHAR *dang = _T("?");
+	const TCHAR *rw = _T("RW");
 	bool noaccess = false;
 
 	if (outflags) {

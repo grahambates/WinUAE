@@ -23,6 +23,7 @@ void cpuboard_setboard(struct uae_prefs *p, int type, int subtype);
 uaecptr cpuboard_get_reset_pc(uaecptr *stack);
 void cpuboard_set_flash_unlocked(bool unlocked);
 void cpuboard_set_cpu(struct uae_prefs *p);
+bool cpuboard_forced_hardreset(void);
 
 bool ppc_interrupt(int new_m68k_ipl);
 
@@ -67,9 +68,11 @@ void cpuboard_gvpmaprom(int);
 #define BOARD_GVP_SUB_A3001SII 1
 #define BOARD_GVP_SUB_A530 2
 #define BOARD_GVP_SUB_GFORCE030 3
-#define BOARD_GVP_SUB_TEKMAGIC 4
-#define BOARD_GVP_SUB_A1230SII 5
-#define BOARD_GVP_SUB_QUIKPAK 6
+#define BOARD_GVP_SUB_GFORCE040 4
+#define BOARD_GVP_SUB_TEKMAGIC 5
+#define BOARD_GVP_SUB_A1230SI 6
+#define BOARD_GVP_SUB_A1230SII 7
+#define BOARD_GVP_SUB_QUIKPAK 8
 
 #define BOARD_KUPKE 6
 

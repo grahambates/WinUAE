@@ -676,7 +676,7 @@ static void get_a2410_surface(struct a2410_struct *data)
 	bool gotsurf = false;
 	if (ad->picasso_on) {
 		if (data->a2410_surface == NULL) {
-			data->a2410_surface = gfx_lock_picasso(monid, false, false);
+			data->a2410_surface = gfx_lock_picasso(monid, false);
 			gotsurf = true;
 		}
 		if (data->a2410_surface && gotsurf) {
@@ -823,7 +823,7 @@ static void tms_hsync_handler2(struct a2410_struct *data)
 
 	if (a2410_vpos == 0) {
 		tms_vsync_handler2(data, true);
-		picasso_getwritewatch(data->a2410_gfxboard, data->a2410_vram_start_offset);
+		picasso_getwritewatch(data->a2410_gfxboard, data->a2410_vram_start_offset, NULL, NULL);
 	}
 
 	if (data->a2410_modechanged || !ad->picasso_on)

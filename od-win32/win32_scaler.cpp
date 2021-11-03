@@ -182,16 +182,17 @@ static bool get_aspect(int monid, float *dstratiop, float *srcratiop, float *xmu
 				if (keep_aspect == 1)
 					dstratio = dstratio * 0.93f;
 			} else {
+				bool isp = ispal(NULL);
 				if (currprefs.ntscmode) {
 					dstratio = dstratio * 1.21f;
-					if (keep_aspect == 2 && ispal())
+					if (keep_aspect == 2 && isp)
 						dstratio = dstratio * 0.93f;
-					else if (keep_aspect == 1 && !ispal())
+					else if (keep_aspect == 1 && !isp)
 						dstratio = dstratio * 0.98f;
 				} else {
-					if (keep_aspect == 2 && ispal())
+					if (keep_aspect == 2 && isp)
 						dstratio = dstratio * 0.95f;
-					else if (keep_aspect == 1 && !ispal())
+					else if (keep_aspect == 1 && !isp)
 						dstratio = dstratio * 0.95f;
 				}
 			}
@@ -241,6 +242,7 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 	float autoaspectratio;
 	int keep_aspect = currprefs.gf[ad->picasso_on].gfx_filter_keep_aspect;
 	int filter_aspect = currprefs.gf[ad->picasso_on].gfx_filter_aspect;
+	int palntscadjust = 1;
 
 	float filter_horiz_zoom = currprefs.gf[ad->picasso_on].gfx_filter_horiz_zoom / 1000.0f;
 	float filter_vert_zoom = currprefs.gf[ad->picasso_on].gfx_filter_vert_zoom / 1000.0f;
@@ -310,6 +312,7 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 		int h = (dst_height / 2) << currprefs.gfx_vresolution;
 		filter_aspect = 0;
 		keep_aspect = 0;
+		palntscadjust = 1;
 		if (w >= 640 && w <= 800 && h >= 480 && h <= 600) {
 			scalemode = AUTOSCALE_NONE;
 		} else {
@@ -364,9 +367,11 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 					cw -= 40 << currprefs.gfx_resolution;
 					ch -= 20 << currprefs.gfx_vresolution;
 				}
-				set_custom_limits (cw, ch, cx, cy);
-				store_custom_limits (cw, ch, cx, cy);
-				scl = true;
+				if (scalemode != AUTOSCALE_INTEGER && scalemode != AUTOSCALE_INTEGER_AUTOSCALE) {
+					set_custom_limits (cw, ch, cx, cy);
+					store_custom_limits (cw, ch, cx, cy);
+					scl = true;
+				}
 			}
 
 			if (scalemode == AUTOSCALE_INTEGER || scalemode == AUTOSCALE_INTEGER_AUTOSCALE) {
@@ -388,12 +393,14 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 					if (ok) {
 						set_custom_limits(cw, ch, cx, cy);
 						store_custom_limits(cw, ch, cx, cy);
+						scl = true;
 					}
 				}
 				if (scalemode == AUTOSCALE_INTEGER || ok == false) {
 					getmanualpos(monid, &cx, &cy, &cw, &ch);
 					set_custom_limits(cw, ch, cx, cy);
 					store_custom_limits(cw, ch, cx, cy);
+					scl = true;
 				}
 
 #if 0
@@ -576,7 +583,7 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 					ww = currprefs.gfx_xcenter_size;
 				if (currprefs.gfx_ycenter_size >= 0)
 					hh = currprefs.gfx_ycenter_size;
-				if (scalemode == oscalemode) {
+				if (scalemode == oscalemode && !useold) {
 					int oldwinw = gmc->gfx_size_win.width;
 					int oldwinh = gmc->gfx_size_win.height;
 					gmh->gfx_size_win.width = ww;
@@ -666,16 +673,39 @@ cont:
 
 	}
 
-	if (currprefs.ntscmode) {
-		if (keep_aspect == 2 && ispal ())
-			dstratio = dstratio * 0.93f;
-		else if (keep_aspect == 1 && !ispal ())
-			dstratio = dstratio * 0.98f;
-	} else {
-		if (keep_aspect == 2 && ispal ())
-			dstratio = dstratio * 0.95f;
-		else if (keep_aspect == 1 && !ispal ())
-			dstratio = dstratio * 0.95f;
+	{
+		float palntscratio = dstratio;
+		int l = 0;
+		bool isp = ispal(&l);
+		if (abs(l - 262) <= 25) {
+			l = 262;
+		}
+		if (abs(l - 312) <= 25) {
+			l = 312;
+		}
+		float ll = l * 2 + 1;
+		if (currprefs.ntscmode) {
+			if (palntscadjust && isp) {
+				palntscratio = palntscratio * (ll / 525.0);
+			}
+			if (keep_aspect == 2 && isp) {
+				palntscratio = palntscratio * 0.93f;
+			} else if (keep_aspect == 1 && !isp) {
+				palntscratio = palntscratio * 0.98f;
+			}
+		} else {
+			if (palntscadjust && !isp) {
+				palntscratio = palntscratio * (625.0 / ll);
+			}
+			if (keep_aspect == 2 && isp) {
+				palntscratio = palntscratio * 0.95f;
+			} else if (keep_aspect == 1 && !isp) {
+				palntscratio = palntscratio * 0.95f;
+			}
+		}
+		if (palntscratio != dstratio) {
+			ymult = ymult * palntscratio / dstratio;
+		}
 	}
 
 	if (srcratio > dstratio) {
@@ -758,6 +788,7 @@ uae_u8 *getfilterbuffer(int monid, int *widthp, int *heightp, int *pitch, int *d
 	struct vidbuf_description *avidinfo = &adisplays[monid].gfxvidinfo;
 	struct vidbuffer *vb = avidinfo->outbuffer;
 	struct uae_filter *usedfilter = mon->usedfilter;
+	int w, h;
 
 	*widthp = 0;
 	*heightp = 0;
@@ -769,10 +800,16 @@ uae_u8 *getfilterbuffer(int monid, int *widthp, int *heightp, int *pitch, int *d
 			return NULL;
 		}
 	}
-	*widthp = vb->outwidth;
-	*heightp = vb->outheight;
+	w = vb->outwidth;
+	h = vb->outheight;
+	if (!monid) {
+		// if native screen: do not include vertical blank
+		h = get_vertical_visible_height();
+	}
 	if (pitch)
 		*pitch = vb->rowbytes;
+	*widthp = w;
+	*heightp = h;
 	*depth = vb->pixbytes * 8;
 	return vb->bufmem;
 #if 0
@@ -807,7 +844,7 @@ static void statusline(int monid)
 	if (!(currprefs.leds_on_screen & STATUSLINE_CHIPSET) || !tempsurf)
 		return;
 	statusline_getpos(monid, &slx, &sly, dst_width, dst_height);
-	int m = statusline_get_multiplier(monid);
+	int m = statusline_get_multiplier(monid) / 100;
 	lx = dst_width;
 	ly = dst_height;
 	SetRect(&sr, slx, 0, slx + lx, TD_TOTAL_HEIGHT * m);
@@ -1022,7 +1059,7 @@ void S2X_render(int monid, int y_start, int y_end)
 	if (d3d) {
 		if (D3D_restore)
 			D3D_restore(monid, true);
-		surfstart = D3D_locktexture(monid, &pitch, &surf_height, y_start < 0);
+		surfstart = D3D_locktexture(monid, &pitch, &surf_height, y_start < -1 ? -1 : (y_start < 0 ? 1 : 0));
 		if (surfstart == NULL)
 			return;
 	} else {

@@ -69,5 +69,5 @@ packages.config
 *.db-wal
 *.o
 **/.vs
-/blitfunc.c
-/blittable.c
+*.7z
+*.zip
