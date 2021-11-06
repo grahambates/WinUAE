@@ -14,6 +14,8 @@
 #include "debugmem.h"
 #include "dxwrap.h" // AmigaMonitor
 #include "custom.h"
+#include "xwin.h" // xcolnr
+#include "drawing.h" // color_entry
 #include "win32.h"
 #include "savestate.h"
 
@@ -25,6 +27,9 @@ extern struct uae_prefs currprefs;
 
 // from newcpu.cpp
 /*static*/ extern int baseclock;
+
+// from custom.cpp
+/*static*/ extern struct color_entry current_colors;
 
 // from debug.cpp
 extern uae_u8 *get_real_address_debug(uaecptr addr);
@@ -894,6 +899,10 @@ start_profile:
 			// store custom registers
 			for(int i = 0; i < _countof(custom_storage); i++)
 				profile_custom_regs[i] = custom_storage[i].value;
+
+			// colors (ECS only)
+			for(int i = 0; i < _countof(current_colors.color_regs_ecs); i++)
+				profile_custom_regs[i + 0x180 / 2] = current_colors.color_regs_ecs[i];
 
 			// reset idle
 			if(barto_debug_idle_count > 0) {
