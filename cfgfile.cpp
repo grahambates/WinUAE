@@ -203,7 +203,7 @@ static const TCHAR *epsonprinter[] = { _T("none"), _T("ascii"), _T("epson_matrix
 static const TCHAR *aspects[] = { _T("none"), _T("vga"), _T("tv"), 0 };
 static const TCHAR *vsyncmodes[] = { _T("false"), _T("true"), _T("autoswitch"), 0 };
 static const TCHAR *vsyncmodes2[] = { _T("normal"), _T("busywait"), 0 };
-static const TCHAR *filterapi[] = { _T("directdraw"), _T("direct3d"), _T("direct3d11"), 0 };
+static const TCHAR *filterapi[] = { _T("directdraw"), _T("direct3d"), _T("direct3d11"), _T("direct3d11"), 0};
 static const TCHAR *filterapiopts[] = { _T("hardware"), _T("software"), 0 };
 static const TCHAR *overscanmodes[] = { _T("tv_narrow"), _T("tv_standard"), _T("tv_wide"), _T("overscan"), _T("broadcast"), _T("extreme"), NULL };
 static const TCHAR *dongles[] =
@@ -355,6 +355,8 @@ static const TCHAR *obsolete[] = {
 	_T("comp_catchdetect"),
 
 	_T("hblank_glitch"),
+
+	_T("gfx_hdr"),
 
 	NULL
 };
@@ -2279,8 +2281,8 @@ void cfgfile_save_options (struct zfile *f, struct uae_prefs *p, int type)
 	cfgfile_dwrite_bool(f, _T("gfx_black_frame_insertion"), p->lightboost_strobo);
 	cfgfile_dwrite(f, _T("gfx_black_frame_insertion_ratio"), _T("%d"), p->lightboost_strobo_ratio);
 	cfgfile_write_str(f, _T("gfx_api"), filterapi[p->gfx_api]);
+	cfgfile_dwrite_bool(f, _T("gfx_api_hdr"), p->gfx_api == 3);
 	cfgfile_write_str(f, _T("gfx_api_options"), filterapiopts[p->gfx_api_options]);
-	cfgfile_dwrite_bool(f, _T("gfx_hdr"), p->gfx_hdr);
 	cfgfile_dwrite(f, _T("gfx_horizontal_extra"), _T("%d"), p->gfx_extrawidth);
 	cfgfile_dwrite(f, _T("gfx_vertical_extra"), _T("%d"), p->gfx_extraheight);
 	cfgfile_dwrite(f, _T("gfx_frame_slices"), _T("%d"), p->gfx_display_sections);
@@ -3484,7 +3486,6 @@ static int cfgfile_parse_host (struct uae_prefs *p, TCHAR *option, TCHAR *value)
 		|| cfgfile_yesno(option, value, _T("gfx_black_frame_insertion"), &p->lightboost_strobo)
 		|| cfgfile_yesno(option, value, _T("gfx_flickerfixer"), &p->gfx_scandoubler)
 		|| cfgfile_yesno(option, value, _T("gfx_autoresolution_vga"), &p->gfx_autoresolution_vga)
-		|| cfgfile_yesno(option, value, _T("gfx_hdr"), &p->gfx_hdr)
 		|| cfgfile_yesno(option, value, _T("show_refresh_indicator"), &p->refresh_indicator)
 		|| cfgfile_yesno(option, value, _T("warp"), &p->turbo_emulation)
 		|| cfgfile_yesno(option, value, _T("headless"), &p->headless)
@@ -3527,6 +3528,13 @@ static int cfgfile_parse_host (struct uae_prefs *p, TCHAR *option, TCHAR *value)
 
 	if (cfgfile_multichoice(option, value, _T("debugging_features"), &p->debugging_features, debugfeatures))
 		return 1;
+
+	if (cfgfile_yesno(option, value, _T("gfx_api_hdr"), &vb)) {
+		if (vb && p->gfx_api == 2) {
+			p->gfx_api = 3;
+		}
+		return 1;
+	}
 
 	if (cfgfile_yesno(option, value, _T("magic_mouse"), &vb)) {
 		if (vb)
@@ -7527,6 +7535,18 @@ end:
 	return err;
 }
 
+static void shellexec_cb(uae_u32 id, uae_u32 status, uae_u32 flags, const char *outbuf, void *userdata)
+{
+	if (flags & 1) {
+		write_log("Return status code: %d\n", status);
+	}
+	if (flags & 2) {
+		if (outbuf) {
+			write_log("%s\n", outbuf);
+		}
+	}
+}
+
 static int execcmdline(struct uae_prefs *prefs, int argv, TCHAR **argc, TCHAR *out, int outsize, bool confonly)
 {
 	int ret = 0;
@@ -7535,7 +7555,19 @@ static int execcmdline(struct uae_prefs *prefs, int argv, TCHAR **argc, TCHAR *o
 		if (i + 2 <= argv) {
 			if (!confonly) {
 				if (!_tcsicmp(argc[i], _T("shellexec"))) {
-					uae_ShellExecute(argc[i + 1]);
+					TCHAR *cmd = argc[i + 1];
+					uae_u32 flags = 0;
+					i++;
+					while (argv > i + 1) {
+						TCHAR *next = argc[i + 1];
+						if (!_tcsicmp(next, _T("out"))) {
+							flags |= 2;
+						}
+						if (!_tcsicmp(next, _T("res"))) {
+							flags |= 1;
+						}
+					}
+					filesys_shellexecute2(cmd, NULL, NULL, 0, 0, 0, flags, NULL, 0, shellexec_cb, NULL);
 				} else if (!_tcsicmp(argc[i], _T("dbg"))) {
 					debug_parser(argc[i + 1], out, outsize);
 				} else if (!inputdevice_uaelib(argc[i], argc[i + 1])) {
