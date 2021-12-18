@@ -14,6 +14,8 @@
 #include "debugmem.h"
 #include "dxwrap.h" // AmigaMonitor
 #include "custom.h"
+#include "xwin.h" // xcolnr
+#include "drawing.h" // color_entry
 #include "win32.h"
 #include "savestate.h"
 
@@ -42,6 +44,9 @@ extern struct uae_prefs currprefs;
 
 // from newcpu.cpp
 /*static*/ extern int baseclock;
+
+// from custom.cpp
+/*static*/ extern struct color_entry current_colors;
 
 // from debug.cpp
 extern uae_u8 *get_real_address_debug(uaecptr addr);
@@ -282,12 +287,18 @@ namespace barto_gdbserver {
 			activate_debugger();
 			initialize_memwatch(0);
 
-			// from debug.cpp@process_breakpoint()
-			processptr = 0;
-			xfree(processname);
-			processname = nullptr;
-			processname = ua(currprefs.debugging_trigger);
-			trace_mode = TRACE_CHECKONLY;
+			if(currprefs.debugging_trigger[0]) {
+				// from debug.cpp@process_breakpoint()
+				processptr = 0;
+				xfree(processname);
+				processname = nullptr;
+				processname = ua(currprefs.debugging_trigger);
+				trace_mode = TRACE_CHECKONLY;
+			} else {
+				// savestate debugging
+				baseText = 0;
+				sizeText = 0x7fffffff;
+			}
 
 			// call as early as possible to avoid delays with GDB having to retry to connect...
 			listen();
@@ -556,79 +567,82 @@ namespace barto_gdbserver {
 	}
 
 	std::string handle_qrcmd(const std::string& request) {
-		// "monitor" command. used for profiling
-		auto cmd = from_hex(request.substr(strlen("qRcmd,")));
-		barto_log("GDBSERVER:   monitor %s\n", cmd.c_str());
-		// syntax: monitor profile <num_frames> <unwind_file> <out_file>
-		if(cmd.substr(0, strlen("profile")) == "profile") {
-			auto s = cmd.substr(strlen("profile "));
-			std::string profile_unwindname;
-			profile_num_frames = 0;
-			profile_outname.clear();
+	// "monitor" command. used for profiling
+	auto cmd = from_hex(request.substr(strlen("qRcmd,")));
+	barto_log("GDBSERVER:   monitor %s\n", cmd.c_str());
+	// syntax: monitor profile <num_frames> <unwind_file> <out_file>
+	if(cmd.substr(0, strlen("profile")) == "profile") {
+		auto s = cmd.substr(strlen("profile "));
+		std::string profile_unwindname;
+		profile_num_frames = 0;
+		profile_outname.clear();
 
-			// get num_frames
-			while(s[0] >= '0' && s[0] <= '9') {
-				profile_num_frames = profile_num_frames * 10 + s[0] - '0';
-				s = s.substr(1);
-			}
-			profile_num_frames = max(1, min(100, profile_num_frames));
-			s = s.substr(1); // skip space
-
-			// get profile_unwindname
-			if(s.substr(0, 1) == "\"") {
-				auto last = s.find('\"', 1);
-				if(last != std::string::npos) {
-					profile_unwindname = s.substr(1, last - 1);
-					s = s.substr(last + 1);
-				} else {
-					s.clear();
-				}
-			} else {
-				auto last = s.find(' ', 1);
-				if(last != std::string::npos) {
-					profile_unwindname = s.substr(0, last);
-					s = s.substr(last + 1);
-				} else {
-					s.clear();
-				}
-			}
-
-			s = s.substr(1); // skip space
-
-			// get profile_outname
-			if(s.substr(0, 1) == "\"") {
-				auto last = s.find('\"', 1);
-				if(last != std::string::npos) {
-					profile_outname = s.substr(1, last - 1);
-					s = s.substr(last + 1);
-				} else {
-					s.clear();
-				}
-			} else {
-				profile_unwindname = s.substr(1);
-			}
-
-			if(!profile_unwindname.empty() && !profile_outname.empty()) {
-				if(auto f = fopen(profile_unwindname.c_str(), "rb")) {
-					profile_unwind = std::make_unique<cpu_profiler_unwind[]>(sizeText >> 1);
-					fread(profile_unwind.get(), sizeof(cpu_profiler_unwind), sizeText >> 1, f);
-					fclose(f);
-					send_ack(GDB_ACK);
-					profile_frame_count = 0;
-					debugger_state = state::profile;
-					deactivate_debugger();
-					return ""; // response is sent when profile is finished (vsync)
-				}
-			}
-		} else if(cmd == "reset") {
-			savestate_quick(0, 0); // restore state saved at process entry
-			barto_debug_resources_count = 0;
-			return GDB_OK;
-		} else {
-			// unknown monitor command
-			return GDBERROR_UNSUPPORTED_COMMAND;
+		// get num_frames
+		while(s[0] >= '0' && s[0] <= '9') {
+			profile_num_frames = profile_num_frames * 10 + s[0] - '0';
+			s = s.substr(1);
 		}
-		return GDBERROR_PARSE;
+		profile_num_frames = max(1, min(100, profile_num_frames));
+		s = s.substr(1); // skip space
+
+		// get profile_unwindname
+		if(s.substr(0, 1) == "\"") {
+			auto last = s.find('\"', 1);
+			if(last != std::string::npos) {
+				profile_unwindname = s.substr(1, last - 1);
+				s = s.substr(last + 1);
+			} else {
+				s.clear();
+			}
+		} else {
+			auto last = s.find(' ', 1);
+			if(last != std::string::npos) {
+				profile_unwindname = s.substr(0, last);
+				s = s.substr(last + 1);
+			} else {
+				s.clear();
+			}
+		}
+
+		s = s.substr(1); // skip space
+
+		// get profile_outname
+		if(s.substr(0, 1) == "\"") {
+			auto last = s.find('\"', 1);
+			if(last != std::string::npos) {
+				profile_outname = s.substr(1, last - 1);
+				s = s.substr(last + 1);
+			} else {
+				s.clear();
+			}
+		} else {
+			profile_outname = s.substr(1);
+		}
+
+		profile_unwind.reset();
+		if(!profile_unwindname.empty()) {
+			if(auto f = fopen(profile_unwindname.c_str(), "rb")) {
+				profile_unwind = std::make_unique<cpu_profiler_unwind[]>(sizeText >> 1);
+				fread(profile_unwind.get(), sizeof(cpu_profiler_unwind), sizeText >> 1, f);
+				fclose(f);
+			}
+		}
+
+		if(!profile_outname.empty()) {
+			send_ack(ack);
+			profile_frame_count = 0;
+			debugger_state = state::profile;
+			deactivate_debugger();
+			return; // response is sent when profile is finished (vsync)
+		}
+	} else if(cmd == "reset" && currprefs.debugging_trigger[0]) {
+		savestate_quick(0, 0); // restore state saved at process entry
+		barto_debug_resources_count = 0;
+		response += "OK";
+	} else {
+		// unknown monitor command
+		response += "E01";
+	}
 	}
 
 	std::string handle_vcont(const std::string& request) {
@@ -1352,6 +1366,7 @@ namespace barto_gdbserver {
 		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
 			return;
 
+		// continue emulation if receiving debug commands
 		if(debugger_state == state::connected && data_available()) {
 			resumepaused(9);
 			// handle_packet will be called in next call to vsync_pre
@@ -1415,6 +1430,10 @@ start_profile:
 			// store custom registers
 			for(int i = 0; i < _countof(custom_storage); i++)
 				profile_custom_regs[i] = custom_storage[i].value;
+
+			// colors (ECS only)
+			for(int i = 0; i < _countof(current_colors.color_regs_ecs); i++)
+				profile_custom_regs[i + 0x180 / 2] = current_colors.color_regs_ecs[i];
 
 			// reset idle
 			if(barto_debug_idle_count > 0) {
@@ -1609,94 +1628,97 @@ start_profile:
 		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
 			return false;
 
+		warpmode(0);
+
 		// break at start of process
 		if(debugger_state == state::inited) {
-			//KPutCharX
-			auto execbase = get_long_debug(4);
-			KPutCharX = execbase - 0x204;
-			for (auto& bpn : bpnodes) {
-				if (bpn.enabled)
-					continue;
-				bpn.value1 = KPutCharX;
-				bpn.type = BREAKPOINT_REG_PC;
-				bpn.oper = BREAKPOINT_CMP_EQUAL;
-				bpn.enabled = 1;
-				barto_log("GDBSERVER: Breakpoint for KPutCharX at 0x%x installed\n", bpn.value1);
-				break;
+			if(currprefs.debugging_trigger[0]) {
+				//KPutCharX
+				auto execbase = get_long_debug(4);
+				KPutCharX = execbase - 0x204;
+				for(auto& bpn : bpnodes) {
+					if(bpn.enabled)
+						continue;
+					bpn.value1 = KPutCharX;
+					bpn.type = BREAKPOINT_REG_PC;
+					bpn.oper = BREAKPOINT_CMP_EQUAL;
+					bpn.enabled = 1;
+					barto_log("GDBSERVER: Breakpoint for KPutCharX at 0x%x installed\n", bpn.value1);
+					break;
+				}
+
+				// TRAP#7 breakpoint (GCC generates this opcode when it encounters undefined behavior)
+				Trap7 = get_long_debug(regs.vbr + 0x9c);
+				for(auto& bpn : bpnodes) {
+					if(bpn.enabled)
+						continue;
+					bpn.value1 = Trap7;
+					bpn.type = BREAKPOINT_REG_PC;
+					bpn.oper = BREAKPOINT_CMP_EQUAL;
+					bpn.enabled = 1;
+					barto_log("GDBSERVER: Breakpoint for TRAP#7 at 0x%x installed\n", bpn.value1);
+					break;
+				}
+
+				AddressError = get_long_debug(regs.vbr + 3 * 4);
+				for(auto& bpn : bpnodes) {
+					if(bpn.enabled)
+						continue;
+					bpn.value1 = AddressError;
+					bpn.type = BREAKPOINT_REG_PC;
+					bpn.oper = BREAKPOINT_CMP_EQUAL;
+					bpn.enabled = 1;
+					barto_log("GDBSERVER: Breakpoint for AddressError at 0x%x installed\n", bpn.value1);
+					break;
+				}
+
+				IllegalError = get_long_debug(regs.vbr + 4 * 4);
+				for(auto& bpn : bpnodes) {
+					if(bpn.enabled)
+						continue;
+					bpn.value1 = IllegalError;
+					bpn.type = BREAKPOINT_REG_PC;
+					bpn.oper = BREAKPOINT_CMP_EQUAL;
+					bpn.enabled = 1;
+					barto_log("GDBSERVER: Breakpoint for IllegalError at 0x%x installed\n", bpn.value1);
+					break;
+				}
+
+				// watchpoint for NULL (GCC sees this as undefined behavior)
+				// disabled for now, always triggered in OpenScreen()
+				/*for(auto& mwn : mwnodes) {
+					if(mwn.size)
+						continue;
+					mwn.addr = 0;
+					mwn.size = 4;
+					mwn.rwi = 1 | 2; // read + write
+					// defaults from debug.cpp@memwatch()
+					mwn.val_enabled = 0;
+					mwn.val_mask = 0xffffffff;
+					mwn.val = 0;
+					mwn.access_mask = MW_MASK_CPU_D_R | MW_MASK_CPU_D_W; // CPU data read/write only
+					mwn.reg = 0xffffffff;
+					mwn.frozen = 0;
+					mwn.modval_written = 0;
+					mwn.mustchange = 0;
+					mwn.bus_error = 0;
+					mwn.reportonly = false;
+					mwn.nobreak = false;
+					memwatch_setup();
+					barto_log("GDBSERVER: Watchpoint for NULL installed\n");
+					break;
+				}*/
+
+				// enable break at exceptions - doesn't break when exceptions occur in Kickstart
+				debug_illegal = 1;
+				debug_illegal_mask = (1 << 3) || (1 << 4); // 3 = address error, 4 = illegal instruction
+
+				// from debug.cpp@process_breakpoint()
+				processptr = 0;
+				xfree(processname);
+				processname = nullptr;
+				savestate_quick(0, 1); // save state for "monitor reset"
 			}
-
-			// TRAP#7 breakpoint (GCC generates this opcode when it encounters undefined behavior)
-			Trap7 = get_long_debug(regs.vbr + 0x9c);
-			for(auto& bpn : bpnodes) {
-				if(bpn.enabled)
-					continue;
-				bpn.value1 = Trap7;
-				bpn.type = BREAKPOINT_REG_PC;
-				bpn.oper = BREAKPOINT_CMP_EQUAL;
-				bpn.enabled = 1;
-				barto_log("GDBSERVER: Breakpoint for TRAP#7 at 0x%x installed\n", bpn.value1);
-				break;
-			}
-
-			AddressError = get_long_debug(regs.vbr + 3 * 4);
-			for(auto& bpn : bpnodes) {
-				if(bpn.enabled)
-					continue;
-				bpn.value1 = AddressError;
-				bpn.type = BREAKPOINT_REG_PC;
-				bpn.oper = BREAKPOINT_CMP_EQUAL;
-				bpn.enabled = 1;
-				barto_log("GDBSERVER: Breakpoint for AddressError at 0x%x installed\n", bpn.value1);
-				break;
-			}
-
-			IllegalError = get_long_debug(regs.vbr + 4 * 4);
-			for(auto& bpn : bpnodes) {
-				if(bpn.enabled)
-					continue;
-				bpn.value1 = IllegalError;
-				bpn.type = BREAKPOINT_REG_PC;
-				bpn.oper = BREAKPOINT_CMP_EQUAL;
-				bpn.enabled = 1;
-				barto_log("GDBSERVER: Breakpoint for IllegalError at 0x%x installed\n", bpn.value1);
-				break;
-			}
-
-			// watchpoint for NULL (GCC sees this as undefined behavior)
-			// disabled for now, always triggered in OpenScreen()
-			/*for(auto& mwn : mwnodes) {
-				if(mwn.size)
-					continue;
-				mwn.addr = 0;
-				mwn.size = 4;
-				mwn.rwi = 1 | 2; // read + write
-				// defaults from debug.cpp@memwatch()
-				mwn.val_enabled = 0;
-				mwn.val_mask = 0xffffffff;
-				mwn.val = 0;
-				mwn.access_mask = MW_MASK_CPU_D_R | MW_MASK_CPU_D_W; // CPU data read/write only
-				mwn.reg = 0xffffffff;
-				mwn.frozen = 0;
-				mwn.modval_written = 0;
-				mwn.mustchange = 0;
-				mwn.bus_error = 0;
-				mwn.reportonly = false;
-				mwn.nobreak = false;
-				memwatch_setup();
-				barto_log("GDBSERVER: Watchpoint for NULL installed\n");
-				break;
-			}*/
-
-			// enable break at exceptions - doesn't break when exceptions occur in Kickstart
-			debug_illegal = 1;
-			debug_illegal_mask = (1 << 3) || (1 << 4); // 3 = address error, 4 = illegal instruction
-
-			warpmode(0);
-			// from debug.cpp@process_breakpoint()
-			processptr = 0;
-			xfree(processname);
-			processname = nullptr;
-			savestate_quick(0, 1); // save state for "monitor reset"
 			barto_log("GDBSERVER: Waiting for connection...\n");
 			while(!is_connected()) {
 				barto_log(".");

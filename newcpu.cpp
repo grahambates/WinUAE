@@ -144,7 +144,7 @@ struct cpu_profiler {
 	uae_u32 callstack_depth = 0;
 
 	cpu_profiler(uae_u32 pc) {
-		if(cpu_profiler_start_addr) {
+		if(cpu_profiler_end_addr) {
 			auto get_long_debug_no_custom = [](uaecptr addr) -> int {
 				if(&get_mem_bank(addr) == &custom_bank)
 					return -1;
@@ -158,9 +158,12 @@ struct cpu_profiler {
 				cpu_profiler_output.push_back(0x7fffffff);
 				cpu_profiler_output.push_back(~0 - cycles_for_instr);
 			}
+			// record PC & unwind callstack
 			auto r13 = regs.regs[13] /* a5 = fp */, r15 = regs.regs[15] /* a7 = sp */;
 			while(pc >= cpu_profiler_start_addr && pc < cpu_profiler_end_addr) {
 				callstack[callstack_depth++] = pc - cpu_profiler_start_addr;
+				if(!cpu_profiler_unwind_buffer)
+					break;
 				const auto& unwind = cpu_profiler_unwind_buffer[(pc - cpu_profiler_start_addr) >> 1];
 				if(unwind.cfa == ~0 || unwind.ra == ~0) break; // should not happen
 				uae_u32 new_cfa;
@@ -181,7 +184,7 @@ struct cpu_profiler {
 	}
 
 	~cpu_profiler() {
-		if(cpu_profiler_start_addr && cycles) { // profiling may have been switched on or off in vsync (which is called from 'r->opcode' above)
+		if(cpu_profiler_end_addr && cycles) { // profiling may have been switched on or off in vsync (which is called from 'r->opcode' above)
 			cpu_profiler_last_cycles = get_cycles();
 			auto cycles_for_instr = (cpu_profiler_last_cycles - cycles) / cpucycleunit;
 			for(int i = 0; i < callstack_depth; i++)
@@ -8267,7 +8270,7 @@ void mem_access_delay_long_write_ce020 (uaecptr addr, uae_u32 v)
 		wait_cpu_cycle_write_ce020 (addr + 2, 1, (v >>  0) & 0xffff);
 		break;
 	case CE_MEMBANK_CHIP32:
-		if ((addr & 3) == 3) {
+		if ((addr & 3) != 0) {
 			wait_cpu_cycle_write_ce020 (addr + 0, 1, (v >> 16) & 0xffff);
 			wait_cpu_cycle_write_ce020 (addr + 2, 1, (v >>  0) & 0xffff);
 		} else {
