@@ -567,82 +567,83 @@ namespace barto_gdbserver {
 	}
 
 	std::string handle_qrcmd(const std::string& request) {
-	// "monitor" command. used for profiling
-	auto cmd = from_hex(request.substr(strlen("qRcmd,")));
-	barto_log("GDBSERVER:   monitor %s\n", cmd.c_str());
-	// syntax: monitor profile <num_frames> <unwind_file> <out_file>
-	if(cmd.substr(0, strlen("profile")) == "profile") {
-		auto s = cmd.substr(strlen("profile "));
-		std::string profile_unwindname;
-		profile_num_frames = 0;
-		profile_outname.clear();
+		// "monitor" command. used for profiling
+		auto cmd = from_hex(request.substr(strlen("qRcmd,")));
+		barto_log("GDBSERVER:   monitor %s\n", cmd.c_str());
+		// syntax: monitor profile <num_frames> <unwind_file> <out_file>
+		if(cmd.substr(0, strlen("profile")) == "profile") {
+			auto s = cmd.substr(strlen("profile "));
+			std::string profile_unwindname;
+			profile_num_frames = 0;
+			profile_outname.clear();
 
-		// get num_frames
-		while(s[0] >= '0' && s[0] <= '9') {
-			profile_num_frames = profile_num_frames * 10 + s[0] - '0';
-			s = s.substr(1);
-		}
-		profile_num_frames = max(1, min(100, profile_num_frames));
-		s = s.substr(1); // skip space
-
-		// get profile_unwindname
-		if(s.substr(0, 1) == "\"") {
-			auto last = s.find('\"', 1);
-			if(last != std::string::npos) {
-				profile_unwindname = s.substr(1, last - 1);
-				s = s.substr(last + 1);
-			} else {
-				s.clear();
+			// get num_frames
+			while(s[0] >= '0' && s[0] <= '9') {
+				profile_num_frames = profile_num_frames * 10 + s[0] - '0';
+				s = s.substr(1);
 			}
+			profile_num_frames = max(1, min(100, profile_num_frames));
+			s = s.substr(1); // skip space
+
+			// get profile_unwindname
+			if(s.substr(0, 1) == "\"") {
+				auto last = s.find('\"', 1);
+				if(last != std::string::npos) {
+					profile_unwindname = s.substr(1, last - 1);
+					s = s.substr(last + 1);
+				} else {
+					s.clear();
+				}
+			} else {
+				auto last = s.find(' ', 1);
+				if(last != std::string::npos) {
+					profile_unwindname = s.substr(0, last);
+					s = s.substr(last + 1);
+				} else {
+					s.clear();
+				}
+			}
+
+			s = s.substr(1); // skip space
+
+			// get profile_outname
+			if(s.substr(0, 1) == "\"") {
+				auto last = s.find('\"', 1);
+				if(last != std::string::npos) {
+					profile_outname = s.substr(1, last - 1);
+					s = s.substr(last + 1);
+				} else {
+					s.clear();
+				}
+			} else {
+				profile_outname = s.substr(1);
+			}
+
+			profile_unwind.reset();
+			if(!profile_unwindname.empty()) {
+				if(auto f = fopen(profile_unwindname.c_str(), "rb")) {
+					profile_unwind = std::make_unique<cpu_profiler_unwind[]>(sizeText >> 1);
+					fread(profile_unwind.get(), sizeof(cpu_profiler_unwind), sizeText >> 1, f);
+					fclose(f);
+				}
+			}
+
+			if(!profile_outname.empty()) {
+				send_ack(GDB_ACK);
+				profile_frame_count = 0;
+				debugger_state = state::profile;
+				deactivate_debugger();
+				return ""; // response is sent when profile is finished (vsync)
+			}
+		} else if(cmd == "reset" && currprefs.debugging_trigger[0]) {
+			savestate_quick(0, 0); // restore state saved at process entry
+			barto_debug_resources_count = 0;
+			return GDB_OK;
 		} else {
-			auto last = s.find(' ', 1);
-			if(last != std::string::npos) {
-				profile_unwindname = s.substr(0, last);
-				s = s.substr(last + 1);
-			} else {
-				s.clear();
-			}
+			// unknown monitor command
+			return GDBERROR_UNSUPPORTED_COMMAND;
 		}
-
-		s = s.substr(1); // skip space
-
-		// get profile_outname
-		if(s.substr(0, 1) == "\"") {
-			auto last = s.find('\"', 1);
-			if(last != std::string::npos) {
-				profile_outname = s.substr(1, last - 1);
-				s = s.substr(last + 1);
-			} else {
-				s.clear();
-			}
-		} else {
-			profile_outname = s.substr(1);
-		}
-
-		profile_unwind.reset();
-		if(!profile_unwindname.empty()) {
-			if(auto f = fopen(profile_unwindname.c_str(), "rb")) {
-				profile_unwind = std::make_unique<cpu_profiler_unwind[]>(sizeText >> 1);
-				fread(profile_unwind.get(), sizeof(cpu_profiler_unwind), sizeText >> 1, f);
-				fclose(f);
-			}
-		}
-
-		if(!profile_outname.empty()) {
-			send_ack(ack);
-			profile_frame_count = 0;
-			debugger_state = state::profile;
-			deactivate_debugger();
-			return; // response is sent when profile is finished (vsync)
-		}
-	} else if(cmd == "reset" && currprefs.debugging_trigger[0]) {
-		savestate_quick(0, 0); // restore state saved at process entry
-		barto_debug_resources_count = 0;
-		response += "OK";
-	} else {
-		// unknown monitor command
-		response += "E01";
-	}
+		return GDBERROR_PARSE;
 	}
 
 	std::string handle_vcont(const std::string& request) {
