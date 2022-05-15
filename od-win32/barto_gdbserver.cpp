@@ -1073,7 +1073,7 @@ start_profile:
 	}
 
 	void barto_log(const char* format, ...) {
-		char buffer[1024];
+		char buffer[16*1024];
 		va_list parms;
 		va_start(parms, format);
 		vsprintf(buffer, format, parms);
@@ -1083,7 +1083,7 @@ start_profile:
 	}
 
 	void barto_log(const wchar_t* format, ...) {
-		wchar_t buffer[1024];
+		wchar_t buffer[16*1024];
 		va_list parms;
 		va_start(parms, format);
 		vswprintf(buffer, format, parms);
