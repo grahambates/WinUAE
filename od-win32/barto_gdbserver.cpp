@@ -4,6 +4,7 @@
 
 #include <thread>
 #include <vector>
+#include <array>
 
 #include "options.h"
 #include "memory.h"
@@ -34,7 +35,7 @@ extern struct uae_prefs currprefs;
 // from debug.cpp
 extern uae_u8 *get_real_address_debug(uaecptr addr);
 extern void initialize_memwatch(int mode);
-extern void memwatch_setup(void);
+extern void memwatch_setup();
 /*static*/ extern int trace_mode;
 /*static*/ extern uae_u32 trace_param[3];
 /*static*/ extern uaecptr processptr;
@@ -49,8 +50,9 @@ extern uae_u64 debug_illegal_mask;
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-// -s input.config=1 -s input.1.keyboard.0.button.41.GRAVE=SPC_SINGLESTEP.0    -s use_gui=no -s quickstart=a500,1 -s debugging_features=gdbserver -s filesystem=rw,dh0:c:\Users\bwodok\Documents\Visual_Studio_Code\amiga-debug\bin\dh0
-// c:\Users\bwodok\Documents\Visual_Studio_Code\amiga-debug\bin\opt\bin> m68k-amiga-elf-gdb.exe -ex "set debug remote 1" -ex "target remote :2345" -ex "monitor profile xxx" ..\..\..\template\a.mingw.elf
+// VS2019: Test or Release config 
+// -s input.config=1 -s input.1.keyboard.0.button.41.GRAVE=SPC_SINGLESTEP.0    -s use_gui=no -s quickstart=a500,1 -s debugging_features=gdbserver -s filesystem=rw,dh0:c:\Users\Chuck\Documents\Visual_Studio_Code\amiga-debug\bin\dh0
+// c:\Users\Chuck\Documents\Visual_Studio_Code\amiga-debug\bin\opt\bin> m68k-amiga-elf-gdb.exe -ex "set debug remote 1" -ex "target remote :2345" -ex "monitor profile xxx" ..\..\..\template\a.mingw.elf
 
 namespace barto_gdbserver {
 	bool is_connected();
@@ -133,6 +135,53 @@ namespace barto_gdbserver {
 		}
 		return ret;
 	}
+
+/*	#pragma comment(lib, "Bcrypt.lib")
+	#ifndef NT_SUCCESS
+		#define NT_SUCCESS(Status) ((NTSTATUS)(Status) >= 0)
+	#endif
+	std::array<uint8_t, 32> sha256(const void* addr, size_t size) {
+		std::array<uint8_t, 32> hash{};
+
+		BCRYPT_ALG_HANDLE AlgHandle = nullptr;
+		BCRYPT_HASH_HANDLE HashHandle = nullptr;
+		if(NT_SUCCESS(BCryptOpenAlgorithmProvider(&AlgHandle, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_HASH_REUSABLE_FLAG))) {
+			DWORD HashLength = 0;
+			DWORD ResultLength = 0;
+			if(NT_SUCCESS(BCryptGetProperty(AlgHandle, BCRYPT_HASH_LENGTH, (PBYTE)&HashLength, sizeof(HashLength), &ResultLength, 0)) && HashLength == hash.size()) {
+				if(NT_SUCCESS(BCryptCreateHash(AlgHandle, &HashHandle, nullptr, 0, nullptr, 0, 0))) {
+					(void)BCryptHashData(HashHandle, kickmem_bank.baseaddr, kickmem_bank.allocated_size, 0);
+					(void)BCryptFinishHash(HashHandle, hash.data(), (ULONG)hash.size(), 0);
+					BCryptDestroyHash(HashHandle);
+				}
+			}
+			BCryptCloseAlgorithmProvider(AlgHandle, 0);
+		}
+
+		return hash;
+	}
+
+	std::array<uint8_t, 16> sha1(const void* addr, size_t size) {
+		std::array<uint8_t, 16> hash{};
+
+		BCRYPT_ALG_HANDLE AlgHandle = nullptr;
+		BCRYPT_HASH_HANDLE HashHandle = nullptr;
+		if(NT_SUCCESS(BCryptOpenAlgorithmProvider(&AlgHandle, BCRYPT_SHA1_ALGORITHM, nullptr, BCRYPT_HASH_REUSABLE_FLAG))) {
+			DWORD HashLength = 0;
+			DWORD ResultLength = 0;
+			if(NT_SUCCESS(BCryptGetProperty(AlgHandle, BCRYPT_HASH_LENGTH, (PBYTE)&HashLength, sizeof(HashLength), &ResultLength, 0)) && HashLength == hash.size()) {
+				if(NT_SUCCESS(BCryptCreateHash(AlgHandle, &HashHandle, nullptr, 0, nullptr, 0, 0))) {
+					(void)BCryptHashData(HashHandle, kickmem_bank.baseaddr, kickmem_bank.allocated_size, 0);
+					(void)BCryptFinishHash(HashHandle, hash.data(), (ULONG)hash.size(), 0);
+					BCryptDestroyHash(HashHandle);
+				}
+			}
+			BCryptCloseAlgorithmProvider(AlgHandle, 0);
+		}
+
+		return hash;
+	}
+*/
 
 	std::thread connect_thread;
 	PADDRINFOW socketinfo;
@@ -881,6 +930,25 @@ start_profile:
 				auto profile_bogomem_size = bogomem_bank.allocated_size;
 				auto profile_bogomem = std::make_unique<uint8_t[]>(profile_bogomem_size);
 				memcpy(profile_bogomem.get(), bogomem_bank.baseaddr, profile_bogomem_size);
+
+				// kickstart
+				// from memory.cpp@save_rom()
+				auto kick_start = 0xf80000;
+				auto kick_real_start = kickmem_bank.baseaddr;
+				auto kick_size = kickmem_bank.allocated_size;
+				// 256KB or 512KB ROM?
+				int i;
+				for(i = 0; i < kick_size / 2 - 4; i++) {
+					if(get_long_debug(i + kick_start) != get_long_debug(i + kick_start + kick_size / 2))
+						break;
+				}
+				if(i == kick_size / 2 - 4) {
+					kick_size /= 2;
+					kick_start += ROM_SIZE_256;
+				}
+
+				fwrite(&kick_size, sizeof(kick_size), 1, profile_outfile);
+				fwrite(kick_real_start, 1, kick_size, profile_outfile);
 
 				// memory
 				fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, profile_outfile);
