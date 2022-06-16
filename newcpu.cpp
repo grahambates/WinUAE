@@ -158,27 +158,33 @@ struct cpu_profiler {
 				cpu_profiler_output.push_back(0x7fffffff);
 				cpu_profiler_output.push_back(~0 - cycles_for_instr);
 			}
-			// record PC & unwind callstack
-			auto r13 = regs.regs[13] /* a5 = fp */, r15 = regs.regs[15] /* a7 = sp */;
-			while(pc >= cpu_profiler_start_addr && pc < cpu_profiler_end_addr) {
-				callstack[callstack_depth++] = pc - cpu_profiler_start_addr;
-				if(!cpu_profiler_unwind_buffer)
-					break;
-				const auto& unwind = cpu_profiler_unwind_buffer[(pc - cpu_profiler_start_addr) >> 1];
-				if(unwind.cfa == ~0 || unwind.ra == ~0) break; // should not happen
-				uae_u32 new_cfa;
-				switch(unwind.cfa >> 12) {
-				case 13: new_cfa = r13; break;
-				case 15: new_cfa = r15; break;
-				default: break; // should not happen
+
+			// kickstart
+			if(pc >= 0x00f8'0000 && pc < 0x0100'0000) {
+				callstack[callstack_depth++] = pc;
+			} else {
+				// record PC & unwind callstack
+				auto r13 = regs.regs[13] /* a5 = fp */, r15 = regs.regs[15] /* a7 = sp */;
+				while(pc >= cpu_profiler_start_addr && pc < cpu_profiler_end_addr) {
+					callstack[callstack_depth++] = pc - cpu_profiler_start_addr;
+					if(!cpu_profiler_unwind_buffer) // null for savestate profiling
+						break;
+					const auto& unwind = cpu_profiler_unwind_buffer[(pc - cpu_profiler_start_addr) >> 1];
+					if(unwind.cfa == ~0 || unwind.ra == ~0) break; // should not happen
+					uae_u32 new_cfa;
+					switch(unwind.cfa >> 12) {
+					case 13: new_cfa = r13; break;
+					case 15: new_cfa = r15; break;
+					default: break; // should not happen
+					}
+					new_cfa += unwind.cfa & ((1 << 12) - 1);
+					auto new_pc = get_long_debug_no_custom(new_cfa + unwind.ra);
+					if(unwind.r13 != -1)
+						r13 = get_long_debug_no_custom(new_cfa + unwind.r13);
+					if(new_cfa == r15 || new_pc == pc) break; // should not happen
+					r15 = new_cfa;
+					pc = new_pc;
 				}
-				new_cfa += unwind.cfa & ((1 << 12) - 1);
-				auto new_pc = get_long_debug_no_custom(new_cfa + unwind.ra);
-				if(unwind.r13 != -1)
-					r13 = get_long_debug_no_custom(new_cfa + unwind.r13);
-				if(new_cfa == r15 || new_pc == pc) break; // should not happen
-				r15 = new_cfa;
-				pc = new_pc;
 			}
 		}
 	}
