@@ -1069,7 +1069,7 @@ static uae_u32 lastaddr (void)
 		addrbank *ab = get_mem_bank_real(i << 16);
 		if (ab->baseaddr && (ab->flags & ABFLAG_RAM)) {
 			return (i + 1) << 16;
-	}
+		}
 	}
 	return 0;
 }
@@ -1094,7 +1094,7 @@ static uaecptr nextaddr (uaecptr addr, uaecptr last, uaecptr *endp, bool verbose
 		if (ab->baseaddr && (ab->flags & ABFLAG_RAM))
 			break;
 		addr += 65536;
-		}
+	}
 	if (addr >= (lastbank << 16)) {
 		if (endp)
 			*endp = 0xffffffff;
@@ -4173,8 +4173,7 @@ static int deinitialize_memwatch (void)
 	return oldmode;
 }
 
-// BARTO
-/*static*/ void initialize_memwatch (int mode)
+/*static*/ void initialize_memwatch (int mode) // BARTO
 {
 	membank_total = currprefs.address_space_24 ? 256 : 65536;
 	deinitialize_memwatch ();
@@ -4458,7 +4457,7 @@ static void memwatch (TCHAR **c)
 						for (;;) {
 							ncc = next_char2(c);
 							if (ncc == ' ' || ncc == 0)
-						break;
+								break;
 							if (ncc == 'R') {
 								mwn->bus_error |= 1;
 								mwn->rwi |= 1;
@@ -4776,9 +4775,9 @@ static void memory_map_dump_3(UaeMemoryMap *map, int log)
 						r->flags = 0;
 						r->memory = NULL;
 						if (!(a1->flags & ABFLAG_PPCIOSPACE)) {
-						r->memory = dump_xlate((j << 16) | bankoffset);
-						if (r->memory)
-							r->flags |= UAE_MEMORY_REGION_RAM;
+							r->memory = dump_xlate((j << 16) | bankoffset);
+							if (r->memory)
+								r->flags |= UAE_MEMORY_REGION_RAM;
 						}
 						/* just to make it easier to spot in debugger */
 						r->alias = 0xffffffff;
@@ -6956,21 +6955,23 @@ void debug (void)
 							uaecptr cli = BPTR2APTR(get_long_debug (activetask + 172));
 							uaecptr seglist = 0;
 
-						uae_char *command = NULL;
-						if (cli) {
-							if (processname)
-								command = (char*)get_real_address_debug(BPTR2APTR(get_long_debug (cli + 16)));
-							seglist = BPTR2APTR(get_long_debug (cli + 60));
-						} else {
-							seglist = BPTR2APTR(get_long_debug (activetask + 128));
-							seglist = BPTR2APTR(get_long_debug (seglist + 12));
-						}
-						if (activetask == processptr || (processname && (!stricmp (name, processname) || (command && command[0] && !strnicmp (command + 1, processname, ((uae_u8*)command)[0]) && processname[command[0]] == 0)))) {
-							while (seglist) {
-								uae_u32 size = get_long_debug (seglist - 4) - 4;
-								if (pc >= (seglist + 4) && pc < (seglist + size)) {
-									bp = i + 1;
-									break;
+							uae_char *command = NULL;
+							if (cli) {
+								if (processname)
+									command = (char*)get_real_address_debug(BPTR2APTR(get_long_debug (cli + 16)));
+								seglist = BPTR2APTR(get_long_debug (cli + 60));
+							} else {
+								seglist = BPTR2APTR(get_long_debug (activetask + 128));
+								seglist = BPTR2APTR(get_long_debug (seglist + 12));
+							}
+							if (activetask == processptr || (processname && (!stricmp (name, processname) || (command && command[0] && !strnicmp (command + 1, processname, ((uae_u8*)command)[0]) && processname[command[0]] == 0)))) {
+								while (seglist) {
+									uae_u32 size = get_long_debug (seglist - 4) - 4;
+									if (pc >= (seglist + 4) && pc < (seglist + size)) {
+										bp = i + 1;
+										break;
+									}
+									seglist = BPTR2APTR(get_long_debug (seglist));
 								}
 							}
 						}
@@ -7067,7 +7068,7 @@ void debug (void)
 	}
 	trace_cycles = 0;
 
-	if(!barto_gdbserver::debug())
+	if(!barto_gdbserver::debug()) // BARTO
 		debug_1 ();
 	debugmem_enable();
 	if (!debug_rewind && !currprefs.cachesize

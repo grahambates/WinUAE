@@ -13,7 +13,7 @@
 #include "inputdevice.h"
 #include "uae.h"
 #include "debugmem.h"
-#include "dxwrap.h" // AmigaMonitor
+#include "render.h" // AmigaMonitor
 #include "custom.h"
 #include "xwin.h" // xcolnr
 #include "drawing.h" // color_entry
