@@ -8989,7 +8989,7 @@ static void do_sprite_fetch(int hpos, uae_u8 dat)
 	// render sprites first
 	decide_sprites(hpos, false, true);
 
-	sprite_fetch_full(s, hpos, slot, false, &data, &data321, &data322);
+	sprite_fetch_full(s, hpos, slot, dmastate, &data, &data321, &data322);
 	int sprxp = s->xpos >> (sprite_buffer_res + 1);
 	if (dmastate) {
 		if (!slot) {
