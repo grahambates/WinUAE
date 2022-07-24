@@ -9672,7 +9672,7 @@ static void vsync_handler_render(void)
 
 static bool vsync_display_rendered;
 
-static void vsync_display_render(void)
+/*static*/ void vsync_display_render(void) // Barto
 {
 	if (!vsync_display_rendered) {
 		vsyncmintimepre = read_processor_time();

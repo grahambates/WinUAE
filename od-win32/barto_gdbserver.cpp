@@ -22,6 +22,8 @@
 
 extern BITMAPINFO* screenshot_get_bi();
 extern void* screenshot_get_bits();
+extern int screenshot_prepare(int monid, struct vidbuffer* vb);
+extern void vsync_display_render();
 
 // from main.cpp
 extern struct uae_prefs currprefs;
@@ -1045,45 +1047,52 @@ start_profile:
 			int profile_count = get_cpu_profiler_output_count();
 			fwrite(&profile_count, sizeof(int), 1, profile_outfile);
 			fwrite(get_cpu_profiler_output(), sizeof(uae_u32), profile_count, profile_outfile);
-			// write JPEG screenshot
-			if(profile_num_frames > 1) {
-				int monid = getfocusedmonitor();
-				int imagemode = 1;
-				if(screenshot_prepare(monid, imagemode) == 1) {
-					auto bi = screenshot_get_bi();
-					auto bi_bits = (const uint8_t*)screenshot_get_bits();
-					if(bi->bmiHeader.biBitCount == 24) {
-						// need to flip bits and swap rgb channels
-						const auto w = bi->bmiHeader.biWidth;
-						const auto h = bi->bmiHeader.biHeight;
-						const auto pitch = bi->bmiHeader.biSizeImage / bi->bmiHeader.biHeight;
-						auto bits = std::make_unique<uint8_t[]>(w * 3 * h);
-						for(int y = 0; y < bi->bmiHeader.biHeight; y++) {
-							for(int x = 0; x < bi->bmiHeader.biWidth; x++) {
-								bits[y * w * 3 + x * 3 + 0] = bi_bits[(h - 1 - y) * pitch + x * 3 + 2];
-								bits[y * w * 3 + x * 3 + 1] = bi_bits[(h - 1 - y) * pitch + x * 3 + 1];
-								bits[y * w * 3 + x * 3 + 2] = bi_bits[(h - 1 - y) * pitch + x * 3 + 0];
-							}
+			// write screenshot
+			vsync_display_render(); // make sure current frame is rendered, this may be a line or so too early, but don't know how to hook render
+			int monid = getfocusedmonitor();
+			AmigaMonitor* mon = &AMonitors[monid];
+			vidbuf_description* avidinfo = &adisplays[monid].gfxvidinfo;
+			vidbuffer* vb = &avidinfo->drawbuffer; // too old
+			// just write JPEGs if we do multi-frame profile (file too big with PNGs)
+			if(screenshot_prepare(monid, vb) == 1) {
+				auto bi = screenshot_get_bi();
+				auto bi_bits = (const uint8_t*)screenshot_get_bits();
+				if(bi->bmiHeader.biBitCount == 24) {
+					// need to flip bits and swap rgb channels
+					const auto w = bi->bmiHeader.biWidth;
+					const auto h = bi->bmiHeader.biHeight;
+					const auto pitch = bi->bmiHeader.biSizeImage / bi->bmiHeader.biHeight;
+					auto bits = std::make_unique<uint8_t[]>(w * 3 * h);
+					for(int y = 0; y < bi->bmiHeader.biHeight; y++) {
+						for(int x = 0; x < bi->bmiHeader.biWidth; x++) {
+							bits[y * w * 3 + x * 3 + 0] = bi_bits[(h - 1 - y) * pitch + x * 3 + 2];
+							bits[y * w * 3 + x * 3 + 1] = bi_bits[(h - 1 - y) * pitch + x * 3 + 1];
+							bits[y * w * 3 + x * 3 + 2] = bi_bits[(h - 1 - y) * pitch + x * 3 + 0];
 						}
-						struct write_context_t {
-							uint8_t data[1'000'000]{};
-							int size = 0;
-						};
-						auto write_context = std::make_unique<write_context_t>();
-						auto write_func = [](void* _context, void* data, int size) {
-							auto context = (write_context_t*)_context;
-							memcpy(&context->data[context->size], data, size);
-							context->size += size;
-						};
-						stbi_write_jpg_to_func(write_func, write_context.get(), w, h, 3, bits.get(), 50);
-						write_context->size = (write_context->size + 3) & ~3; // pad to 32bit
-						fwrite(&write_context->size, sizeof(int), 1, profile_outfile);
-						fwrite(write_context->data, 1, write_context->size, profile_outfile);
 					}
+					struct write_context_t {
+						uint8_t data[2'000'000]{};
+						int size = 0;
+						int type = 0;
+					};
+					auto write_context = std::make_unique<write_context_t>();
+					auto write_func = [](void* _context, void* data, int size) {
+						auto context = (write_context_t*)_context;
+						memcpy(&context->data[context->size], data, size);
+						context->size += size;
+					};
+					if(profile_num_frames > 1) {
+						stbi_write_jpg_to_func(write_func, write_context.get(), w, h, 3, bits.get(), 50);
+						write_context->type = 0; // JPG
+					} else {
+						stbi_write_png_to_func(write_func, write_context.get(), w, h, 3, bits.get(), w * 3);
+						write_context->type = 1; // PNG
+					}
+					write_context->size = (write_context->size + 3) & ~3; // pad to 32bit
+					fwrite(&write_context->size, sizeof(int), 1, profile_outfile);
+					fwrite(&write_context->type, sizeof(int), 1, profile_outfile);
+					fwrite(write_context->data, 1, write_context->size, profile_outfile);
 				}
-			} else {
-				int screenshot_size = 0;
-				fwrite(&screenshot_size, sizeof(int), 1, profile_outfile);
 			}
 
 			if(profile_frame_count == profile_num_frames) {

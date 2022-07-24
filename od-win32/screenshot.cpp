@@ -601,7 +601,7 @@ oops:
 	return 0;
 }
 
-static int screenshot_prepare(int monid, struct vidbuffer *vb)
+/*static*/ int screenshot_prepare(int monid, struct vidbuffer *vb) // Barto
 {
 	return screenshot_prepare(monid, 1, vb, false);
 }
