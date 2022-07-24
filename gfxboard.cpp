@@ -330,7 +330,7 @@ struct rtggfxboard
 	uae_u8 cirrus_pci[0x44];
 	uae_u8 p4i2c;
 	uae_u8 p4_pci[0x44];
-	int vga_width, vga_height;
+	int vga_width, vga_height, vga_width_mult, vga_height_mult;
 	bool vga_refresh_active;
 	int device_settings;
 
@@ -688,7 +688,7 @@ static void pcem_flush(struct rtggfxboard* gb, int index)
 			gb->pcemdev->force_redraw(gb->pcemobject);
 		} else {
 			for (int i = 0; i < cnt; i++) {
-				int offset = buf[i] - start;
+				int offset = (int)(buf[i] - start);
 				pcem_linear_mark(offset);
 			}
 		}
@@ -852,6 +852,7 @@ static void init_board (struct rtggfxboard *gb)
 	gb->gfxmem_bank->reserved_size = vramsize;
 	gb->gfxmem_bank->start = gb->gfxboardmem_start;
 	if (gb->board->manufacturer) {
+		gb->gfxmem_bank->flags |= ABFLAG_ALLOCINDIRECT | ABFLAG_PPCIOSPACE;
 		gb->gfxmem_bank->label = _T("*");
 		mapped_malloc(gb->gfxmem_bank);
 	} else if (gb->board->pci) {
@@ -859,6 +860,7 @@ static void init_board (struct rtggfxboard *gb)
 		// PCI display card's BARs have been initialized
 		;
 	} else {
+		gb->gfxmem_bank->flags |= ABFLAG_ALLOCINDIRECT | ABFLAG_PPCIOSPACE;
 		gb->gfxmem_bank->label = _T("*");
 		gb->vram_back = xmalloc(uae_u8, vramsize);
 		if (&get_mem_bank(0x800000) == &dummy_bank)
@@ -962,6 +964,8 @@ static bool gfxboard_setmode(struct rtggfxboard *gb, struct gfxboard_mode *mode)
 	state->Height = mode->height;
 	state->VirtualWidth = state->Width;
 	state->VirtualHeight = state->Height;
+	state->HLineDBL = mode->hlinedbl ? mode->hlinedbl : 1;
+	state->VLineDBL = mode->vlinedbl ? mode->vlinedbl : 1;
 	int bpp = GetBytesPerPixel(mode->mode);
 	state->BytesPerPixel = bpp;
 	state->BytesPerRow = mode->width * bpp;
@@ -1156,6 +1160,8 @@ static bool gfxboard_setmode_ext(struct rtggfxboard *gb)
 	struct gfxboard_mode mode;
 	mode.width = gb->vga_width;
 	mode.height = gb->vga_height;
+	mode.hlinedbl = gb->vga_width_mult ? gb->vga_width_mult : 1;
+	mode.vlinedbl = gb->vga_height_mult ? gb->vga_height_mult : 1;
 	mode.mode = RGBFB_NONE;
 	for (int i = 0; i < RGBFB_MaxFormats; i++) {
 		RGBFTYPE t = (RGBFTYPE)i;
@@ -1293,7 +1299,7 @@ DisplaySurface *qemu_console_surface(QemuConsole *con)
 	return &gb->gfxsurface;
 }
 
-void gfxboard_resize(int width, int height, void *p)
+void gfxboard_resize(int width, int height, int hmult, int vmult, void *p)
 {
 	struct rtggfxboard *gb = (struct rtggfxboard *)p;
 	if (width != gb->vga_width || gb->vga_height != height) {
@@ -1301,6 +1307,8 @@ void gfxboard_resize(int width, int height, void *p)
 	}
 	gb->vga_width = width;
 	gb->vga_height = height;
+	gb->vga_width_mult = hmult;
+	gb->vga_height_mult = vmult;
 }
 
 void qemu_console_resize(QemuConsole *con, int width, int height)
@@ -1311,6 +1319,8 @@ void qemu_console_resize(QemuConsole *con, int width, int height)
 	}
 	gb->vga_width = width;
 	gb->vga_height = height;
+	gb->vga_width_mult = 1;
+	gb->vga_height_mult = 1;
 }
 
 void linear_memory_region_set_dirty(MemoryRegion *mr, hwaddr addr, hwaddr size)
@@ -1335,7 +1345,7 @@ DisplaySurface* qemu_create_displaysurface_from(int width, int height, int bpp,
 		struct rtggfxboard *gb = &rtggfxboards[i];
 		if (data >= gb->vram && data < gb->vramend) {
 			struct picasso96_state_struct *state = &picasso96_state[gb->monitor_id];
-			state->XYOffset = (gb->vram - data) + gfxmem_banks[gb->rtg_index]->start;
+			state->XYOffset = (int)((gb->vram - data) + gfxmem_banks[gb->rtg_index]->start);
 			gb->resolutionchange = 1;
 			return &gb->fakesurface;
 		}
@@ -1615,17 +1625,6 @@ void gfxboard_vsync_handler(bool full_redraw_required, bool redraw_required)
 		}
 
 		if (ad->picasso_on && !gb->resolutionchange) {
-			if (!gb->monitor_id) {
-				if (currprefs.leds_on_screen & STATUSLINE_RTG) {
-					if (gb->gfxboard_surface == NULL) {
-						gb->gfxboard_surface = gfx_lock_picasso(gb->monitor_id, false);
-					}
-					if (gb->gfxboard_surface) {
-						if (softstatusline())
-							picasso_statusline(gb->monitor_id, gb->gfxboard_surface);
-					}
-				}
-			}
 			if (gb->fullrefresh > 0)
 				gb->fullrefresh--;
 		}
@@ -1863,7 +1862,7 @@ uae_u8 vga_io_get(int board, int portnum)
 	if (!gb->vgaio)
 		return v;
 	portnum -= 0x3b0;
-	v = gb->vgaio->read(&gb->vga, portnum, 1);
+	v = (uae_u8)gb->vgaio->read(&gb->vga, portnum, 1);
 	v = bget_regtest(gb, portnum, v);
 	return v;
 }
@@ -1881,7 +1880,7 @@ uae_u8 vga_ram_get(int board, int offset)
 	if (!gb->vgalowram)
 		return 0xff;
 	offset -= 0xa0000;
-	return gb->vgalowram->read(&gb->vga, offset, 1);
+	return (uae_u8)gb->vgalowram->read(&gb->vga, offset, 1);
 }
 void vgalfb_ram_put(int board, int offset, uae_u8 v)
 {
@@ -1895,7 +1894,7 @@ uae_u8 vgalfb_ram_get(int board, int offset)
 	struct rtggfxboard *gb = &rtggfxboards[board];
 	if (!gb->vgaram)
 		return 0xff;
-	return gb->vgaram->read(&gb->vga, offset, 1);
+	return (uae_u8)gb->vgaram->read(&gb->vga, offset, 1);
 }
 
 void *memory_region_get_ram_ptr(MemoryRegion *mr)
@@ -2025,22 +2024,22 @@ static uae_u32 gfxboard_lget_vram (struct rtggfxboard *gb, uaecptr addr, int bs)
 {
 	uae_u32 v;
 	if (!gb->vram_enabled) {
-		const MemoryRegionOps *bank = getvgabank (gb, &addr);
+		const MemoryRegionOps *bank = getvgabank(gb, &addr);
 		if (bs < 0) { // WORD
-			v  = bank->read (&gb->vga, addr + 1, 1) << 24;
-			v |= bank->read (&gb->vga, addr + 0, 1) << 16;
-			v |= bank->read (&gb->vga, addr + 3, 1) <<  8;
-			v |= bank->read (&gb->vga, addr + 2, 1) <<  0;
+			v  = ((uae_u8)bank->read(&gb->vga, addr + 1, 1)) << 24;
+			v |= ((uae_u8)bank->read(&gb->vga, addr + 0, 1)) << 16;
+			v |= ((uae_u8)bank->read(&gb->vga, addr + 3, 1)) <<  8;
+			v |= ((uae_u8)bank->read(&gb->vga, addr + 2, 1)) <<  0;
 		} else if (bs > 0) { // LONG
-			v  = bank->read (&gb->vga, addr + 3, 1) << 24;
-			v |= bank->read (&gb->vga, addr + 2, 1) << 16;
-			v |= bank->read (&gb->vga, addr + 1, 1) <<  8;
-			v |= bank->read (&gb->vga, addr + 0, 1) <<  0;
+			v  = ((uae_u8)bank->read(&gb->vga, addr + 3, 1)) << 24;
+			v |= ((uae_u8)bank->read(&gb->vga, addr + 2, 1)) << 16;
+			v |= ((uae_u8)bank->read(&gb->vga, addr + 1, 1)) <<  8;
+			v |= ((uae_u8)bank->read(&gb->vga, addr + 0, 1)) <<  0;
 		} else {
-			v  = bank->read (&gb->vga, addr + 0, 1) << 24;
-			v |= bank->read (&gb->vga, addr + 1, 1) << 16;
-			v |= bank->read (&gb->vga, addr + 2, 1) <<  8;
-			v |= bank->read (&gb->vga, addr + 3, 1) <<  0;
+			v  = ((uae_u8)bank->read(&gb->vga, addr + 0, 1)) << 24;
+			v |= ((uae_u8)bank->read(&gb->vga, addr + 1, 1)) << 16;
+			v |= ((uae_u8)bank->read(&gb->vga, addr + 2, 1)) <<  8;
+			v |= ((uae_u8)bank->read(&gb->vga, addr + 3, 1)) <<  0;
 		}
 	} else {
 		uae_u8 *m = gb->vram + addr;
@@ -2050,7 +2049,7 @@ static uae_u32 gfxboard_lget_vram (struct rtggfxboard *gb, uaecptr addr, int bs)
 		} else if (bs > 0) {
 			v = *((uae_u32*)m);
 		} else {
-			v = do_get_mem_long ((uae_u32*)m);
+			v = do_get_mem_long((uae_u32*)m);
 		}
 	}
 #if MEMLOGR
@@ -2068,11 +2067,11 @@ static uae_u16 gfxboard_wget_vram (struct rtggfxboard *gb, uaecptr addr, int bs)
 	if (!gb->vram_enabled) {
 		const MemoryRegionOps *bank = getvgabank (gb, &addr);
 		if (bs) {
-			v  = bank->read (&gb->vga, addr + 0, 1) <<  0;
-			v |= bank->read (&gb->vga, addr + 1, 1) <<  8;
+			v  = ((uae_u8)bank->read(&gb->vga, addr + 0, 1)) <<  0;
+			v |= ((uae_u8)bank->read(&gb->vga, addr + 1, 1)) <<  8;
 		} else {
-			v  = bank->read (&gb->vga, addr + 0, 1) <<  8;
-			v |= bank->read (&gb->vga, addr + 1, 1) <<  0;
+			v  = ((uae_u8)bank->read(&gb->vga, addr + 0, 1)) <<  8;
+			v |= ((uae_u8)bank->read(&gb->vga, addr + 1, 1)) <<  0;
 		}
 	} else {
 		uae_u8 *m = gb->vram + addr;
@@ -2096,9 +2095,9 @@ static uae_u8 gfxboard_bget_vram (struct rtggfxboard *gb, uaecptr addr, int bs)
 	if (!gb->vram_enabled) {
 		const MemoryRegionOps *bank = getvgabank (gb, &addr);
 		if (bs)
-			v = bank->read (&gb->vga, addr ^ 1, 1);
+			v = (uae_u8)bank->read(&gb->vga, addr ^ 1, 1);
 		else
-			v = bank->read (&gb->vga, addr + 0, 1);
+			v = (uae_u8)bank->read(&gb->vga, addr + 0, 1);
 	} else {
 		if (bs)
 			v = gb->vram[addr ^ 1];
@@ -2174,11 +2173,11 @@ static void gfxboard_wput_vram (struct rtggfxboard *gb, uaecptr addr, uae_u16 w,
 	if (!gb->vram_enabled) {
 		const MemoryRegionOps *bank = getvgabank (gb, &addr);
 		if (bs) {
-			bank->write (&gb->vga, addr + 0, (w >> 0) & 0xff, 1);
-			bank->write (&gb->vga, addr + 1, w >> 8, 1);
+			bank->write(&gb->vga, addr + 0, (w >> 0) & 0xff, 1);
+			bank->write(&gb->vga, addr + 1, w >> 8, 1);
 		} else {
-			bank->write (&gb->vga, addr + 0, w >> 8, 1);
-			bank->write (&gb->vga, addr + 1, (w >> 0) & 0xff, 1);
+			bank->write(&gb->vga, addr + 0, w >> 8, 1);
+			bank->write(&gb->vga, addr + 1, (w >> 0) & 0xff, 1);
 		}
 	} else {
 		uae_u8 *m = gb->vram + addr;
@@ -2207,9 +2206,9 @@ static void gfxboard_bput_vram (struct rtggfxboard *gb, uaecptr addr, uae_u8 b, 
 		special_mem |= S_WRITE;
 #endif
 		if (bs)
-			bank->write (&gb->vga, addr ^ 1, b, 1);
+			bank->write(&gb->vga, addr ^ 1, b, 1);
 		else
-			bank->write (&gb->vga, addr, b, 1);
+			bank->write(&gb->vga, addr, b, 1);
 	} else {
 		if (bs)
 			gb->vram[addr ^ 1] = b;
@@ -2589,7 +2588,7 @@ static void copyvrambank(addrbank *dst, const addrbank *src, bool unsafe)
 	if (unsafe) {
 		dst->jit_read_flag |= S_READ | S_N_ADDR;
 		dst->jit_write_flag |= S_WRITE | S_N_ADDR;
-		dst->flags |= ABFLAG_PPCIOSPACE;
+		dst->flags |= ABFLAG_ALLOCINDIRECT | ABFLAG_PPCIOSPACE;
 	}
 }
 
@@ -2616,7 +2615,7 @@ static void REGPARAM2 gfxboard_wput_mem_autoconfig (uaecptr addr, uae_u32 b)
 			}
 		}
 		init_board(gb);
-		copyvrambank(&gb->gfxboard_bank_memory, gb->gfxmem_bank, false);
+		copyvrambank(&gb->gfxboard_bank_memory, gb->gfxmem_bank, true);
 		copyvrambank(&gb->gfxboard_bank_vram_pcem, gb->gfxmem_bank, true);
 		if (ISP4() && !gb->board->pcemdev) {
 			if (validate_banks_z3(&gb->gfxboard_bank_memory, gb->gfxmem_bank->start >> 16, expamem_board_size >> 16)) {
@@ -2936,7 +2935,7 @@ static uae_u32 REGPARAM2 gfxboard_lget_regs (uaecptr addr)
 	uae_u32 v = 0xffffffff;
 	addr = mungeaddr (gb, addr, false);
 	if (addr)
-		v = gb->vgaio->read (&gb->vga, addr, 4);
+		v = (uae_u32)gb->vgaio->read (&gb->vga, addr, 4);
 	return v;
 }
 static uae_u32 REGPARAM2 gfxboard_wget_regs (uaecptr addr)
@@ -2946,9 +2945,9 @@ static uae_u32 REGPARAM2 gfxboard_wget_regs (uaecptr addr)
 	addr = mungeaddr (gb, addr, false);
 	if (addr) {
 		uae_u8 v1, v2;
-		v1  = gb->vgaio->read (&gb->vga, addr + 0, 1);
+		v1 = (uae_u8)gb->vgaio->read (&gb->vga, addr + 0, 1);
 		v1 = bget_regtest (gb, addr + 0, v1);
-		v2 = gb->vgaio->read (&gb->vga, addr + 1, 1);
+		v2 = (uae_u8)gb->vgaio->read (&gb->vga, addr + 1, 1);
 		v2 = bget_regtest (gb, addr + 1, v2);
 		v = (v1 << 8) | v2;
 	}
@@ -2965,7 +2964,7 @@ static uae_u32 REGPARAM2 gfxboard_bget_regs (uaecptr addr)
 	}
 	addr = mungeaddr (gb, addr, false);
 	if (addr) {
-		v = gb->vgaio->read (&gb->vga, addr, 1);
+		v = (uae_u8)gb->vgaio->read (&gb->vga, addr, 1);
 		v = bget_regtest (gb, addr, v);
 #if REGDEBUG
 		write_log(_T("GFX VGA BYTE GET IO %04X = %02X PC=%08x\n"), addr & 65535, v & 0xff, M68K_GETPC);
@@ -3216,10 +3215,10 @@ static uae_u32 REGPARAM2 gfxboards_lget_regs (uaecptr addr)
 		// memory mapped io
 		if (addr >= gb->p4_mmiobase && addr < gb->p4_mmiobase + 0x8000) {
 			uae_u32 addr2 = addr - gb->p4_mmiobase;
-			v  = gb->vgammio->read(&gb->vga, addr2 + 0, 1) << 24;
-			v |= gb->vgammio->read(&gb->vga, addr2 + 1, 1) << 16;
-			v |= gb->vgammio->read(&gb->vga, addr2 + 2, 1) <<  8;
-			v |= gb->vgammio->read(&gb->vga, addr2 + 3, 1) <<  0;
+			v  = ((uae_u8)gb->vgammio->read(&gb->vga, addr2 + 0, 1)) << 24;
+			v |= ((uae_u8)gb->vgammio->read(&gb->vga, addr2 + 1, 1)) << 16;
+			v |= ((uae_u8)gb->vgammio->read(&gb->vga, addr2 + 2, 1)) <<  8;
+			v |= ((uae_u8)gb->vgammio->read(&gb->vga, addr2 + 3, 1)) <<  0;
 #if PICASSOIV_DEBUG_IO
 			write_log (_T("PicassoIV MMIO LGET %08x %08x\n"), addr, v);
 #endif
@@ -3260,8 +3259,8 @@ static uae_u32 REGPARAM2 gfxboards_wget_regs (uaecptr addr)
 		// memory mapped io
 		if (addr >= gb->p4_mmiobase && addr < gb->p4_mmiobase + 0x8000) {
 			uae_u32 addr2 = addr - gb->p4_mmiobase;
-			v  = gb->vgammio->read(&gb->vga, addr2 + 0, 1) << 8;
-			v |= gb->vgammio->read(&gb->vga, addr2 + 1, 1) << 0;
+			v  = ((uae_u8)gb->vgammio->read(&gb->vga, addr2 + 0, 1)) << 8;
+			v |= ((uae_u8)gb->vgammio->read(&gb->vga, addr2 + 1, 1)) << 0;
 #if PICASSOIV_DEBUG_IO
 			write_log (_T("PicassoIV MMIO WGET %08x %04x\n"), addr, v & 0xffff);
 #endif
@@ -3313,7 +3312,7 @@ static uae_u32 REGPARAM2 gfxboards_bget_regs (uaecptr addr)
 		// memory mapped io
 		if (addr >= gb->p4_mmiobase && addr < gb->p4_mmiobase + 0x8000) {
 			uae_u32 addr2 = addr - gb->p4_mmiobase;
-			v = gb->vgammio->read(&gb->vga, addr2, 1);
+			v = (uae_u8)gb->vgammio->read(&gb->vga, addr2, 1);
 #if PICASSOIV_DEBUG_IO
 			write_log (_T("PicassoIV MMIO BGET %08x %02x\n"), addr, v & 0xff);
 #endif
@@ -3350,8 +3349,8 @@ static uae_u32 REGPARAM2 gfxboards_bget_regs (uaecptr addr)
 			addr -= 0x10000;
 			uaecptr addr2 = mungeaddr (gb, addr, true);
 			if (addr2) {
-				v = gb->vgaio->read (&gb->vga, addr2, 1);
-				v = bget_regtest (gb, addr2, v);
+				v = (uae_u8)gb->vgaio->read(&gb->vga, addr2, 1);
+				v = bget_regtest(gb, addr2, v);
 				//write_log(_T("P4 VGA read %08X=%02X PC=%08x\n"), addr2, v, M68K_GETPC);
 			}
 			//write_log (_T("PicassoIV IO %08x %02x\n"), addr, v);
@@ -4064,7 +4063,8 @@ int gfxboard_get_index_from_id(int id)
 	if (id == GFXBOARD_UAE_Z3)
 		return GFXBOARD_UAE_Z3;
 	const struct gfxboard *b = find_board(id);
-	return b - &boards[0] + GFXBOARD_HARDWARE;}
+	return (int)(b - &boards[0] + GFXBOARD_HARDWARE);
+}
 
 int gfxboard_get_id_from_index(int index)
 {
@@ -4459,7 +4459,7 @@ bool gfxboard_init_memory (struct autoconfig_info *aci)
 		if (zf) {
 			gb->bios = xcalloc(uae_u8, 65536);
 			gb->bios_mask = 65535;
-			int size = zfile_fread(gb->bios, 1, 65536, zf);
+			int size = (int)zfile_fread(gb->bios, 1, 65536, zf);
 			zfile_fclose(zf);
 			write_log(_T("PCI RTG board BIOS load, %d bytes\n"), size);
 		} else {

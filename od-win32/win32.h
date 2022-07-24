@@ -17,15 +17,15 @@
 
 #define WINUAEPUBLICBETA 0 // BARTO
 #define LANG_DLL 1
-#define LANG_DLL_FULL_VERSION_MATCH 1
+#define LANG_DLL_FULL_VERSION_MATCH 0
 
 #if WINUAEPUBLICBETA
-#define WINUAEBETA _T("Beta 42 (RC3)")
+#define WINUAEBETA _T("Beta 0")
 #else
 #define WINUAEBETA _T("")
 #endif
 
-#define WINUAEDATE MAKEBD(2021, 11, 27)
+#define WINUAEDATE MAKEBD(2022, 2, 2)
 
 //#define WINUAEEXTRA _T("AmiKit Preview")
 //#define WINUAEEXTRA _T("Amiga Forever Edition")

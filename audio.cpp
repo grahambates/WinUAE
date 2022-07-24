@@ -169,10 +169,10 @@ struct ripped_sample
 
 static struct ripped_sample *ripped_samples;
 
-void write_wavheader (struct zfile *wavfile, uae_u32 size, uae_u32 freq)
+void write_wavheader (struct zfile *wavfile, size_t size, uae_u32 freq)
 {
 	uae_u16 tw;
-	uae_u32 tl;
+	size_t tl;
 	int bits = 8, channels = 1;
 
 	zfile_fseek (wavfile, 0, SEEK_SET);
@@ -214,7 +214,7 @@ static void namesplit (TCHAR *s)
 {
 	int l;
 
-	l = _tcslen (s) - 1;
+	l = uaetcslen(s) - 1;
 	while (l >= 0) {
 		if (s[l] == '.')
 			s[l] = 0;
@@ -274,7 +274,7 @@ void audio_sampleripper (int mode)
 				convertsample (rs->sample, rs->len);
 				zfile_fwrite (rs->sample, rs->len, 1, wavfile);
 				convertsample (rs->sample, rs->len);
-				write_wavheader (wavfile, zfile_ftell(wavfile), freq);
+				write_wavheader (wavfile, zfile_ftell32(wavfile), freq);
 				zfile_fclose (wavfile);
 				write_log (_T("SAMPLERIPPER: %d: %dHz %d bytes\n"), cnt, freq, rs->len);
 			} else {
@@ -354,7 +354,7 @@ float scaled_sample_evtime;
 int sound_cd_volume[2];
 int sound_paula_volume[2];
 
-static unsigned long last_cycles;
+static evt_t last_cycles;
 static float next_sample_evtime;
 static int previous_volcnt_update;
 
@@ -453,8 +453,8 @@ static int filter (int input, struct filter_state *fs)
 	switch (sound_use_filter) {
 
 	case FILTER_MODEL_A500:
-		fs->rc1 = a500e_filter1_a0 * input + (1 - a500e_filter1_a0) * fs->rc1 + DENORMAL_OFFSET;
-		fs->rc2 = a500e_filter2_a0 * fs->rc1 + (1 - a500e_filter2_a0) * fs->rc2;
+		fs->rc1 = (float)(a500e_filter1_a0 * input + (1.0f - a500e_filter1_a0) * fs->rc1 + DENORMAL_OFFSET);
+		fs->rc2 = a500e_filter2_a0 * fs->rc1 + (1.0f - a500e_filter2_a0) * fs->rc2;
 		normal_output = fs->rc2;
 
 		fs->rc3 = filter_a0 * normal_output + (1 - filter_a0) * fs->rc3;
@@ -465,9 +465,9 @@ static int filter (int input, struct filter_state *fs)
 		break;
 
 	case FILTER_MODEL_A1200:
-		normal_output = input;
+		normal_output = (float)input;
 
-		fs->rc2 = filter_a0 * normal_output + (1 - filter_a0) * fs->rc2 + DENORMAL_OFFSET;
+		fs->rc2 = (float)(filter_a0 * normal_output + (1 - filter_a0) * fs->rc2 + DENORMAL_OFFSET);
 		fs->rc3 = filter_a0 * fs->rc2       + (1 - filter_a0) * fs->rc3;
 		fs->rc4 = filter_a0 * fs->rc3       + (1 - filter_a0) * fs->rc4;
 
@@ -481,9 +481,9 @@ static int filter (int input, struct filter_state *fs)
 	}
 
 	if (led_filter_on)
-		o = led_output;
+		o = (int)led_output;
 	else
-		o = normal_output;
+		o = (int)normal_output;
 
 	if (o > 32767)
 		o = 32767;
@@ -895,7 +895,7 @@ static void sample16i_crux_handler (void)
 	{
 		struct audio_channel_data *cdp;
 		unsigned long ratio, ratio1;
-#define INTERVAL (scaled_sample_evtime * 3)
+#define INTERVAL ((int)(scaled_sample_evtime * 3))
 		cdp = audio_channel + 0;
 		ratio1 = cdp->per - cdp->evtime;
 		ratio = (ratio1 << 12) / INTERVAL;
@@ -1170,7 +1170,7 @@ static void sample16si_crux_handler (void)
 	{
 		struct audio_channel_data *cdp;
 		unsigned long ratio, ratio1;
-#define INTERVAL (scaled_sample_evtime * 3)
+#define INTERVAL ((int)(scaled_sample_evtime * 3))
 		cdp = audio_channel + 0;
 		ratio1 = cdp->per - cdp->evtime;
 		ratio = (ratio1 << 12) / INTERVAL;
@@ -1935,7 +1935,6 @@ static int sound_prefs_changed (void)
 		|| changed_prefs.sound_volume_board != currprefs.sound_volume_board
 		|| changed_prefs.sound_stereo_swap_paula != currprefs.sound_stereo_swap_paula
 		|| changed_prefs.sound_stereo_swap_ahi != currprefs.sound_stereo_swap_ahi
-		|| changed_prefs.sound_cdaudio != currprefs.sound_cdaudio
 		|| changed_prefs.sound_filter != currprefs.sound_filter
 		|| changed_prefs.sound_filter_type != currprefs.sound_filter_type)
 		return -1;
@@ -1947,7 +1946,7 @@ double softfloat_tan(double v);
 /* This computes the 1st order low-pass filter term b0.
 * The a1 term is 1.0 - b0. The center frequency marks the -3 dB point. */
 #ifndef M_PI
-#define M_PI 3.14159265358979323846
+#define M_PI 3.14159265358979323846f
 #endif
 static float rc_calculate_a0 (int sample_rate, int cutoff_freq)
 {
@@ -1956,12 +1955,12 @@ static float rc_calculate_a0 (int sample_rate, int cutoff_freq)
 	if (cutoff_freq >= sample_rate / 2)
 		return 1.0;
 
-	omega = 2 * M_PI * cutoff_freq / sample_rate;
+	omega = 2.0f * M_PI * cutoff_freq / sample_rate;
 	/* Compensate for the bilinear transformation. This allows us to specify the
 	* stop frequency more exactly, but the filter becomes less steep further
 	* from stopband. */
-	omega = softfloat_tan (omega / 2.0) * 2.0;
-	float out = 1.0 / (1.0 + 1.0 / omega);
+	omega = (float)softfloat_tan (omega / 2.0f) * 2.0f;
+	float out = 1.0f / (1.0f + 1.0f / omega);
 	return out;
 }
 
@@ -2023,7 +2022,6 @@ void set_audio (void)
 	currprefs.sound_volume_master = changed_prefs.sound_volume_master;
 	currprefs.sound_volume_board = changed_prefs.sound_volume_board;
 	currprefs.sound_volume_cd = changed_prefs.sound_volume_cd;
-	currprefs.sound_cdaudio = changed_prefs.sound_cdaudio;
 	currprefs.sound_stereo_swap_paula = changed_prefs.sound_stereo_swap_paula;
 	currprefs.sound_stereo_swap_ahi = changed_prefs.sound_stereo_swap_ahi;
 
@@ -2195,14 +2193,14 @@ static void update_audio_volcnt(int cycles, float evtime, bool nextsmp)
 		out *= 8192;
 
 		cdp->data.last_sample = cdp->data.current_sample;
-		cdp->data.current_sample = out;
+		cdp->data.current_sample = (int)out;
 	}
 	(*sample_handler) ();
 }
 
 void update_audio (void)
 {
-	unsigned long int n_cycles = 0;
+	int n_cycles = 0;
 #if SOUNDSTUFF > 1
 	static int samplecounter;
 #endif
@@ -2214,10 +2212,10 @@ void update_audio (void)
 	if (!is_audio_active ())
 		goto end;
 
-	n_cycles = get_cycles () - last_cycles;
+	n_cycles = (int)(get_cycles () - last_cycles);
 	while (n_cycles > 0) {
-		unsigned long int best_evtime = n_cycles + 1;
-		unsigned long rounded;
+		uae_u32 best_evtime = n_cycles + 1;
+		uae_u32 rounded;
 		int i;
 
 		for (i = 0; i < AUDIO_CHANNELS_PAULA; i++) {
@@ -2230,7 +2228,7 @@ void update_audio (void)
 		}
 
 		/* next_sample_evtime >= 0 so floor() behaves as expected */
-		rounded = floorf (next_sample_evtime);
+		rounded = (uae_u32)floorf (next_sample_evtime);
 		float nevtime = next_sample_evtime;
 		if ((next_sample_evtime - rounded) >= 0.5)
 			rounded++;
@@ -2672,7 +2670,7 @@ uae_u8 *restore_audio (int nr, uae_u8 *src)
 	return src;
 }
 
-uae_u8 *save_audio (int nr, int *len, uae_u8 *dstptr)
+uae_u8 *save_audio (int nr, size_t *len, uae_u8 *dstptr)
 {
 	struct audio_channel_data *acd = audio_channel + nr;
 	uae_u8 *dst, *dstbak;
@@ -2765,12 +2763,12 @@ void audio_state_stream_state(int streamid, int *samplep, int highestch, unsigne
 	asd->evtime = evt;
 }
 
-static unsigned int cda_evt;
+static uae_u32 cda_evt;
 static uae_s16 dummy_buffer[4] = { 0 };
 
-void update_cda_sound(double clk)
+void update_cda_sound(float clk)
 {
-	cda_evt = clk * CYCLE_UNIT / 44100;
+	cda_evt = (uae_u32)(clk * CYCLE_UNIT / 44100.0f);
 }
 
 void audio_cda_volume(struct cd_audio_state *cas, int left, int right)

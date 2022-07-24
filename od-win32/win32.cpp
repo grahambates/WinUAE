@@ -28,7 +28,6 @@
 #include <commdlg.h>
 #include <shellapi.h>
 #include <zmouse.h>
-#include <ddraw.h>
 #include <dbt.h>
 #include <math.h>
 #include <mmsystem.h>
@@ -64,7 +63,7 @@
 #include "inputdevice.h"
 #include "keybuf.h"
 #include "drawing.h"
-#include "dxwrap.h"
+#include "render.h"
 #include "picasso96_win.h"
 #include "bsdsocket.h"
 #include "win32.h"
@@ -315,7 +314,7 @@ int target_sleep_nanos(int nanos)
 		if (nanos < 0)
 			return 800;
 		LARGE_INTEGER interval;
-		int start = read_processor_time();
+		frame_time_t start = read_processor_time();
 		nanos *= 10;
 		if (nanos < ActualTimerResolution)
 			nanos = ActualTimerResolution;
@@ -360,10 +359,10 @@ void target_calibrate_spin(void)
 	if (!ap->gfx_vsyncmode)
 		return;
 	if (busywait || calculated_scanline) {
-		write_log(_T("target_calibrate_spin() skipped\n"));
+		write_log(_T("target_calibrate_spin() skipped (%d)\n"), calculated_scanline);
 		return;
 	}
-	write_log(_T("target_calibrate_spin() start\n"));
+	write_log(_T("target_calibrate_spin() start (%d)\n"), calculated_scanline);
 	sc = 0x800000000000;
 	for (int i = 0; i < 50; i++) {
 		for (;;) {
@@ -472,7 +471,7 @@ extern HANDLE waitvblankevent;
 static int sleep_millis2 (int ms, bool main)
 {
 	UINT TimerEvent;
-	int start = 0;
+	frame_time_t start = 0;
 	int cnt;
 	HANDLE sound_event = get_sound_event();
 	bool wasneg = ms < 0;
@@ -1808,7 +1807,7 @@ static void processtouch(struct AmigaMonitor *mon, HWND hwnd, WPARAM wParam, LPA
 }
 #endif
 
-static void resizing(struct AmigaMonitor *mon, int mode, RECT *r)
+static void resizing(struct AmigaMonitor *mon, WPARAM mode, RECT *r)
 {
 	int nw = (r->right - r->left) + mon->ratio_adjust_x;
 	int nh = (r->bottom - r->top) + mon->ratio_adjust_y;
@@ -1915,7 +1914,6 @@ static LRESULT CALLBACK AmigaWindowProc(HWND hWnd, UINT message, WPARAM wParam, 
 		//write_log(_T("WM_SETFOCUS\n"));
 		winuae_active(mon, hWnd, minimized);
 		unsetminimized(mon->monitor_id);
-		dx_check();
 		return 0;
 	case WM_EXITSIZEMOVE:
 		if (wParam == SC_MOVE) {
@@ -1951,7 +1949,6 @@ static LRESULT CALLBACK AmigaWindowProc(HWND hWnd, UINT message, WPARAM wParam, 
 				unsetminimized(mon->monitor_id);
 			winuae_inactive(mon, hWnd, minimized);
 		}
-		dx_check();
 		return 0;
 	case WM_MOUSEACTIVATE:
 		if (isfocus() == 0)
@@ -1973,7 +1970,6 @@ static LRESULT CALLBACK AmigaWindowProc(HWND hWnd, UINT message, WPARAM wParam, 
 #ifdef RETROPLATFORM
 		rp_activate(wParam, lParam);
 #endif
-		dx_check();
 		return 0;
 
 	case WM_KEYDOWN:
@@ -2103,18 +2099,17 @@ static LRESULT CALLBACK AmigaWindowProc(HWND hWnd, UINT message, WPARAM wParam, 
 
 	case WM_PAINT:
 	{
-		static int recursive = 0;
-		if (recursive == 0) {
-			PAINTSTRUCT ps;
-			recursive++;
-			notice_screen_contents_lost(mon->monitor_id);
-			hDC = BeginPaint(hWnd, &ps);
-			/* Check to see if this WM_PAINT is coming while we've got the GUI visible */
-			if (mon->manual_painting_needed)
-				updatedisplayarea(mon->monitor_id);
-			EndPaint(hWnd, &ps);
-			recursive--;
+		PAINTSTRUCT ps;
+		hDC = BeginPaint(hWnd, &ps);
+		if (D3D_paint) {
+			D3D_paint();
 		}
+		/* Check to see if this WM_PAINT is coming while we've got the GUI visible */
+		if (mon->manual_painting_needed) {
+			updatedisplayarea(mon->monitor_id);
+		}
+		mon->manual_painting_needed = 0;
+		EndPaint(hWnd, &ps);
 	}
 	return 0;
 
@@ -2570,7 +2565,7 @@ static LRESULT CALLBACK AmigaWindowProc(HWND hWnd, UINT message, WPARAM wParam, 
 			tablet = NULL;
 			return 0;
 		}
-		if (pWTPacket((HCTX)lParam, wParam, &pkt)) {
+		if (pWTPacket((HCTX)lParam, (UINT)wParam, &pkt)) {
 			int x, y, z, pres, proxi;
 			DWORD buttons;
 			ORIENTATION ori;
@@ -2880,7 +2875,7 @@ static LRESULT CALLBACK MainWindowProc (HWND hWnd, UINT message, WPARAM wParam, 
 				if (txt) {
 					SetBkMode(lpDIS->hDC, TRANSPARENT);
 					oc = SetTextColor(lpDIS->hDC, RGB(0x00, 0x00, 0x00));
-					DrawText(lpDIS->hDC, txt, _tcslen(txt), &lpDIS->rcItem, flags);
+					DrawText(lpDIS->hDC, txt, uaetcslen(txt), &lpDIS->rcItem, flags);
 					SetTextColor(lpDIS->hDC, oc);
 				}
 			} else if (lpDIS->itemID > 0 && lpDIS->itemID <= window_led_joy_start) {
@@ -2967,7 +2962,7 @@ static LRESULT CALLBACK MainWindowProc (HWND hWnd, UINT message, WPARAM wParam, 
 					lpDIS->rcItem.right--;
 					lpDIS->rcItem.left += 2;
 				}
-				DrawText (lpDIS->hDC, txt, _tcslen (txt), &lpDIS->rcItem, flags);
+				DrawText (lpDIS->hDC, txt, uaetcslen(txt), &lpDIS->rcItem, flags);
 				SetTextColor (lpDIS->hDC, oc);
 			}
 		}
@@ -3069,15 +3064,19 @@ static LRESULT CALLBACK BlankWindowProc (HWND hWnd, UINT message, WPARAM wParam,
 	return DefWindowProc (hWnd, message, wParam, lParam);
 }
 
-int handle_msgpump (void)
+int handle_msgpump(bool vblank)
 {
-	int got = 0;
 	MSG msg;
+	int got = 0;
 
-	while (PeekMessage (&msg, 0, 0, 0, PM_REMOVE)) {
+	UINT wRemoveMsg = PM_REMOVE | PM_NOYIELD;
+	if (!vblank) {
+		wRemoveMsg |= PM_QS_INPUT;
+	}
+	while (PeekMessage(&msg, 0, 0, 0, wRemoveMsg)) {
 		got = 1;
-		TranslateMessage (&msg);
-		DispatchMessage (&msg);
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
 	}
 	while (checkIPC (globalipc, &currprefs));
 	return got;
@@ -3626,7 +3625,7 @@ void logging_init (void)
 		SystemInfo.wProcessorArchitecture, SystemInfo.wProcessorLevel, SystemInfo.wProcessorRevision,
 		SystemInfo.dwNumberOfProcessors, filedate, os_touch);
 	write_log (_T("\n(c) 1995-2001 Bernd Schmidt   - Core UAE concept and implementation.")
-		_T("\n(c) 1998-2021 Toni Wilen      - Win32 port, core code updates.")
+		_T("\n(c) 1998-2022 Toni Wilen      - Win32 port, core code updates.")
 		_T("\n(c) 1996-2001 Brian King      - Win32 port, Picasso96 RTG, and GUI.")
 		_T("\n(c) 1996-1999 Mathias Ortmann - Win32 port and bsdsocket support.")
 		_T("\n(c) 2000-2001 Bernd Meyer     - JIT engine.")
@@ -3648,27 +3647,27 @@ void logging_cleanup (void)
 	debugfile = 0;
 }
 
-uae_u8 *save_log (int bootlog, int *len)
+uae_u8 *save_log(int bootlog, size_t *len)
 {
 	FILE *f;
 	uae_u8 *dst = NULL;
-	int size;
+	size_t size;
 
 	if (!logging_started)
 		return NULL;
-	f = _tfopen (bootlog ? LOG_BOOT : LOG_NORMAL, _T("rb"));
+	f = _tfopen(bootlog ? LOG_BOOT : LOG_NORMAL, _T("rb"));
 	if (!f)
 		return NULL;
-	fseek (f, 0, SEEK_END);
-	size = ftell (f);
-	fseek (f, 0, SEEK_SET);
+	fseek(f, 0, SEEK_END);
+	size = ftell(f);
+	fseek(f, 0, SEEK_SET);
 	if (*len > 0 && size > *len)
 		size = *len;
 	if (size > 0) {
-		dst = xcalloc (uae_u8, size + 1);
+		dst = xcalloc(uae_u8, size + 1);
 		if (dst)
-			fread (dst, 1, size, f);
-		fclose (f);
+			fread(dst, 1, size, f);
+		fclose(f);
 		*len = size + 1;
 	}
 	return dst;
@@ -4089,7 +4088,7 @@ static void shellexecute (const TCHAR *command)
 	TCHAR **arg;
 	int i, j, k, stop;
 
-	if (_tcslen (command) == 0)
+	if (uaetcslen(command) == 0)
 		return;
 	i = j = 0;
 	stop = 0;
@@ -4099,14 +4098,14 @@ static void shellexecute (const TCHAR *command)
 		int len = 1;
 		j = i;
 		while (arg[i] && _tcscmp (arg[i], L";")) {
-			len += _tcslen (arg[i]) + 3;
+			len += uaetcslen(arg[i]) + 3;
 			i++;
 		}
 		exec = NULL;
 		cmd = xcalloc (TCHAR, len);
 		for (k = j; k < i; k++) {
 			int quote = 0;
-			if (_tcslen (cmd) > 0)
+			if (uaetcslen(cmd) > 0)
 				_tcscat (cmd, L" ");
 			if (_tcschr (arg[k], ' '))
 				quote = 1;
@@ -4185,19 +4184,11 @@ void target_fixup_options (struct uae_prefs *p)
 		nojoy = true;
 	}
 	
-	if (p->rtg_hardwaresprite && !p->gfx_api) {
-		error_log(_T("DirectDraw is not RTG hardware sprite compatible."));
-		p->rtg_hardwaresprite = false;
-	}
 	if (p->rtgboards[0].rtgmem_type >= GFXBOARD_HARDWARE) {
 		p->rtg_hardwareinterrupt = false;
 		p->rtg_hardwaresprite = false;
 		p->win32_rtgmatchdepth = false;
 		p->color_mode = 5;
-		if (p->ppc_model && !p->gfx_api) {
-			error_log(_T("Graphics board and PPC: Direct3D enabled."));
-			p->gfx_api = os_win7 ? 2 : 1;
-		}
 	}
 
 	struct MultiDisplay *md = getdisplay(p, 0);
@@ -4288,15 +4279,19 @@ void target_default_options (struct uae_prefs *p, int type)
 		p->win32_rtgscaleaspectratio = -1;
 		p->win32_rtgvblankrate = 0;
 		p->rtg_hardwaresprite = true;
+		p->rtg_overlay = true;
+		p->rtg_vgascreensplit = true;
+		p->rtg_paletteswitch = true;
+		p->rtg_dacswitch = true;
 		p->win32_commandpathstart[0] = 0;
 		p->win32_commandpathend[0] = 0;
 		p->win32_statusbar = 1;
 		p->gfx_api = os_win7 ? 2 : (os_vista ? 1 : 0);
 		if (p->gfx_api > 1)
 			p->color_mode = 5;
-		if (p->gf[APMODE_NATIVE].gfx_filter == 0 && p->gfx_api)
+		if (p->gf[APMODE_NATIVE].gfx_filter == 0)
 			p->gf[APMODE_NATIVE].gfx_filter = 1;
-		if (p->gf[APMODE_RTG].gfx_filter == 0 && p->gfx_api)
+		if (p->gf[APMODE_RTG].gfx_filter == 0)
 			p->gf[APMODE_RTG].gfx_filter = 1;
 		WIN32GUI_LoadUIString (IDS_INPUT_CUSTOM, buf, sizeof buf / sizeof (TCHAR));
 		for (int i = 0; i < GAMEPORT_INPUT_SETTINGS; i++)
@@ -4643,8 +4638,8 @@ int target_parse_option (struct uae_prefs *p, const TCHAR *option, const TCHAR *
 			for (i = 0; i < MAX_SOUND_DEVICES && sound_devices[i]; i++) {
 				if (!sound_devices[i]->prefix)
 					continue;
-				int prefixlen = _tcslen(sound_devices[i]->prefix);
-				int tmplen = _tcslen(tmpbuf);
+				int prefixlen = uaetcslen(sound_devices[i]->prefix);
+				int tmplen = uaetcslen(tmpbuf);
 				if (prefixlen > 0 && tmplen >= prefixlen &&
 					!_tcsncmp(sound_devices[i]->prefix, tmpbuf, prefixlen) &&
 					((tmplen > prefixlen && tmpbuf[prefixlen] == ':')
@@ -5244,9 +5239,9 @@ static int shell_associate_2 (const TCHAR *extension, const TCHAR *shellcommand,
 	_tcscat (rpath2, extension);
 	if (RegCreateKeyEx (rkey, rpath2, 0, NULL, REG_OPTION_NON_VOLATILE,
 		KEY_WRITE | KEY_READ, NULL, &key1, &disposition) == ERROR_SUCCESS) {
-			RegSetValueEx (key1, _T(""), 0, REG_SZ, (CONST BYTE *)defprogid, (_tcslen (defprogid) + 1) * sizeof (TCHAR));
+			RegSetValueEx (key1, _T(""), 0, REG_SZ, (CONST BYTE *)defprogid, (uaetcslen(defprogid) + 1) * sizeof (TCHAR));
 			if (perceivedtype)
-				RegSetValueEx (key1, _T("PerceivedType"), 0, REG_SZ, (CONST BYTE *)perceivedtype, (_tcslen (perceivedtype) + 1) * sizeof (TCHAR));
+				RegSetValueEx (key1, _T("PerceivedType"), 0, REG_SZ, (CONST BYTE *)perceivedtype, (uaetcslen(perceivedtype) + 1) * sizeof (TCHAR));
 			RegCloseKey (key1);
 	}
 	_tcscpy (rpath2, rpath1);
@@ -5256,12 +5251,12 @@ static int shell_associate_2 (const TCHAR *extension, const TCHAR *shellcommand,
 	if (description) {
 		if (RegCreateKeyEx (rkey, rpath2, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_READ, NULL, &key1, &disposition) == ERROR_SUCCESS) {
 			TCHAR tmp[MAX_DPATH];
-			RegSetValueEx (key1, _T(""), 0, REG_SZ, (CONST BYTE *)description, (_tcslen (description) + 1) * sizeof (TCHAR));
-			RegSetValueEx (key1, _T("AppUserModelID"), 0, REG_SZ, (CONST BYTE *)WINUAEAPPNAME, (_tcslen (WINUAEAPPNAME) + 1) * sizeof (TCHAR));
+			RegSetValueEx (key1, _T(""), 0, REG_SZ, (CONST BYTE *)description, (uaetcslen(description) + 1) * sizeof (TCHAR));
+			RegSetValueEx (key1, _T("AppUserModelID"), 0, REG_SZ, (CONST BYTE *)WINUAEAPPNAME, (uaetcslen(WINUAEAPPNAME) + 1) * sizeof (TCHAR));
 			_tcscpy (tmp, rpath2);
 			_tcscat (tmp, _T("\\CurVer"));
 			if (RegCreateKeyEx (rkey, tmp, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_READ, NULL, &key2, &disposition) == ERROR_SUCCESS) {
-				RegSetValueEx (key2, _T(""), 0, REG_SZ, (CONST BYTE *)defprogid, (_tcslen (defprogid) + 1) * sizeof (TCHAR));
+				RegSetValueEx (key2, _T(""), 0, REG_SZ, (CONST BYTE *)defprogid, (uaetcslen(defprogid) + 1) * sizeof (TCHAR));
 				RegCloseKey (key2);
 			}
 			if (icon) {
@@ -5269,7 +5264,7 @@ static int shell_associate_2 (const TCHAR *extension, const TCHAR *shellcommand,
 				_tcscat (tmp, _T("\\DefaultIcon"));
 				if (RegCreateKeyEx (rkey, tmp, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_READ, NULL, &key2, &disposition) == ERROR_SUCCESS) {
 					_stprintf (tmp, _T("%s,%d"), executable_path, -icon);
-					RegSetValueEx (key2, _T(""), 0, REG_SZ, (CONST BYTE *)tmp, (_tcslen (tmp) + 1) * sizeof (TCHAR));
+					RegSetValueEx (key2, _T(""), 0, REG_SZ, (CONST BYTE *)tmp, (uaetcslen(tmp) + 1) * sizeof (TCHAR));
 					RegCloseKey (key2);
 				}
 			}
@@ -5299,7 +5294,7 @@ static int shell_associate_2 (const TCHAR *extension, const TCHAR *shellcommand,
 					KEY_WRITE | KEY_READ, NULL, &key1, &disposition) == ERROR_SUCCESS) {
 						TCHAR tmp[MAX_DPATH];
 						_stprintf (tmp, _T("%s,%d"), executable_path, -cc[i].icon);
-						RegSetValueEx (key1, _T("Icon"), 0, REG_SZ, (CONST BYTE *)tmp, (_tcslen (tmp) + 1) * sizeof (TCHAR));
+						RegSetValueEx (key1, _T("Icon"), 0, REG_SZ, (CONST BYTE *)tmp, (uaetcslen(tmp) + 1) * sizeof (TCHAR));
 						RegCloseKey (key1);
 				}
 			}
@@ -5308,7 +5303,7 @@ static int shell_associate_2 (const TCHAR *extension, const TCHAR *shellcommand,
 				KEY_WRITE | KEY_READ, NULL, &key1, &disposition) == ERROR_SUCCESS) {
 					TCHAR path[MAX_DPATH];
 					_stprintf (path, _T("\"%sWinUAE.exe\" %s"), start_path_exe, cc[i].command);
-					RegSetValueEx (key1, _T(""), 0, REG_SZ, (CONST BYTE *)path, (_tcslen (path) + 1) * sizeof (TCHAR));
+					RegSetValueEx (key1, _T(""), 0, REG_SZ, (CONST BYTE *)path, (uaetcslen(path) + 1) * sizeof (TCHAR));
 					RegCloseKey (key1);
 			}
 		}
@@ -5431,11 +5426,11 @@ static void associate_init_extensions (void)
 		if (setit) {
 			if (RegCreateKeyEx (rkey, rpath, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_READ | KEY_WRITE, NULL, &key1, &disposition) == ERROR_SUCCESS) {
 				DWORD val = 1;
-				RegSetValueEx (key1, _T(""), 0, REG_SZ, (CONST BYTE *)executable_path, (_tcslen (executable_path) + 1) * sizeof (TCHAR));
+				RegSetValueEx (key1, _T(""), 0, REG_SZ, (CONST BYTE *)executable_path, (uaetcslen(executable_path) + 1) * sizeof (TCHAR));
 				RegSetValueEx (key1, _T("UseUrl"), 0, REG_DWORD, (LPBYTE)&val, sizeof val);
 				_tcscpy (rpath, start_path_exe);
-				rpath[_tcslen (rpath) - 1] = 0;
-				RegSetValueEx (key1, _T("Path"), 0, REG_SZ, (CONST BYTE *)rpath, (_tcslen (rpath) + 1) * sizeof (TCHAR));
+				rpath[uaetcslen(rpath) - 1] = 0;
+				RegSetValueEx (key1, _T("Path"), 0, REG_SZ, (CONST BYTE *)rpath, (uaetcslen(rpath) + 1) * sizeof (TCHAR));
 				RegCloseKey (key1);
 				SHChangeNotify (SHCNE_ASSOCCHANGED, 0, 0, 0); 
 			}
@@ -5621,8 +5616,8 @@ static void WIN32_HandleRegistryStuff (void)
 		int x = GetSystemMetrics (SM_CXSCREEN);
 		int y = GetSystemMetrics (SM_CYSCREEN);
 		int dpi = getdpiformonitor(NULL);
-		x = (x - (800 * dpi / 96)) / 2;
-		y = (y - (600 * dpi / 96)) / 2;
+		x = (x - (GUI_INTERNAL_WIDTH_NEW * dpi / 96)) / 2;
+		y = (y - (GUI_INTERNAL_HEIGHT_NEW * dpi / 96)) / 2;
 		if (x < 10)
 			x = 10;
 		if (y < 10)
@@ -5644,7 +5639,6 @@ static void WIN32_HandleRegistryStuff (void)
 			forceroms = 1;
 	}
 
-	regqueryint (NULL, _T("DirectDraw_Secondary"), &ddforceram);
 	if (regexists (NULL, _T("SoundDriverMask"))) {
 		regqueryint (NULL, _T("SoundDriverMask"), &sounddrivermask);
 	} else {
@@ -5899,18 +5893,27 @@ static int osdetect (void)
 		pGetNativeSystemInfo (&SystemInfo);
 	osVersion.dwOSVersionInfoSize = sizeof (OSVERSIONINFO);
 	if (GetVersionEx (&osVersion)) {
-		if (osVersion.dwMajorVersion >= 6)
+		if (osVersion.dwMajorVersion >= 6) {
 			os_vista = 1;
-		if (osVersion.dwMajorVersion >= 7 || (osVersion.dwMajorVersion == 6 && osVersion.dwMinorVersion >= 1))
+		}
+		if (osVersion.dwMajorVersion >= 7 || (osVersion.dwMajorVersion == 6 && osVersion.dwMinorVersion >= 1)) {
 			os_win7 = 1;
-		if (osVersion.dwMajorVersion >= 7 || (osVersion.dwMajorVersion == 6 && osVersion.dwMinorVersion >= 2))
+		}
+		if (osVersion.dwMajorVersion >= 7 || (osVersion.dwMajorVersion == 6 && osVersion.dwMinorVersion >= 2)) {
 			os_win8 = 1;
-		if (osVersion.dwMajorVersion >= 7 || (osVersion.dwMajorVersion == 6 && osVersion.dwMinorVersion >= 3))
+		}
+		if (osVersion.dwMajorVersion >= 7 || (osVersion.dwMajorVersion == 6 && osVersion.dwMinorVersion >= 3)) {
 			os_win8 = 2;
-		if (osVersion.dwMajorVersion >= 10)
+		}
+		if (osVersion.dwMajorVersion >= 10) {
 			os_win10 = 1;
-		if (SystemInfo.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64)
+		}
+		if (SystemInfo.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64) {
 			os_64bit = 1;
+		}
+		if (os_win7 && !os_win8) {
+			calculated_scanline = false;
+		}
 	}
 	cpu_number = SystemInfo.dwNumberOfProcessors;
 	os_admin = isadminpriv ();
@@ -5944,7 +5947,6 @@ static int osdetect (void)
 			FreeLibrary(dwmapihandle);
 		}
 	}
-
 
 	return 1;
 }
@@ -6247,7 +6249,6 @@ static void getstartpaths (void)
 	setpathmode (path_type);
 }
 
-extern void test (void);
 extern int screenshotmode, postscript_print_debugging, sound_debug, log_uaeserial, clipboard_debug;
 extern int force_direct_catweasel, sound_mode_skip, maxmem;
 extern int pngprint, log_sercon, midi_inbuflen;
@@ -6736,10 +6737,6 @@ static int parseargs(const TCHAR *argx, const TCHAR *np, const TCHAR *np2)
 		return 2;
 	}
 	if (!_tcscmp (arg, _T("ddforcemode"))) {
-		extern int ddforceram;
-		ddforceram = getval (np);
-		if (ddforceram < 0 || ddforceram > 3)
-			ddforceram = 0;
 		return 2;
 	}
 	if (!_tcscmp (arg, _T("affinity"))) {
@@ -6776,6 +6773,9 @@ static int parseargs(const TCHAR *argx, const TCHAR *np, const TCHAR *np2)
 	if (!_tcscmp (arg, _T("p96skipmode"))) {
 		extern int p96skipmode;
 		p96skipmode = getval (np);
+		return 2;
+	}
+	if (!_tcscmp (arg, _T("p96test"))) {
 		return 2;
 	}
 	if (!_tcscmp (arg, _T("minidumpmode"))) {
@@ -6827,6 +6827,15 @@ static int parseargs(const TCHAR *argx, const TCHAR *np, const TCHAR *np2)
 		hrtmon_lang = getval(np);
 		return 2;
 	}
+	if (!_tcscmp(arg, _T("beamrace"))) {
+		if (getval(np) == 0) {
+			calculated_scanline = true;
+		} else if (getval(np) == 1) {
+			calculated_scanline = false;
+		}
+		return 2;
+	}
+
 #endif
 	return 0;
 }
@@ -7034,7 +7043,7 @@ static bool singleprocess (void)
 		goto end;
 	buf[0] = 0xfeff;
 	_tcscpy (buf + 1, _T("IPC_QUIT"));
-	if (!WriteFile(p, (void*)buf, (_tcslen (buf) + 1) * sizeof (TCHAR), &ret, NULL))
+	if (!WriteFile(p, (void*)buf, (uaetcslen(buf) + 1) * sizeof (TCHAR), &ret, NULL))
 		goto end;
 	if (!PeekNamedPipe(p, NULL, 0, NULL, &avail, NULL))
 		goto end;
@@ -7136,7 +7145,6 @@ static int PASCAL WinMain2 (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR
 #endif
 		WIN32_InitLang ();
 		WIN32_InitHtmlHelp ();
-		DirectDraw_Release ();
 		unicode_init ();
 		can_D3D11(false);
 		if (betamessage ()) {
@@ -7259,7 +7267,7 @@ static void savedump (MINIDUMPWRITEDUMP dump, HANDLE f, struct _EXCEPTION_POINTE
 	MINIDUMP_USER_STREAM_INFORMATION musi, *musip;
 	MINIDUMP_USER_STREAM mus[3], *musp;
 	uae_u8 *log;
-	int len;
+	size_t len;
 
 	musip = NULL;
 	musi.UserStreamArray = mus;
@@ -7272,7 +7280,7 @@ static void savedump (MINIDUMPWRITEDUMP dump, HANDLE f, struct _EXCEPTION_POINTE
 		musi.UserStreamCount++;
 		musp->Type = LastReservedStream + musi.UserStreamCount;
 		musp->Buffer = log;
-		musp->BufferSize = len;
+		musp->BufferSize = (ULONG)len;
 		len = 30000;
 		log = save_log (FALSE, &len);
 		if (log) {
@@ -7280,7 +7288,7 @@ static void savedump (MINIDUMPWRITEDUMP dump, HANDLE f, struct _EXCEPTION_POINTE
 			musi.UserStreamCount++;
 			musp->Type = LastReservedStream + musi.UserStreamCount;
 			musp->Buffer = log;
-			musp->BufferSize = len;
+			musp->BufferSize = (ULONG)len;
 		}
 	}
 
@@ -7290,7 +7298,7 @@ static void savedump (MINIDUMPWRITEDUMP dump, HANDLE f, struct _EXCEPTION_POINTE
 		musi.UserStreamCount++;
 		musp->Type = LastReservedStream + musi.UserStreamCount;
 		musp->Buffer = (void*)config;
-		musp->BufferSize = len;
+		musp->BufferSize = (ULONG)len;
 	}
 
 	if (musi.UserStreamCount > 0)
@@ -7370,9 +7378,11 @@ static void create_dump (struct _EXCEPTION_POINTERS *pExceptionPointers)
 					ShowCursor(TRUE);
 					if (debugfile)
 						log_close(debugfile);
-					if (isfullscreen () <= 0) {
-						_stprintf (msg, _T("Crash detected. MiniDump saved as:\n%s\n"), path3);
-						MessageBox (NULL, msg, _T("Crash"), MB_OK | MB_ICONWARNING | MB_TASKMODAL | MB_SETFOREGROUND);
+					if (isfullscreen() <= 0) {
+						all_events_disabled = 0;
+						struct AmigaMonitor *mon = &AMonitors[0];
+						_stprintf(msg, _T("Crash detected. MiniDump saved as:\n%s\n"), path3);
+						MessageBox(mon->hStatusWnd ? mon->hStatusWnd : NULL, msg, _T("Crash"), MB_OK | MB_ICONWARNING | MB_TASKMODAL | MB_SETFOREGROUND);
 					}
 					ExitProcess(0);
 				}
@@ -7387,7 +7397,7 @@ static void create_dump (struct _EXCEPTION_POINTERS *pExceptionPointers)
 LONG WINAPI WIN32_ExceptionFilter (struct _EXCEPTION_POINTERS * pExceptionPointers, DWORD ec)
 {
 	if (nocrashdump || isfullscreen() > 0)
-		EXCEPTION_CONTINUE_SEARCH;
+		return EXCEPTION_CONTINUE_SEARCH;
 	write_log (_T("EVALEXCEPTION %08x!\n"), ec);
 	create_dump  (pExceptionPointers);
 	return EXCEPTION_CONTINUE_SEARCH;
@@ -7412,7 +7422,7 @@ static void efix (DWORD *regp, void *p, void *ps, int *got)
 LONG WINAPI WIN32_ExceptionFilter (struct _EXCEPTION_POINTERS *pExceptionPointers, DWORD ec)
 {
 	if (nocrashdump)
-		EXCEPTION_CONTINUE_SEARCH;
+		return EXCEPTION_CONTINUE_SEARCH;
 
 	static uae_u8 *prevpc;
 	LONG lRet = EXCEPTION_CONTINUE_SEARCH;
@@ -7955,8 +7965,7 @@ typedef BOOL(WINAPI* SETPROCESSMITIGATIONPOLICY)(DWORD, PVOID, SIZE_T);
 static SETPROCESSMITIGATIONPOLICY pSetProcessMitigationPolicy;
 #endif
 
-int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow)
- {
+int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow) {
 	DWORD_PTR sys_aff;
 	HANDLE thread;
 

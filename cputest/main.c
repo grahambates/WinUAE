@@ -90,7 +90,7 @@ static int cpu_lvl, fpu_model;
 static uae_u16 sr_undefined_mask;
 static int check_undefined_sr;
 static short is_fpu_adjust;
-static short fpu_adjust_man, fpu_adjust_exp, fpu_adjust_zb;
+static short fpu_adjust_exp;
 struct fpureg fpu_adjust;
 static uae_u32 cpustatearraystore[16];
 static uae_u32 cpustatearraynew[] = {
@@ -128,10 +128,12 @@ static int errors;
 static int totalerrors;
 static int testcnt;
 static short testcntsub, testcntsubmax;
+static int invalidcycles;
 static int fpu_approx, fpu_approxcnt;
 static short dooutput = 1;
 static short quit;
 static uae_u8 ccr_mask;
+static uae_u32 fpsr_ignore_mask;
 static uae_u32 addressing_mask = 0x00ffffff;
 static uae_u32 interrupt_mask;
 static short loop_mode_jit, loop_mode_68010, loop_mode_cnt;
@@ -144,10 +146,13 @@ static short skipregchange;
 static short skipccrchange;
 static short askifmissing;
 static short nextall;
-static int exitcnt;
+static short exitmode;
+static int exitcnt, exitcnt2, irqcnt;
 static short cycles, cycles_range, cycles_adjust;
 static short gotcycles;
 static short interrupttest;
+static short interrupt_delay_cnt;
+static short interrupttest_diff_cnt;
 static uae_u32 cyclecounter_addr;
 static int errorcnt;
 static short uaemode;
@@ -222,6 +227,10 @@ static void flushcache(uae_u32 v)
 static void berrcopy(void *src, void *dst, uae_u32 size, uae_u32 hasvbr)
 {
 }
+static uae_u32 fpucomp(void *v)
+{
+	return 0;
+}
 static void *error_vector;
 #else
 
@@ -246,6 +255,7 @@ extern void setcpu(uae_u32, uae_u32*, uae_u32*);
 extern void flushcache(uae_u32);
 extern void *error_vector;
 extern void berrcopy(void*, void*, uae_u32, uae_u32);
+extern uae_u32 fpucomp(void*);
 
 #endif
 static uae_u32 exceptiontableinuse;
@@ -265,7 +275,7 @@ static struct accesshistory ahist[MAX_ACCESSHIST];
 static int is_valid_test_addr_read(uae_u32 a)
 {
 	a &= addressing_mask;
-	if ((uae_u8 *)a >= safe_memory_start && (uae_u8 *)a < safe_memory_end && (safe_memory_mode & 1))
+	if ((uae_u8*)a >= safe_memory_start && (uae_u8*)a < safe_memory_end && (safe_memory_mode & 1))
 		return 0;
 	return (a >= test_low_memory_start && a < test_low_memory_end && test_low_memory_start != 0xffffffff) ||
 		(a >= test_high_memory_start && a < test_high_memory_end && test_high_memory_start != 0xffffffff) ||
@@ -275,7 +285,7 @@ static int is_valid_test_addr_read(uae_u32 a)
 static int is_valid_test_addr_readwrite(uae_u32 a)
 {
 	a &= addressing_mask;
-	if ((uae_u8 *)a >= safe_memory_start && (uae_u8 *)a < safe_memory_end)
+	if ((uae_u8*)a >= safe_memory_start && (uae_u8*)a < safe_memory_end)
 		return 0;
 	return (a >= test_low_memory_start && a < test_low_memory_end && test_low_memory_start != 0xffffffff) ||
 		(a >= test_high_memory_start && a < test_high_memory_end && test_high_memory_start != 0xffffffff) ||
@@ -1016,7 +1026,7 @@ static uae_u8 *get_memory_addr(uae_u8 *p, uae_u8 **addrp)
 #ifndef M68K
 				uae_u8 *addr = low_memory + val;
 #else
-				uae_u8 *addr = (uae_u8 *)val;
+				uae_u8 *addr = (uae_u8*)val;
 #endif
 				validate_mode(p[0], CT_MEMWRITE);
 				*addrp = addr;
@@ -1025,7 +1035,7 @@ static uae_u8 *get_memory_addr(uae_u8 *p, uae_u8 **addrp)
 #ifndef M68K
 				uae_u8 *addr = test_memory + (val - test_memory_addr);
 #else
-				uae_u8 *addr = (uae_u8 *)val;
+				uae_u8 *addr = (uae_u8*)val;
 #endif
 				validate_mode(p[0], CT_MEMWRITE);
 				*addrp = addr;
@@ -1194,12 +1204,30 @@ static uae_u8 *restore_memory(uae_u8 *p, int storedata)
 	return p;
 }
 
+static uae_u8 *restore_edata(uae_u8 *p)
+{
+	p++;
+	uae_u8 v = *p++;
+	switch(v)
+	{
+		case CT_EDATA_IRQ_CYCLES:
+			interrupt_delay_cnt = *p++;
+		break;
+		default:
+		end_test();
+		printf("Unexpected CT_EDATA 0x%02x\n", *p);
+		endinfo();
+		exit(0);
+	}
+	return p;
+}
+
 static uae_u8 *restore_data(uae_u8 *p, struct registers *r)
 {
 	uae_u8 v = *p;
 	if (v & CT_END) {
 		end_test();
-		printf("Unexpected end bit!? offset %d\n", p - test_data);
+		printf("Unexpected end bit!? 0x%02x offset %d\n", v, p - test_data);
 		endinfo();
 		exit(0);
 	}
@@ -1248,6 +1276,8 @@ static uae_u8 *restore_data(uae_u8 *p, struct registers *r)
 		p = restore_memory(p, 1);
 	} else if (mode == CT_MEMWRITES) {
 		p = restore_memory(p, 0);
+	} else if (mode == CT_EDATA) {
+		p = restore_edata(p);
 	} else {
 		end_test();
 		printf("Unexpected mode %02x\n", v);
@@ -1388,18 +1418,18 @@ static void addinfo(void)
 	if (disasm) {
 		out_disasm(opcode_memory);
 		if (r->branchtarget != 0xffffffff && !(r->branchtarget & 1)) {
-			out_disasm((uae_u8 *)r->branchtarget);
+			out_disasm((uae_u8*)r->branchtarget);
 		}
 	}
 
 	uae_u16 *code = (uae_u16*)opcode_memory;
 	if (code[0] == 0x4e73 || code[0] == 0x4e74 || code[0] == 0x4e75 || code[0] == 0x4e77) {
 		addinfo_bytes("P", stackaddr, stackaddr_ptr, -SIZE_STORED_ADDRESS_OFFSET, SIZE_STORED_ADDRESS);
-		addinfo_bytes(" ", (uae_u8 *)stackaddr_ptr - SIZE_STORED_ADDRESS_OFFSET, stackaddr_ptr, -SIZE_STORED_ADDRESS_OFFSET, SIZE_STORED_ADDRESS);
+		addinfo_bytes(" ", (uae_u8*)stackaddr_ptr - SIZE_STORED_ADDRESS_OFFSET, stackaddr_ptr, -SIZE_STORED_ADDRESS_OFFSET, SIZE_STORED_ADDRESS);
 	}
 	if (r->srcaddr != 0xffffffff) {
 		uae_u8 *a = srcaddr;
-		uae_u8 *b = (uae_u8 *)r->srcaddr - SIZE_STORED_ADDRESS_OFFSET;
+		uae_u8 *b = (uae_u8*)r->srcaddr - SIZE_STORED_ADDRESS_OFFSET;
 		addinfo_bytes("S", a, r->srcaddr, -SIZE_STORED_ADDRESS_OFFSET, SIZE_STORED_ADDRESS);
 		if (addr_diff(a, b, SIZE_STORED_ADDRESS)) {
 			addinfo_bytes(" ", b, r->srcaddr, -SIZE_STORED_ADDRESS_OFFSET, SIZE_STORED_ADDRESS);
@@ -1414,7 +1444,7 @@ static void addinfo(void)
 		}
 	}
 	if (r->branchtarget != 0xffffffff && r->srcaddr != r->branchtarget && r->dstaddr != r->branchtarget) {
-		uae_u8 *b = (uae_u8 *)r->branchtarget - SIZE_STORED_ADDRESS_OFFSET;
+		uae_u8 *b = (uae_u8*)r->branchtarget - SIZE_STORED_ADDRESS_OFFSET;
 		addinfo_bytes("B", b, r->branchtarget, -SIZE_STORED_ADDRESS_OFFSET, SIZE_STORED_ADDRESS);
 	}
 //	sprintf(outbp, "STARTPC=%08x ENDPC=%08x\n", startpc, endpc);
@@ -1613,6 +1643,52 @@ static int compare_exception(uae_u8 *s1, uae_u8 *s2, int len, int domask, uae_u8
 	}
 }
 
+static uae_u8 *get_exceptionframe(struct registers *regs, short excnum, int *sizep)
+{
+	uae_u8 *frame = (uae_u8*)regs->excframe;
+	short size = 0;
+	if (cpu_lvl == 0) {
+		if (excnum == 2 || excnum == 3) {
+			size = 14;
+		} else {
+			size = 6;
+		}
+		*sizep = size;
+		return frame;
+	}
+	uae_u16 type = (frame[4] << 8) | frame[5];
+	switch (type >> 12)
+	{
+	case 0:
+		size = 8;
+		break;
+	case 2:
+	case 3:
+		size = 12;
+		break;
+	case 4:
+		size = 16;
+		break;
+	case 7:
+		size = 60;
+		break;
+	case 8:
+		size = 82;
+		break;
+	case 9:
+		size = 20;
+		break;
+	case 10:
+		size = 32;
+		break;
+	case 11:
+		size = 92;
+		break;
+	}
+	*sizep = size;
+	return frame;
+}
+
 static uae_u8 *validate_exception(struct registers *regs, uae_u8 *p, short excnum, short *gotexcnum, short *experr, short *extratrace, short *group2with1)
 {
 	int exclen = 0;
@@ -1621,7 +1697,6 @@ static uae_u8 *validate_exception(struct registers *regs, uae_u8 *p, short excnu
 	uae_u8 *sp = (uae_u8*)regs->excframe;
 	uae_u32 v;
 	uae_u8 excdatalen = *p++;
-	int size;
 	int excrwp = 0;
 	int alts = 0;
 
@@ -1703,7 +1778,7 @@ static uae_u8 *validate_exception(struct registers *regs, uae_u8 *p, short excnu
 		}
 		// trace only
 		if (excnum == 9 && *gotexcnum == 4) {
-			sp = (uae_u8 *)regs->tracedata;
+			sp = (uae_u8*)regs->tracedata;
 			*gotexcnum = 9;
 		}
 	}
@@ -2097,6 +2172,13 @@ static int check_cycles(int exc, short extratrace, short extrag2w1, struct regis
 {
 	int gotcycles = 0;
 
+	if ((test_regs.cycles >> 16) == 0xffff) {
+		// cycle counter got exception (interrupt) during exception handling
+		// -> cycle counter was invalidated. Ignore cycle count.
+		invalidcycles++;
+		return 1;
+	}
+
 	if (cyclecounter_addr != 0xffffffff) {
 		gotcycles = (test_regs.cycles & 0xffff) - (test_regs.cycles >> 16);
 		if (gotcycles == 0) {
@@ -2182,36 +2264,13 @@ static int check_cycles(int exc, short extratrace, short extrag2w1, struct regis
 
 	if (0 || abs(gotcycles - expectedcycles) > cycles_range) {
 		addinfo();
-		sprintf(outbp, "Got %d cycles (%d + %d) but expected %d (%d + %d) cycles\n",
+		sprintf(outbp, "Got %d cycles (%d + %d) but expected %d (%d + %d)\n",
 			gotcycles, gotcycles - exceptioncycles, exceptioncycles,
 			expectedcycles, expectedcycles - exceptioncycles, exceptioncycles);
 		outbp += strlen(outbp);
 		return 0;
 	}
 	return 1;
-}
-
-static short getzobits(uae_u32 *vvp, uae_u8 b)
-{
-	uae_u32 vv[2];
-
-	vv[0] = vvp[0];
-	vv[1] = vvp[1];
-	// xxxx-yyyyyyy-00000001 <> xxxx-yyyyyyyy-00000000
-	if ((vv[1] & 0x1f) == 0x01) {
-		vv[1] &= ~1;
-	}
-	int bc = 0;
-	for (short i = 1; i >= 0; i--) {
-		uae_u32 v = vv[i];
-		for (short j = 0; j < 32; j++) {
-			if ((v & 1) != b)
-				return bc;
-			v >>= 1;
-			bc++;
-		}
-	}
-	return bc;
 }
 
 // mostly ugly workarounds for logarithmic/trigonometric functions
@@ -2229,97 +2288,44 @@ static short fpucheckextra(struct fpureg *f1, struct fpureg *f2)
 	m2[1] = f2->m[1];
 	uae_u16 exp1 = f1->exp & 0x7fff;
 	uae_u16 exp2 = f2->exp & 0x7fff;
-	// NaN or Infinite: both must match but skip possible last bits
+	// NaN or Infinite
 	if (exp1 == 0x7fff || exp2 == 0x7fff) {
-		goto lastbits;
+		if (m1[0] == 0 && m1[1] == 0) {
+			if (m2[0] != 0 || m2[1] != 0) {
+				return 0;
+			}
+		}
+		if (m2[0] == 0 && m2[1] == 0) {
+			if (m1[0] != 0 || m1[1] != 0) {
+				return 0;
+			}
+		}
+		return 1;
 	}
 	// Zero: both must match
 	if ((!exp1 && !m1[0] && !m1[1]) || (!exp2 && !m2[0] && !m2[1])) {
 		return 0;
 	}
-
-	// rounding difference
-	// yyyy-ffffffff-ffffffff <> xxxx+1-80000000-00000000
-	if (exp1 == exp2 + 1 && m1[0] == 0x80000000 && m1[1] == 0x00000000 && (m2[0] & 0xffff0000) == 0xffff0000) {
-		exp1--;
-		m1[0] = m2[0];
-		m1[1] = m2[1];
-	} else if (exp2 == exp1 + 1 && m2[0] == 0x80000000 && m2[1] == 0x00000000 && (m1[0] & 0xffff0000) == 0xffff0000) {
-		exp2--;
-		m2[0] = m1[0];
-		m2[1] = m1[1];
+	if ((!exp1 && !m1[0] && !m1[1]) && (!exp2 && !m2[0] && !m2[1])) {
+		return 1;
 	}
 
-	if (fpu_adjust_exp >= 0) {
-		if (abs(exp1 - exp2) > fpu_adjust_exp)
-			return 0;
-	}
+	uae_u32 vx[9];
+	vx[0] = f1->exp << 16;
+	vx[1] = f1->m[0];
+	vx[2] = f1->m[1];
+	vx[3] = f2->exp << 16;
+	vx[4] = f2->m[0];
+	vx[5] = f2->m[1];
+	vx[6] = fpu_adjust_exp << 16;
+	vx[7] = 0x80000000;
+	vx[8] = 0x00000000;
 
-	// Some functions return xxxxxxxx-xxxxx800
-	// ...f800 -> ...ffff
-	// ...0800 -> ...0000
-	if ((m1[1] & 0xffff) == 0x0800) {
-		m1[1] &= ~0xffff;
+	if (fpucomp(vx)) {
+		fpu_approx++;
+		return 1;
 	}
-	if ((m1[1] & 0xffff) == 0xf800) {
-		m1[1] |= 0xffff;
-	}
-	if ((m2[1] & 0xffff) == 0x0800) {
-		m2[1] &= ~0xffff;
-	}
-	if ((m2[1] & 0xffff) == 0xf800) {
-		m2[1] |= 0xffff;
-	}
-
-	short zb1 = getzobits(m1, 0);
-	short zb2 = getzobits(m2, 0);
-	short ob1 = getzobits(m1, 1);
-	short ob2 = getzobits(m2, 1);
-
-	// if another value ends to multiple zero bits
-	// and another to multiple one bits:
-	// skip it.
-	if (zb1 >= 4 && ob2 >= 4 && !zb2) {
-		zb2 = zb1;
-	} else if (zb2 >= 4 && ob1 >= 4 && !zb1) {
-		zb1 = zb2;
-	}
-
-	if (fpu_adjust_zb >= 0) {
-
-		if (abs(zb1 - zb2) > fpu_adjust_zb)
-			return 0;
-	}
-
-lastbits:
-	// skip n bits from the end
-	if (fpu_adjust_man >= 0) {
-		short shift = zb1 < zb2 ? zb1 : zb2;
-		short startm = 1;
-		if (shift >= 32) {
-			startm = 0;
-			shift -= 32;
-		}
-
-		short diff = 0;
-		for (short i = startm; i >= 0; i--) {
-			while (shift < 32) {
-				short v1 = (m1[i] >> shift) & 1;
-				short v2 = (m2[i] >> shift) & 1;
-				if (v1 != v2) {
-					diff++;
-					if (diff > fpu_adjust_man) {
-						return 0;
-					}
-				}
-				shift++;
-			}
-			shift = 0;
-		}
-	}
-
-	fpu_approx++;
-	return 1;
+	return 0;
 }
 
 static void loop_mode_error(uae_u32 ov, uae_u32 nv)
@@ -2401,7 +2407,7 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 	if ((sregs->sr & test_ccrignoremask & 0xff00) != (tregs->sr & test_ccrignoremask & 0xff00)) {
 		sr_changed = 1;
 	}
-	if ((sregs->sr & test_ccrignoremask & 0x00ff) != (tregs->sr & test_ccrignoremask & 0x00ff)) {
+	if ((sregs->sr & test_ccrignoremask & ccr_mask & 0x00ff) != (tregs->sr & test_ccrignoremask & ccr_mask & 0x00ff)) {
 		ccr_changed = 1;
 	}
 	if (sregs->pc + opcodeendsizeextra != tregs->pc) {
@@ -2469,14 +2475,20 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 				if (lregs->pc + opcodeendsizeextra != tregs->pc) {
 					branched2 = lregs->pc < opcode_memory_addr || lregs->pc >= opcode_memory_addr + OPCODE_AREA;
 					if (dooutput) {
-						sprintf(outbp, "PC (%c): expected %08x but got %08x\n", branched ? 'B' : '-', lregs->pc, tregs->pc);
+						int excsize;
+						uae_u8 *excp;
+						sprintf(outbp, "PC (%c): expected %08x but got %08x ", branched ? 'B' : '-', lregs->pc, tregs->pc);
 						outbp += strlen(outbp);
 						if (tregs->pc == opcode_memory_addr) {
-							sprintf(outbp, "Got unexpected exception %d (unsupported instruction?)\n", cpuexc);
+							sprintf(outbp, "Got unexpected exception %d (unsupported instruction?) ", cpuexc);
 						} else {
-							sprintf(outbp, "Got unexpected exception %d\n", cpuexc);
+							sprintf(outbp, "Got unexpected exception %d ", cpuexc);
 						}
 						outbp += strlen(outbp);
+						excp = get_exceptionframe(&test_regs, cpuexc, &excsize);
+						if (excp && excsize) {
+							hexdump(excp, excsize, 1);
+						}
 					}
 					errflag |= 1 << 16;
 				}
@@ -2498,14 +2510,22 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 				if (dooutput) {
 					if (cpuexc == 4 && lregs->pc + opcodeendsizeextra == tregs->pc) {
 						sprintf(outbp, "Exception: expected %d but got no exception.\n", exc);
+						outbp += strlen(outbp);
 					} else if (cpuexc == 4) {
 						sprintf(outbp, "Exception: expected %d but got %d (or no exception)\n", exc, cpuexc);
+						outbp += strlen(outbp);
 					} else {
+						int excsize;
+						uae_u8 *excp;
 						sprintf(outbp, "Exception: expected %d but got %d\n", exc, cpuexc);
+						outbp += strlen(outbp);
+						excp = get_exceptionframe(&test_regs, cpuexc, &excsize);
+						if (excp && excsize) {
+							hexdump(excp, excsize, 1);
+						}
 					}
 					experr = 1;
 				}
-				outbp += strlen(outbp);
 				errflag |= 1 << 16;
 			}
 			break;
@@ -2559,7 +2579,7 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 			// High 16 bit: ignore mask, low 16 bit: SR/CCR
 			p = restore_value(p, &val, &size);
 			test_ccrignoremask = ~(val >> 16);
-			if ((val & (sr_undefined_mask & test_ccrignoremask)) != (tregs->sr & (sr_undefined_mask & test_ccrignoremask)) && !ignore_errors && !ignore_sr) {
+			if ((val & ccr_mask & (sr_undefined_mask & test_ccrignoremask)) != (tregs->sr & ccr_mask & (sr_undefined_mask & test_ccrignoremask)) && !ignore_errors && !ignore_sr) {
 				if (dooutput) {
 					sprintf(outbp, "SR: expected %04x -> %04x but got %04x", sregs->sr & 0xffff, val & 0xffff, tregs->sr & 0xffff);
 					outbp += strlen(outbp);
@@ -2630,7 +2650,7 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 			int size;
 			p = restore_value(p, &val, &size);
 			if (val != tregs->fpsr) {
-				if (!ignore_errors) {
+				if (!ignore_errors && ((val & fpsr_ignore_mask) != (tregs->fpsr & fpsr_ignore_mask))) {
 					if (dooutput) {
 						if (sregs->fpsr == tregs->fpsr) {
 							sprintf(outbp, "FPSR: expected %08x but register was not modified\n", val);
@@ -2743,7 +2763,7 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 					outbp += strlen(outbp);
 				}
 				errflag |= 1 << 2;
-			} else if (ccr_changed && !skipccrchange && (tregs->sr & 0xff) != (lregs->sr & 0xff)) {
+			} else if (ccr_changed && !skipccrchange && (tregs->sr & ccr_mask & 0xff) != (lregs->sr & ccr_mask & 0xff)) {
 				if (dooutput) {
 					sprintf(outbp, "SR: modified %04x -> %04x but expected %04x\n", sregs->sr & 0xffff, tregs->sr & 0xffff, lregs->sr & 0xffff);
 					outbp += strlen(outbp);
@@ -2768,7 +2788,7 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 			}
 		}
 		if (!ignore_sr) {
-			if (fpsr_changed && tregs->fpsr != lregs->fpsr) {
+			if (fpsr_changed && (tregs->fpsr & fpsr_ignore_mask) != (lregs->fpsr & fpsr_ignore_mask)) {
 				if (dooutput) {
 					uae_u32 val = lregs->fpsr;
 					sprintf(outbp, "FPSR: expected %08x -> %08x but got %08x\n", sregs->fpsr, val, tregs->fpsr);
@@ -2809,30 +2829,46 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 	}
 
 	if (loop_mode_jit) {
-		short idx = 0, cnt = 0, end = loop_mode_cnt * 2;
+		short idx = 0, cnt = 0, end = loop_mode_cnt;
 		for (;;) {
-			uae_u16 v1, v2;
-			v1 = lmtable1[idx];
-			v2 = lmtable2[idx];
+			uae_u16 v1a = lmtable1[idx];
+			uae_u16 v2a = lmtable2[idx];
+			uae_u16 v1b = lmtable1[idx + 1];
+			uae_u16 v2b = lmtable2[idx + 1];
 			idx++;
+			if (loop_mode_jit == 3 || loop_mode_jit == 4) {
+				idx++;
+			}
 			if (idx >= LM_BUFFER / 2) {
 				break;
 			}
-			if (v1 == 0xffff && v2 == 0xffff) {
+			if (v1a == 0xffff && v2a == 0xffff) {
 				continue;
 			}
 			cnt++;
-			if (v1 != v2) {
-				sprintf(outbp, "LM %02d/%02d CCR: %02x != %02x",
-					cnt, end, v1, v2);
-				outbp += strlen(outbp);
-				sprintf(outbp, " X%c%d N%c%d Z%c%d V%c%d C%c%d\n",
-					(v1 & 0x10) != (v2 & 0x10) ? '!' : '=', (v2 & 0x10) != 0,
-					(v1 & 0x08) != (v2 & 0x08) ? '!' : '=', (v2 & 0x08) != 0,
-					(v1 & 0x04) != (v2 & 0x04) ? '!' : '=', (v2 & 0x04) != 0,
-					(v1 & 0x02) != (v2 & 0x02) ? '!' : '=', (v2 & 0x02) != 0,
-					(v1 & 0x01) != (v2 & 0x01) ? '!' : '=', (v2 & 0x01) != 0);
-				outbp += strlen(outbp);
+			if (v1a != v2a) {
+				if (loop_mode_jit == 3 || loop_mode_jit == 4) {
+					static const char *constss[] = { "C", "Z", "V", "N", "X" };
+					const char *c = "?";
+					if (v1b < 5 && v1b == v2b) {
+						c = constss[v1b];
+					}
+					sprintf(outbp, "LM %02d/%02d %s: %d %c %d (%04x %04x - %04x %04x)\n",
+						cnt, end, c, (v1a & 0xff) != 0, v1a != v2a ? '!' : '=', (v2a & 0xff) != 0,
+						v1a, v1b, v2a, v2b);
+					outbp += strlen(outbp);
+				} else if (loop_mode_jit == 1 || loop_mode_jit == 2) {
+					sprintf(outbp, "LM %02d/%02d CCR: %02x != %02x",
+						cnt, end, v1a, v2a);
+					outbp += strlen(outbp);
+					sprintf(outbp, " X%c%d N%c%d Z%c%d V%c%d C%c%d\n",
+						(v1a & 0x10) != (v2a & 0x10) ? '!' : '=', (v2a & 0x10) != 0,
+						(v1a & 0x08) != (v2a & 0x08) ? '!' : '=', (v2a & 0x08) != 0,
+						(v1a & 0x04) != (v2a & 0x04) ? '!' : '=', (v2a & 0x04) != 0,
+						(v1a & 0x02) != (v2a & 0x02) ? '!' : '=', (v2a & 0x02) != 0,
+						(v1a & 0x01) != (v2a & 0x01) ? '!' : '=', (v2a & 0x01) != 0);
+					outbp += strlen(outbp);
+				}
 			}
 			if (cnt >= end) {
 				break;
@@ -2843,6 +2879,10 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 	// if excskipccr + bus, address, divide by zero or chk + only CCR mismatch detected: clear error
 	if (excskipccr && errflag == (1 << 7) && (exceptionnum == 2 || exceptionnum == 3 || exceptionnum == 5 || exceptionnum == 6)) {
 		errflag = 0;
+	}
+
+	if (exitcnt == 0 && !exitmode && !errflag) {
+		errflag = 1;
 	}
 
 	if (errflag && dooutput) {
@@ -2856,7 +2896,7 @@ static uae_u8 *validate_test(uae_u8 *p, short ignore_errors, short ignore_sr, st
 		outbp += strlen(outbp);
 		out_regs(tregs, tregs, lregs, sregs, 0, branched2);
 #ifdef AMIGA
-		if (interrupttest) {
+		if (interrupttest == 1) {
 			sprintf(outbp, "INTREQ: %04x INTENA: %04x\n", test_intreq, test_intena);
 			outbp += strlen(outbp);
 		}
@@ -2911,6 +2951,10 @@ static void out_endinfo(void)
 			outbp += strlen(outbp);
 		}
 	}
+	if (invalidcycles) {
+		sprintf(outbp, " INVCYC=%d", invalidcycles);
+		outbp += strlen(outbp);
+	}
 	strcat(outbp, "\n");
 	outbp += strlen(outbp);
 	if (fpu_approxcnt) {
@@ -2927,7 +2971,7 @@ static void store_addr(uae_u32 s, uae_u8 *d)
 	for (int i = 0; i < SIZE_STORED_ADDRESS; i++) {
 		uae_u32 ss = s + (i - SIZE_STORED_ADDRESS_OFFSET);
 		if (is_valid_test_addr_read(ss)) {
-			*d++ = *((uae_u8 *)ss);
+			*d++ = *((uae_u8*)ss);
 		} else {
 			*d++ = 0;
 		}
@@ -2948,9 +2992,9 @@ static uae_u32 xorshift32(void)
 static void copyregs(struct registers *d, struct registers *s, short fpumode)
 {
 	if (fpumode) {
-		memcpy(&d->regs[0], &s->regs[0], offsetof(struct registers, fsave));
+		memcpy(d->regs, s->regs, offsetof(struct registers, fsave));
 	} else {
-		memcpy(&d->regs[0], &s->regs[0], offsetof(struct registers, fpuregs));
+		memcpy(d->regs, s->regs, offsetof(struct registers, fpuregs));
 	}
 }
 
@@ -2982,6 +3026,12 @@ static void process_test(uae_u8 *p)
 	clear_interrupt();
 #endif
 	ahcnt = 0;
+
+	short doopcodeswap = 1;
+
+	if (interrupttest >= 1) {
+		doopcodeswap = 0;
+	}
 
 	for (;;) {
 
@@ -3016,7 +3066,7 @@ static void process_test(uae_u8 *p)
 
 		copyregs(&last_regs, &cur_regs, fpumode);
 
-		uae_u32 originalopcodeend = (ILLG_OPCODE << 16) | NOP_OPCODE;
+		uae_u32 originalopcodeend = (NOP_OPCODE << 16) | ILLG_OPCODE;
 		short opcodeendsizeextra = 0;
 		uae_u32 opcodeend = originalopcodeend;
 		int extraccr = 0;
@@ -3042,21 +3092,27 @@ static void process_test(uae_u8 *p)
 				sr_mask |= 0x1000; // M
 
 			uae_u8 ccrmode = *p++;
-			int maxccr = ccrmode & 0x3f;
+			short maxccr = ccrmode & 0x3f;
+			short ccrshift = 0;
+			while ((maxccr - 1) & (1 << ccrshift)) {
+				ccrshift++;
+			}
+			ccrshift--;
 			testcntsubmax = maxccr;
 			testcntsub = 0;
-			for (short ccr = 0;  ccr < maxccr; ccr++, testcntsub++) {
-
+			for (short ccrcnt = 0; ccrcnt < maxccr; ccrcnt++, testcntsub++) {
+				short ccr = ccrcnt & (maxccr - 1);
 				fpu_approx = 0;
 
-				opcodeend = (opcodeend >> 16) | (opcodeend << 16);
-				opcodeendsizeextra = opcodeendsizeextra ? 0 : 2;
+				if (doopcodeswap) {
+					opcodeend = (opcodeend >> 16) | (opcodeend << 16);
+				}
+				opcodeendsizeextra = (opcodeend >> 16) == NOP_OPCODE ? 2 : 0;
 				if (validendsize == 2) {
 					pl(opcode_memory_end, opcodeend);
 				} else if (validendsize == 1) {
 					pw(opcode_memory_end, opcodeend >> 16);
 				}
-
 
 				if (cur_regs.branchtarget != 0xffffffff && !(cur_regs.branchtarget & 1)) {
 					if (cur_regs.branchtarget_mode == 1) {
@@ -3064,22 +3120,22 @@ static void process_test(uae_u8 *p)
 						bv = (bv >> 16) | (bv << 16);
 						pl((uae_u8*)cur_regs.branchtarget, bv);
 					} else if (cur_regs.branchtarget_mode == 2) {
-						uae_u16 bv = gw((uae_u8 *)cur_regs.branchtarget);
+						uae_u16 bv = gw((uae_u8*)cur_regs.branchtarget);
 						if (bv == NOP_OPCODE)
 							bv = ILLG_OPCODE;
 						else
 							bv = NOP_OPCODE;
-						pw((uae_u8 *)cur_regs.branchtarget, bv);
+						pw((uae_u8*)cur_regs.branchtarget, bv);
 					}
 				}
 
 				cur_regs.ssp = super_stack_memory - 0x80;
 				cur_regs.msp = super_stack_memory;
+				cur_regs.fpiar = 0xffffffff;
 
 				copyregs(&test_regs, &cur_regs, fpumode);
 
 				test_regs.pc = startpc;
-				test_regs.fpiar = startpc;
 				test_regs.cyclest = 0xffffffff;
 				test_regs.fpeaset = 0;
 
@@ -3112,7 +3168,7 @@ static void process_test(uae_u8 *p)
 				}
 
 #ifdef AMIGA
-				if (interrupttest) {
+				if (interrupttest == 1) {
 					interrupt_count = *p++;
 				}
 #endif
@@ -3184,15 +3240,8 @@ static void process_test(uae_u8 *p)
 
 				if (exitcnt >= 0) {
 					exitcnt--;
-					if (exitcnt < 0) {
-						addinfo();
-						strcat(outbp, "Registers before:\n");
-						outbp += strlen(outbp);
-						out_regs(&cur_regs, &test_regs, &last_regs, &cur_regs, 1, 0);
-						end_test();
-						printf(outbuffer);
-						printf("\nExit count expired\n");
-						exit(0);
+					if (!exitcnt && exitmode) {
+						goto end;
 					}
 				}
 
@@ -3214,7 +3263,7 @@ static void process_test(uae_u8 *p)
 						*tn = testcnt;
 #endif
 #if 0
-						uae_u32 *sx = (uae_u32 *)startpc;
+						uae_u32 *sx = (uae_u32*)startpc;
 						if (*sx == 0xf2364c98) {
 							volatile uae_u16 *tn = (volatile uae_u16*)0x70000;
 							*tn = 0x1234;
@@ -3223,7 +3272,7 @@ static void process_test(uae_u8 *p)
 
 
 #ifdef AMIGA
-						if (interrupttest) {
+						if (interrupttest == 1) {
 							set_interrupt();
 						}
 #endif
@@ -3328,7 +3377,6 @@ static void process_test(uae_u8 *p)
 		}
 
 		restoreahist();
-
 	}
 
 end:
@@ -3342,6 +3390,9 @@ end:
 			printf("\n");
 			printf("%s", outbuffer);
 		}
+	}
+	if (exitcnt == 0 && exitmode) {
+		printf("Exit count expired\n");
 	}
 }
 
@@ -3367,7 +3418,7 @@ static int test_mnemo(const char *opcode)
 	int size;
 	uae_u8 data[4] = { 0 };
 	uae_u32 v;
-	char fname[256], tfname[256];
+	char tfname[256];
 	int filecnt = 1;
 	uae_u32 starttimeid;
 	int lvl;
@@ -3402,7 +3453,7 @@ static int test_mnemo(const char *opcode)
 	lvl = (lvl_mask >> 16) & 15;
 	interrupt_mask = (lvl_mask >> 20) & 7;
 	addressing_mask = (lvl_mask & 0x80000000) ? 0xffffffff : 0x00ffffff;
-	interrupttest = (lvl_mask >> 26) & 1;
+	interrupttest = (lvl_mask >> 26) & 3;
 	sr_undefined_mask = lvl_mask & 0xffff;
 	safe_memory_mode = (lvl_mask >> 23) & 7;
 	loop_mode_jit = (lvl_mask >> 28) & 1;
@@ -3420,6 +3471,9 @@ static int test_mnemo(const char *opcode)
 	v = read_u32(headerfile, &headoffset);
 	if (loop_mode_jit || loop_mode_68010) {
 		loop_mode_cnt = v & 0xff;
+	}
+	if ((v >> 8) & 15) {
+		loop_mode_jit = (v >> 8) & 15;
 	}
 	read_u32(headerfile, &headoffset);
 	read_u32(headerfile, &headoffset);
@@ -3503,6 +3557,7 @@ static int test_mnemo(const char *opcode)
 	fpu_approxcnt = 0;
 	memset(exceptioncount, 0, sizeof(exceptioncount));
 	supercnt = 0;
+	exitcnt = exitcnt2;
 
 	uae_u8 *test_data_prealloc = NULL;
 
@@ -3568,7 +3623,7 @@ static int test_mnemo(const char *opcode)
 		}
 		test_data = NULL;
 
-		if (errors || quit || last) {
+		if (errors || quit || last || (!exitcnt && exitmode)) {
 			break;
 		}
 
@@ -3580,7 +3635,9 @@ static int test_mnemo(const char *opcode)
 		out_endinfo();
 		printf("%s", outbuffer);
 	}
-
+	if (exitcnt == 0 && !exitmode) {
+		printf("Exit count expired\n");
+	}
 	if (!errors && !quit) {
 		printf("All tests complete (total %u).\n", testcnt);
 	}
@@ -3590,11 +3647,16 @@ static int test_mnemo(const char *opcode)
 
 static int getparamval(const char *p)
 {
+	uae_u32 inv = 0;
+	if (p[0] == '~') {
+		inv = 0xffffffff;
+		p++;
+	}
 	if (strlen(p) > 2 && p[0] == '0' && toupper(p[1]) == 'X') {
 		char *endptr;
-		return strtol(p + 2, &endptr, 16);
+		return strtol(p + 2, &endptr, 16) ^ inv;
 	} else {
-		return atol(p);
+		return atol(p) ^ inv;
 	}
 }
 
@@ -3630,8 +3692,8 @@ int main(int argc, char *argv[])
 
 	strcpy(path, "data/");
 
-	low_memory = (uae_u8 *)0;
-	high_memory = (uae_u8 *)0xffff8000;
+	low_memory = (uae_u8*)0;
+	high_memory = (uae_u8*)0xffff8000;
 
 	cpu_lvl = get_cpu_model();
 
@@ -3670,7 +3732,9 @@ int main(int argc, char *argv[])
 		printf("-skipreg = do not validate registers.\n");
 		printf("-askifmissing = ask for new path if dat file is missing.\n");
 		printf("-exit n = exit after n tests.\n");
-		printf("-fpuadj <exp diff> <man bit count diff> <man zero bit count diff>.\n");
+		printf("-exitok n = exit after n tests, continue normally.\n");
+		printf("-fpuadj <exp> 16-bit exponent range value. (16383 = 1.0)\n");
+		printf("-fpsrmask = ignore FPSR bits that are not set.\n");
 		printf("-cycles [range adjust] = check cycle counts.\n");
 		printf("-cyclecnt <address>. Use custom hardware cycle counter.\n");
 #ifdef AMIGA
@@ -3684,13 +3748,13 @@ int main(int argc, char *argv[])
 
 	check_undefined_sr = 1;
 	ccr_mask = 0xff;
+	fpsr_ignore_mask = 0xffffffff;
 	disasm = 1;
-	exitcnt = -1;
+	exitcnt2 = -1;
+	exitmode = 0;
 	cyclecounter_addr = 0xffffffff;
 	cycles_range = 2;
 	fpu_adjust_exp = -1;
-	fpu_adjust_man = -1;
-	fpu_adjust_zb = -1;
 
 	for (int i = 1; i < argc; i++) {
 		char *s = argv[i];
@@ -3709,6 +3773,12 @@ int main(int argc, char *argv[])
 			ccr_mask = 0;
 			if (next) {
 				ccr_mask = ~getparamval(next);
+				i++;
+			}
+		} else if (!_stricmp(s, "-fpsrmask")) {
+			fpsr_ignore_mask = 0;
+			if (next) {
+				fpsr_ignore_mask = ~getparamval(next);
 				i++;
 			}
 		} else if (!_stricmp(s, "-silent")) {
@@ -3743,7 +3813,19 @@ int main(int argc, char *argv[])
 			nextall = 1;
 		} else if (!_stricmp(s, "-exit")) {
 			if (next) {
-				exitcnt = atoi(next);
+				exitcnt2 = atoi(next);
+				exitmode = 0;
+				i++;
+			}
+		} else if (!_stricmp(s, "-exitok")) {
+			if (next) {
+				exitcnt2 = atoi(next);
+				exitmode = 1;
+				i++;
+			}
+		} else if (!_stricmp(s, "-irqcnt")) {
+			if (next) {
+				irqcnt = atoi(next);
 				i++;
 			}
 		} else if (!_stricmp(s, "-prealloc")) {
@@ -3751,15 +3833,7 @@ int main(int argc, char *argv[])
 		} else if (!_stricmp(s, "-fpuadj")) {
 			if (next) {
 				fpu_adjust_exp = atol(next);
-				char *p = strchr(next, ',');
-				if (p) {
-					fpu_adjust_man = atol(p + 1);
-					char *p = strchr(next, ',');
-					if (p) {
-						fpu_adjust_zb = atol(p + 1);
-					}
-				}
-				if (fpu_adjust_exp >= 0 || fpu_adjust_man >= 0 || fpu_adjust_zb >= 0) {
+				if (fpu_adjust_exp >= 0) {
 					is_fpu_adjust = 1;
 				}
 
@@ -3886,19 +3960,21 @@ int main(int argc, char *argv[])
 			}
 		}
 
-		if (!_stricmp(opcode, "all")) {
+		if (!_stricmp(opcode, "all") || (opcode[0] && opcode[strlen(opcode) - 1] == '*')) {
 			DIR *d = opendir(path);
 			if (!d) {
 				printf("Couldn't list directory '%s'\n", path);
 				return 0;
 			}
 #define MAX_FILE_LEN 128
-#define MAX_MNEMOS 256
-			char *dirs = calloc(MAX_MNEMOS, MAX_FILE_LEN);
+#define MAX_FILES 500
+			char *dirs = calloc(MAX_FILES, MAX_FILE_LEN);
 			int diroff = 0;
+			int dircnt = 0;
 			if (!dirs)
 				return 0;
 
+			// get directory
 			for (;;) {
 				struct dirent *dr = readdir(d);
 				if (!dr)
@@ -3906,15 +3982,17 @@ int main(int argc, char *argv[])
 				int d = isdir(path, dr->d_name);
 				if (d && dr->d_name[0] != '.') {
 					strcpy(dirs + diroff, dr->d_name);
+					dircnt++;
 					diroff += MAX_FILE_LEN;
-					if (diroff >= MAX_FILE_LEN * MAX_MNEMOS) {
-						printf("too many directories!?\n");
+					if (dircnt >= MAX_FILES) {
+						printf("too many directories!? (%d)\n", dircnt);
 						return 0;
 					}
 				}
 			}
 			closedir(d);
 
+			// sort directory
 			for (int i = 0; i < diroff; i += MAX_FILE_LEN) {
 				for (int j = i + MAX_FILE_LEN; j < diroff; j += MAX_FILE_LEN) {
 					if (_stricmp(dirs + i, dirs + j) > 0) {
@@ -3943,12 +4021,25 @@ int main(int argc, char *argv[])
 			if (nextall) {
 				first += MAX_FILE_LEN;
 			}
+
 			int err = 0;
-			for (int i = first; i < diroff; i += MAX_FILE_LEN) {
-				if (test_mnemo(dirs + i)) {
-					err = 1;
-					if (stop_on_error)
-						break;
+			if (!_stricmp(opcode, "all")) {
+				for (int i = first; i < diroff; i += MAX_FILE_LEN) {
+					if (test_mnemo(dirs + i)) {
+						err = 1;
+						if (stop_on_error)
+							break;
+					}
+				}
+			} else {
+				for (int i = first; i < diroff; i += MAX_FILE_LEN) {
+					char *name = dirs + i;
+					if (!strnicmp(name, opcode, strlen(opcode) - 1)) {
+						if (test_mnemo(name)) {
+							if (stop_on_error)
+								break;
+						}
+					}
 				}
 			}
 
@@ -3956,29 +4047,6 @@ int main(int argc, char *argv[])
 
 			if (err && stop_on_error)
 				break;
-
-		} else if (opcode[0] && opcode[strlen(opcode) - 1] == '*') {
-			DIR *d = opendir(path);
-			if (!d) {
-				printf("Couldn't list directory '%s'\n", path);
-				return 0;
-			}
-			for (;;) {
-				struct dirent *dr = readdir(d);
-				if (!dr)
-					break;
-				if (!strnicmp(dr->d_name, opcode, strlen(opcode) - 1)) {
-					int d = isdir(path, dr->d_name);
-					if (d) {
-						if (test_mnemo(dr->d_name)) {
-							if (stop_on_error)
-								break;
-						}
-					}
-				}
-			}
-			closedir(d);
-
 
 		} else {
 			if (test_mnemo(opcode)) {

@@ -10,7 +10,7 @@
 
 #ifdef PICASSO96
 
-#include "dxwrap.h"
+#include "render.h"
 
 #define NOSIGNAL 0xFFFFFFFF
 
@@ -469,10 +469,10 @@ enum {
 #define PSSO_BoardInfo_Reserved0Default		    PSSO_BoardInfo_Reserved0 + 4
 #define PSSO_BoardInfo_Reserved1		    PSSO_BoardInfo_Reserved0Default + 4
 #define PSSO_SetSplitPosition		    PSSO_BoardInfo_Reserved1 + 4
-#define PSSO_BoardInfo_Reserved2		    PSSO_SetSplitPosition + 4
-#define PSSO_BoardInfo_Reserved2Default		    PSSO_BoardInfo_Reserved2 + 4
-#define PSSO_BoardInfo_Reserved3		    PSSO_BoardInfo_Reserved2Default + 4
-#define PSSO_BoardInfo_Reserved3Default		    PSSO_BoardInfo_Reserved3 + 4
+#define PSSO_ReInitMemory		    PSSO_SetSplitPosition + 4
+#define PSSO_BoardInfo_GetCompatibleDACFormats		    PSSO_ReInitMemory + 4
+#define PSSO_BoardInfo_CoerceMode		    PSSO_BoardInfo_GetCompatibleDACFormats + 4
+#define PSSO_BoardInfo_Reserved3Default		    PSSO_BoardInfo_CoerceMode + 4
 #define PSSO_BoardInfo_Reserved4		    PSSO_BoardInfo_Reserved3Default + 4
 #define PSSO_BoardInfo_Reserved4Default		    PSSO_BoardInfo_Reserved4 + 4
 #define PSSO_BoardInfo_Reserved5		    PSSO_BoardInfo_Reserved4Default + 4
@@ -574,6 +574,7 @@ enum {
 #define BIB_SYSTEM2SCREENBLITS	25	/* allow data to be written to screen memory for cpu as blitter source */
 #define BIB_GRANTDIRECTACCESS	26	/* all data on the board can be accessed at any time without bi->SetMemoryMode() */
 #define BIB_PALETTESWITCH		27
+#define BIB_DACSWITCH   		28
 #define BIB_OVERCLOCK			31	/* enable overclocking for some boards */
 
 #define BIB_IGNOREMASK	BIB_NOMASKBLITS
@@ -604,6 +605,7 @@ enum {
 #define BIF_SYSTEM2SCREENBLITS	(1 << BIB_SYSTEM2SCREENBLITS)
 #define BIF_GRANTDIRECTACCESS	(1 << BIB_GRANTDIRECTACCESS)
 #define BIF_PALETTESWITCH		(1 << BIB_PALETTESWITCH)
+#define BIF_DACSWITCH		    (1 << BIB_DACSWITCH)
 #define BIF_OVERCLOCK			(1 << BIB_OVERCLOCK)
 
 #define BIF_IGNOREMASK 	BIF_NOMASKBLITS
@@ -622,8 +624,8 @@ struct picasso96_state_struct
     uae_u16             VirtualHeight; /* Total screen height */
     uae_u8              GC_Depth;    /* From SetGC() */
     uae_u8              GC_Flags;    /* From SetGC() */
-    long                XOffset;     /* From SetPanning() */
-    long                YOffset;     /* From SetPanning() */
+    int                 XOffset;     /* From SetPanning() */
+    int                 YOffset;     /* From SetPanning() */
     uae_u8              SwitchState; /* From SetSwitch() - 0 is Amiga, 1 isPicasso */
     uae_u8              BytesPerPixel;
     uae_u8              CardFound;
@@ -635,8 +637,9 @@ struct picasso96_state_struct
     // support NO direct access all the time to gfx Card
     // every time windows can remove your surface from card so the mainrender place
     // must be in memory
-    long		XYOffset;
-    bool        dualclut;
+    int         XYOffset;
+    bool        dualclut, advDragging;
+    int         HLineDBL, VLineDBL;
 };
 
 extern void InitPicasso96(int monid);
@@ -668,7 +671,7 @@ struct picasso_vidbuf_description {
 	uae_u32 rgbformat;
 	uae_u32 selected_rgbformat;
 	uae_u32 clut[256 * 2];
-	int picasso_convert, host_mode;
+	int picasso_convert[2], host_mode;
 	int ohost_mode, orgbformat;
 	int full_refresh;
 	int set_panning_called;
@@ -677,6 +680,7 @@ struct picasso_vidbuf_description {
 	bool picasso_changed;
     uae_s16 splitypos;
 	uae_atomic picasso_state_change;
+    uae_u32 dacrgbformat[2];
 };
 
 extern struct picasso_vidbuf_description picasso_vidinfo[MAX_AMIGAMONITORS];

@@ -19,7 +19,6 @@
 #define IDS_CPU                         12
 #define IDS_CHIPSET                     13
 #define IDS_INPUT                       14
-#define IDS_OPENGL                      15
 #define IDS_FILTER                      15
 #define IDS_MISC2                       16
 #define IDS_PATHS                       17
@@ -132,7 +131,6 @@
 #define IDI_AVIOUTPUT                   158
 #define IDS_ERRORTITLE                  159
 #define IDS_SELECTFILESYSROOT           160
-#define IDD_OPENGL                      160
 #define IDD_FILTER                      160
 #define IDS_DEFAULTMIDIOUT              161
 #define IDS_DEFAULTMIDIIN               162
@@ -430,6 +428,7 @@
 #define IDS_QS_MODEL_A4000              1011
 #define IDS_QS_MODEL_A4000T             1012
 #define IDS_QS_MODEL_MACROSYSTEM        1013
+#define IDS_QS_MODEL_ALG                1014
 #define IDC_RESOLUTION                  1021
 #define IDC_SERIAL                      1022
 #define IDC_REFRESHRATE                 1022
@@ -512,6 +511,7 @@
 #define IDC_GRAYSCALE                   1183
 #define IDC_OVERSCANMODE                1184
 #define IDC_FRAMERATE                   1185
+#define IDC_RESYNCBLANK                 1186
 #define IDC_XSIZE                       1187
 #define IDC_YSIZE                       1188
 #define IDC_INPUTAUTOFIRERATE           1188
@@ -1075,9 +1075,7 @@
 #define IDC_FILTERKEEPASPECT            1709
 #define IDC_CS_RTC                      1710
 #define IDC_FILTERKEEPAUTOSCALEASPECT   1710
-#define IDC_SOUND_CDPAULAMIX            1710
 #define IDC_CS_CIAA_TOD1                1711
-#define IDC_SOUND_CDPAULAMIX2           1711
 #define IDC_SOUND_VOLCNT                1711
 #define IDC_CS_CIAA_TOD2                1712
 #define IDC_CS_EXT                      1712
@@ -1224,7 +1222,6 @@
 #define IDC_INPUTMAPLIST                1797
 #define IDC_RTG_HWSPRITE                1797
 #define IDC_PORT1_REMAP                 1798
-#define IDC_RTG_SCALE_ALLOW2            1798
 #define IDC_RTG_CENTER                  1798
 #define IDC_PORT0_REMAP                 1799
 #define IDC_RTG_Z2Z4                    1799
@@ -1233,6 +1230,7 @@
 #define IDC_RTG_THREAD                  1800
 #define IDC_PORT3_REMAP                 1801
 #define IDC_INPUTMAPOUT                 1801
+#define IDC_RTG_INTEGERSCALE            1801
 #define IDC_INFOBOX_TEXT2               1802
 #define IDC_INPUTMAPOUTM                1802
 #define IDC_INFOBOX_TEXT1               1803
@@ -1305,10 +1303,11 @@
 #define IDC_GENLOCKFILESELECT           1854
 #define IDC_PATH_GEOMETRY               1855
 #define IDC_PATH_GEOMETRY_SELECTOR      1856
-#define IDC_EDIT1                       1857
 #define IDC_EXPANSIONBOARDSTRINGBOX     1857
 #define IDC_CS_UNMAPPED                 1858
 #define IDC_CHS_CYLINDERS               1859
+#define IDC_CS_HVCSYNC                  1859
+#define IDC_CS_CIASYNC                  1859
 #define IDC_CHS_HEADS                   1860
 #define IDC_CONFIGCATEGORY              1860
 #define IDC_CHS_SECTORS                 1861

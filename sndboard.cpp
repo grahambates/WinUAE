@@ -39,7 +39,7 @@ static bool sndboard_init_capture(int freq);
 static void uaesndboard_reset(int hardreset);
 static void sndboard_reset(int hardreset);
 
-static double base_event_clock;
+static float base_event_clock;
 
 extern addrbank uaesndboard_bank_z2, uaesndboard_bank_z3;
 
@@ -642,7 +642,7 @@ static bool audio_state_sndboard_uae(int streamid, void *params)
 	if (!s)
 		return false;
 	int highestch = s->ch;
-	int streamnum = s - data->stream;
+	int streamnum = (int)(s - data->stream);
 	if (s->play && (data->streammask & (1 << streamnum))) {
 		uaecptr addr;
 		int len;
@@ -851,7 +851,7 @@ static void uaesnd_timer(uae_u32 v)
 	if (s->timer_cnt > 0 && data->enabled) {
 		s->timer_event_time = uaesnd_timer_period(s->timer_cnt);
 		if (s->timer_event_time > 0) {
-			event2_newevent_xx(-1, s->timer_event_time, s - &data->stream[0], uaesnd_timer);
+			event2_newevent_xx(-1, s->timer_event_time, (int)(s - &data->stream[0]), uaesnd_timer);
 			uaesnd_irq(s, 0x10);
 		}
 	}
@@ -880,7 +880,7 @@ static void uaesnd_put(struct uaesndboard_data *data, struct uaesndboard_stream 
 				s->timer_event_time = uaesnd_timer_period(timer_cnt);
 				if (s->timer_event_time > 0) {
 					s->timer_cnt = timer_cnt;
-					event2_newevent_xx(-1, s->timer_event_time, ((data - &uaesndboard[0]) << 16) | (s - &data->stream[0]), uaesnd_timer);
+					event2_newevent_xx(-1, s->timer_event_time, (((int)(data - &uaesndboard[0])) << 16) | ((int)(s - &data->stream[0])), uaesnd_timer);
 				}
 			}
 		}
@@ -1495,7 +1495,7 @@ extern addrbank toccata_bank;
 #define STATUS_READ_RECORD_HALF 4
 
 
-void update_sndboard_sound (double clk)
+void update_sndboard_sound (float clk)
 {
 	base_event_clock = clk;
 }
@@ -1671,8 +1671,8 @@ static void codec_start(struct snddev_data *data)
 
 	codec_setup(data);
 
-	data->event_time = base_event_clock * CYCLE_UNIT / data->freq;
-	data->record_event_time = base_event_clock * CYCLE_UNIT / (data->freq_adjusted * data->record_bytespersample);
+	data->event_time = (int)(base_event_clock * CYCLE_UNIT / data->freq);
+	data->record_event_time = (int)(base_event_clock * CYCLE_UNIT / (data->freq_adjusted * data->record_bytespersample));
 	data->record_event_counter = 0;
 
 	if (data->snddev_active & STATUS_FIFO_PLAY) {
@@ -2527,7 +2527,7 @@ static void fm801_play(struct fm801_data *data)
 	data->freq = fm801_freq[f];
 	if (!data->freq)
 		data->freq = 44100;
-	data->event_time = base_event_clock * CYCLE_UNIT / data->freq;
+	data->event_time = (int)(base_event_clock * CYCLE_UNIT / data->freq);
 	data->bits = (control & 0x4000) ? 16 : 8;
 	f = (control >> 12) & 3;
 	switch (f)
@@ -2896,7 +2896,7 @@ int AUD_write(SWVoiceOut *sw, void *pcm_buf, int size)
 void AUD_set_active_out(SWVoiceOut *sw, int on)
 {
 	sw->active = on != 0;
-	sw->event_time = base_event_clock * CYCLE_UNIT / sw->freq;
+	sw->event_time = (int)(base_event_clock * CYCLE_UNIT / sw->freq);
 	sw->samplebuf_index = 0;
 	sw->samplebuf_total = 0;
 	calculate_volume_qemu();

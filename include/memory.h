@@ -15,6 +15,7 @@ extern void a1000_reset(void);
 
 #ifdef JIT
 extern int special_mem;
+extern int special_mem_default;
 extern int jit_n_addr_unsafe;
 #endif
 
@@ -438,7 +439,8 @@ extern addrbank debugmem_bank;
 extern addrbank a3000lmem_bank;
 extern addrbank a3000hmem_bank;
 extern addrbank extendedkickmem_bank;
-extern addrbank extendedkickmem2_bank;
+extern addrbank extendedkickmem2a_bank;
+extern addrbank extendedkickmem2b_bank;
 extern addrbank custmem1_bank;
 extern addrbank custmem2_bank;
 extern addrbank romboardmem_bank[MAX_ROM_BOARDS];

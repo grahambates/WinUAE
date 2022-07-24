@@ -121,10 +121,10 @@ FONT 8, "MS Sans Serif", 0, 0, 0x1
 BEGIN
     GROUPBOX        "System ROM Settings",IDC_STATIC,1,5,394,89
     LTEXT           "Main ROM file:",IDC_ROMTEXT,14,18,263,10
-    COMBOBOX        IDC_ROMFILE,12,30,361,75,CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_SORT | WS_VSCROLL | WS_TABSTOP
+    COMBOBOX        IDC_ROMFILE,12,30,361,75,CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP
     PUSHBUTTON      "...",IDC_KICKCHOOSER,376,30,10,15
     LTEXT           "Extended ROM file:",IDC_ROMFILE2TEXT,14,47,263,10
-    COMBOBOX        IDC_ROMFILE2,12,59,361,75,CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_SORT | WS_VSCROLL | WS_TABSTOP
+    COMBOBOX        IDC_ROMFILE2,12,59,361,75,CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP
     PUSHBUTTON      "...",IDC_ROMCHOOSER2,376,60,10,15
     CONTROL         "MapROM emulation [] Creates a BlizKick-compatible memory area.",IDC_MAPROM,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,87,77,104,12
@@ -139,7 +139,7 @@ BEGIN
     PUSHBUTTON      "...",IDC_CUSTOMROMCHOOSER,376,132,10,15
     GROUPBOX        "Miscellaneous",IDC_STATIC,0,162,395,109
     LTEXT           "Cartridge ROM file:",IDC_FLASHTEXT2,12,177,265,10
-    COMBOBOX        IDC_CARTFILE,12,190,361,75,CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_SORT | WS_VSCROLL | WS_TABSTOP
+    COMBOBOX        IDC_CARTFILE,12,190,361,75,CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP
     PUSHBUTTON      "...",IDC_CARTCHOOSER,376,190,10,15
     LTEXT           "Flash RAM or A2286/A2386SX BIOS CMOS RAM file:",IDC_FLASHTEXT,12,207,265,10
     EDITTEXT        IDC_FLASHFILE,12,219,361,12,ES_AUTOHSCROLL
@@ -216,6 +216,7 @@ BEGIN
     CONTROL         "Double, frames",IDC_LM_IDOUBLED,"Button",BS_AUTORADIOBUTTON | BS_LEFT | WS_TABSTOP,299,255,90,10
     CONTROL         "Double, fields",IDC_LM_IDOUBLED2,"Button",BS_AUTORADIOBUTTON | BS_LEFT | WS_TABSTOP,299,268,90,10
     CONTROL         "Double, fields+",IDC_LM_IDOUBLED3,"Button",BS_AUTORADIOBUTTON | BS_LEFT | WS_TABSTOP,299,281,90,10
+    CONTROL         "Display resync blanking",IDC_RESYNCBLANK,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,155,172,122,10
 END
 
 IDD_MEMORY DIALOGEX 0, 0, 396, 316
@@ -434,7 +435,6 @@ BEGIN
     CONTROL         "Disabled, but emulated",IDC_SOUND1,"Button",BS_AUTORADIOBUTTON | WS_TABSTOP,13,58,107,10
     CONTROL         "Enabled",IDC_SOUND2,"Button",BS_AUTORADIOBUTTON | WS_TABSTOP,13,72,108,10
     CONTROL         "Automatic switching",IDC_SOUND_AUTO,"Button",BS_AUTOCHECKBOX | BS_LEFT | WS_GROUP | WS_TABSTOP,13,90,108,10
-    CONTROL         "Include CD and FMV audio",IDC_SOUND_CDPAULAMIX,"Button",BS_AUTOCHECKBOX | BS_LEFT | WS_GROUP | WS_TABSTOP,13,103,108,10
     CONTROL         "Volume Counter mode",IDC_SOUND_VOLCNT,"Button",BS_AUTOCHECKBOX | BS_LEFT | NOT WS_VISIBLE | WS_GROUP | WS_TABSTOP,13,123,108,10
     GROUPBOX        "Volume",IDC_STATIC,139,28,255,69
     RTEXT           "Master",IDC_STATIC,160,47,51,10,SS_CENTERIMAGE
@@ -742,32 +742,32 @@ IDD_CHIPSET DIALOGEX 0, 0, 396, 316
 STYLE DS_LOCALEDIT | DS_SETFONT | DS_3DLOOK | DS_CONTROL | WS_CHILD
 FONT 8, "MS Sans Serif", 0, 0, 0x0
 BEGIN
-    GROUPBOX        "Chipset",IDC_STATIC,1,20,212,136
+    GROUPBOX        "Chipset",IDC_STATIC,1,5,212,151
     CONTROL         "OCS [] Original chipset. A1000 and most A500s.",IDC_OCS,
-                    "Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,12,35,88,10
+                    "Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,12,26,88,10
     CONTROL         "ECS Agnus [] Enhanced chipset (ECS Agnus chip only). CDTV and later A500 and A2000 hardware revisions.",IDC_ECS_AGNUS,
-                    "Button",BS_AUTORADIOBUTTON | WS_TABSTOP,12,51,88,10
+                    "Button",BS_AUTORADIOBUTTON | WS_TABSTOP,12,42,88,10
     CONTROL         "Full ECS [] Full ECS chipset (ECS Agnus and ECS Denise chips). A500+, A600 and A3000.",IDC_ECS,
-                    "Button",BS_AUTORADIOBUTTON | WS_TABSTOP,12,67,88,10
+                    "Button",BS_AUTORADIOBUTTON | WS_TABSTOP,12,58,88,10
     CONTROL         "AGA [] Advanced Graphics Architecture chipset. A1200, A4000 and CD32.",IDC_AGA,
-                    "Button",BS_AUTORADIOBUTTON | WS_TABSTOP,114,35,86,10
+                    "Button",BS_AUTORADIOBUTTON | WS_TABSTOP,114,26,86,10
     CONTROL         "ECS Denise [] Enhanced chipset (ECS Denise chip only). Normally paired with ECS Agnus.",IDC_ECS_DENISE,
-                    "Button",BS_AUTORADIOBUTTON | WS_TABSTOP,114,51,86,10
+                    "Button",BS_AUTORADIOBUTTON | WS_TABSTOP,114,42,86,10
     CONTROL         "NTSC [] North American and Japanese display standard, 60Hz refresh rate. Other countries use PAL (50Hz. display refresh rate)",IDC_NTSC,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,114,67,86,10
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,114,58,86,10
     CONTROL         "Cycle-exact (Full) [] The most compatible A500/A1200 emulation mode.",IDC_CYCLEEXACT,
-                    "Button",BS_AUTOCHECKBOX | BS_LEFT | WS_GROUP | WS_TABSTOP,12,88,194,10
+                    "Button",BS_AUTOCHECKBOX | BS_LEFT | WS_GROUP | WS_TABSTOP,12,79,194,10
     CONTROL         "Cycle-exact (DMA/Memory accesses)",IDC_CYCLEEXACTMEMORY,
-                    "Button",BS_AUTOCHECKBOX | BS_LEFT | WS_GROUP | WS_TABSTOP,12,101,194,10
-    RTEXT           "Chipset Extra:",IDC_STATIC,38,128,71,15,SS_CENTERIMAGE
-    COMBOBOX        IDC_CS_EXT,116,129,88,65,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    GROUPBOX        "Options",IDC_STATIC,221,20,173,137
-    CONTROL         "Keyboard connected",IDC_KEYBOARD_CONNECTED,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,234,35,150,10
-    CONTROL         "Subpixel display emulation",IDC_SUBPIXEL,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,234,48,150,10
+                    "Button",BS_AUTOCHECKBOX | BS_LEFT | WS_GROUP | WS_TABSTOP,12,92,194,10
+    RTEXT           "Chipset Extra:",IDC_STATIC,38,119,71,15,SS_CENTERIMAGE
+    COMBOBOX        IDC_CS_EXT,116,120,88,65,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    GROUPBOX        "Options",IDC_STATIC,221,4,173,154
+    CONTROL         "Keyboard connected",IDC_KEYBOARD_CONNECTED,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,234,17,150,10
+    CONTROL         "Subpixel display emulation",IDC_SUBPIXEL,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,234,31,150,10
     CONTROL         "Immediate Blitter [] Faster but less compatible blitter emulation.",IDC_BLITIMM,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,234,62,150,10
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,234,45,150,10
     CONTROL         "Wait for Blitter [] Compatibility hack for programs that don't wait for the blitter correctly, causing graphics corruption if CPU is too fast.",IDC_BLITWAIT,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,234,75,150,10
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,234,57,150,10
     LTEXT           "Video port display hardware:",IDC_STATIC,241,105,117,15,SS_CENTERIMAGE
     COMBOBOX        IDC_MONITOREMU,237,123,147,65,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "Monitor:",IDC_STATIC,240,139,68,15,SS_CENTERIMAGE,WS_EX_RIGHT
@@ -791,6 +791,8 @@ BEGIN
     CONTROL         "Keep aspect ratio",IDC_GENLOCK_KEEP_ASPECT,"Button",BS_AUTOCHECKBOX | BS_LEFT | WS_GROUP | WS_TABSTOP,13,262,214,10
     COMBOBOX        IDC_GENLOCKFILE,12,278,356,75,CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP
     PUSHBUTTON      "...",IDC_GENLOCKFILESELECT,375,277,10,15
+    COMBOBOX        IDC_CS_HVCSYNC,237,90,147,75,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Monitor sync source:",IDC_STATIC,242,75,101,9
 END
 
 IDD_CHIPSET2 DIALOGEX 0, 0, 396, 316
@@ -836,9 +838,9 @@ BEGIN
     CONTROL         "A1000 Agnus (8361/8367)",IDC_CS_DIPAGNUS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,264,158,125,11
     CONTROL         "Composite color burst",IDC_CS_COMPOSITECOLOR,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,264,171,125,12
     CONTROL         "CIA 391078-01 [] CIA revision that can't read IO pin status in output mode",IDC_CS_CIA,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,264,197,125,12
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,264,184,125,12
     RTEXT           "Unmapped address space:",IDC_STATIC,15,215,101,9
-    COMBOBOX        IDC_CS_UNMAPPED,125,212,113,75,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    COMBOBOX        IDC_CS_UNMAPPED,125,212,71,75,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     GROUPBOX        "Internal SCSI Hardware",IDC_STATIC,0,232,395,30
     CONTROL         "A3000 WD33C93 SCSI",IDC_CS_DMAC,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,84,247,108,11
     CONTROL         "A4000T NCR53C710 SCSI",IDC_CS_DMAC2,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,200,247,125,11
@@ -851,6 +853,8 @@ BEGIN
     CONTROL         "Denise/Lisa revision:",IDC_CS_DENISE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,200,299,107,11
     EDITTEXT        IDC_CS_AGNUSREV,311,284,45,13,ES_AUTOHSCROLL
     EDITTEXT        IDC_CS_DENISEREV,311,298,45,13,ES_AUTOHSCROLL
+    COMBOBOX        IDC_CS_CIASYNC,313,212,71,75,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    RTEXT           "CIA E-Clock Sync",IDC_STATIC,206,215,101,9
 END
 
 IDD_AVIOUTPUT DIALOGEX 0, 0, 396, 316
@@ -1106,6 +1110,26 @@ IDD_QUICKSTART DIALOGEX 0, 0, 396, 316
 STYLE DS_LOCALEDIT | DS_SETFONT | DS_3DLOOK | DS_CONTROL | WS_CHILD
 FONT 8, "MS Sans Serif", 0, 0, 0x1
 BEGIN
+    PUSHBUTTON      "Select image file",IDC_DF0QQ,85,176,88,15
+    CONTROL         "Floppy drive DF0:",IDC_DF0QENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,176,71,15
+    COMBOBOX        IDC_DF0TYPE,179,177,66,50,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    RTEXT           "Write-protected",IDC_DF0WPTEXTQ,244,179,69,10,SS_CENTERIMAGE
+    CONTROL         "",IDC_DF0WPQ,"Button",BS_AUTOCHECKBOX | BS_MULTILINE | WS_TABSTOP,318,177,10,15
+    PUSHBUTTON      "?",IDC_INFO0Q,334,176,19,15
+    PUSHBUTTON      "Eject",IDC_EJECT0Q,358,176,30,15
+    COMBOBOX        IDC_DF0TEXTQ,9,195,379,75,CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "Floppy drive DF1:",IDC_DF1QENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,214,71,15
+    PUSHBUTTON      "Select image file",IDC_DF1QQ,85,214,88,15
+    COMBOBOX        IDC_DF1TYPE,179,215,68,50,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    RTEXT           "Write-protected",IDC_DF1WPTEXTQ,243,217,69,10,SS_CENTERIMAGE
+    COMBOBOX        IDC_CD0Q_TYPE,253,215,74,50,CBS_DROPDOWNLIST | NOT WS_VISIBLE | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "",IDC_DF1WPQ,"Button",BS_AUTOCHECKBOX | BS_MULTILINE | WS_TABSTOP,316,213,10,15
+    PUSHBUTTON      "?",IDC_INFO1Q,334,214,19,15
+    PUSHBUTTON      "Eject",IDC_EJECT1Q,358,214,30,15
+    COMBOBOX        IDC_DF1TEXTQ,9,232,379,75,CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "Set configuration",IDC_QUICKSTART_SETCONFIG,9,266,88,15,NOT WS_VISIBLE
+    GROUPBOX        "Mode",IDC_STATIC,250,258,144,28,BS_LEFT
+    CONTROL         "Start in Quickstart mode",IDC_QUICKSTARTMODE,"Button",BS_AUTOCHECKBOX | BS_LEFT | WS_TABSTOP,259,269,131,12
     GROUPBOX        "Emulated Hardware",IDC_QUICKSTART_CONFIG,1,25,393,54
     RTEXT           "Model:",IDC_STATIC,5,39,68,10,SS_CENTERIMAGE
     COMBOBOX        IDC_QUICKSTART_MODEL,77,37,263,50,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
@@ -1121,26 +1145,6 @@ BEGIN
     RTEXT           "Configuration:",IDC_STATIC,5,136,68,10,SS_CENTERIMAGE
     COMBOBOX        IDC_QUICKSTART_HOSTCONFIG,77,134,310,50,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     GROUPBOX        "Emulated Drives",IDC_QUICKSTART_DF,1,163,393,93
-    CONTROL         "Floppy drive DF0:",IDC_DF0QENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,176,71,15
-    PUSHBUTTON      "Select image file",IDC_DF0QQ,85,176,88,15
-    RTEXT           "Write-protected",IDC_DF0WPTEXTQ,244,179,69,10,SS_CENTERIMAGE
-    CONTROL         "",IDC_DF0WPQ,"Button",BS_AUTOCHECKBOX | BS_MULTILINE | WS_TABSTOP,318,177,10,15
-    PUSHBUTTON      "?",IDC_INFO0Q,334,176,19,15
-    PUSHBUTTON      "Eject",IDC_EJECT0Q,358,176,30,15
-    COMBOBOX        IDC_DF0TEXTQ,9,195,379,75,CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP
-    CONTROL         "Floppy drive DF1:",IDC_DF1QENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,214,71,15
-    PUSHBUTTON      "Select image file",IDC_DF1QQ,85,214,88,15
-    RTEXT           "Write-protected",IDC_DF1WPTEXTQ,243,217,69,10,SS_CENTERIMAGE
-    COMBOBOX        IDC_CD0Q_TYPE,253,215,74,50,CBS_DROPDOWNLIST | NOT WS_VISIBLE | WS_VSCROLL | WS_TABSTOP
-    CONTROL         "",IDC_DF1WPQ,"Button",BS_AUTOCHECKBOX | BS_MULTILINE | WS_TABSTOP,316,213,10,15
-    PUSHBUTTON      "?",IDC_INFO1Q,334,214,19,15
-    PUSHBUTTON      "Eject",IDC_EJECT1Q,358,214,30,15
-    COMBOBOX        IDC_DF1TEXTQ,9,232,379,75,CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "Set configuration",IDC_QUICKSTART_SETCONFIG,9,266,88,15,NOT WS_VISIBLE
-    GROUPBOX        "Mode",IDC_STATIC,250,258,144,28,BS_LEFT
-    CONTROL         "Start in Quickstart mode",IDC_QUICKSTARTMODE,"Button",BS_AUTOCHECKBOX | BS_LEFT | WS_TABSTOP,259,269,131,12
-    COMBOBOX        IDC_DF0TYPE,179,177,66,50,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    COMBOBOX        IDC_DF1TYPE,179,215,68,50,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
 END
 
 IDD_FRONTEND DIALOGEX 0, 0, 420, 242
@@ -1236,12 +1240,12 @@ BEGIN
     CONTROL         "Scale if smaller than display size setting",IDC_RTG_SCALE,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,130,175,10
     CONTROL         "Always scale in windowed mode",IDC_RTG_SCALE_ALLOW,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,143,170,10
-    CONTROL         "Always center",IDC_RTG_CENTER,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,156,169,10
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,143,162,10
+    CONTROL         "Always center",IDC_RTG_CENTER,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,156,162,10
     CONTROL         "Hardware vertical blank interrupt",IDC_RTG_VBINTERRUPT,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,169,157,10
-    CONTROL         "Multithreaded",IDC_RTG_THREAD,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,207,156,83,10
-    CONTROL         "Hardware sprite emulation",IDC_RTG_HWSPRITE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,207,169,148,10
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,195,169,129,10
+    CONTROL         "Multithreaded",IDC_RTG_THREAD,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,195,143,83,10
+    CONTROL         "Hardware sprite emulation",IDC_RTG_HWSPRITE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,195,156,96,10
     CTEXT           "Color modes:",IDC_STATIC,295,81,83,10,SS_CENTERIMAGE
     COMBOBOX        IDC_RTG_8BIT,296,96,82,150,CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP
     COMBOBOX        IDC_RTG_16BIT,296,113,82,150,CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP
@@ -1254,6 +1258,7 @@ BEGIN
     COMBOBOX        IDC_RTG_BUFFERCNT,153,227,84,150,CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP
     CTEXT           "Aspect ratio:",IDC_STATIC,282,212,83,10,SS_CENTERIMAGE
     COMBOBOX        IDC_RTG_SCALE_ASPECTRATIO,282,227,84,150,CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "Integer scaling",IDC_RTG_INTEGERSCALE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,169,161,10
 END
 
 IDD_INPUTMAP DIALOGEX 0, 0, 421, 341
@@ -1404,8 +1409,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 4,9,0,0
- PRODUCTVERSION 4,9,0,0
+ FILEVERSION 4,9,2,0
+ PRODUCTVERSION 4,9,2,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -1421,12 +1426,12 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "FileDescription", "WinUAE"
-            VALUE "FileVersion", "4.9.0.0"
+            VALUE "FileVersion", "4.9.2.0"
             VALUE "InternalName", "WinUAE"
-            VALUE "LegalCopyright", "© 1996-2021 under the GNU Public License (GPL)"
+            VALUE "LegalCopyright", "© 1996-2022 under the GNU Public License (GPL)"
             VALUE "OriginalFilename", "WinUAE.exe"
             VALUE "ProductName", "WinUAE"
-            VALUE "ProductVersion", "4.9.0.0"
+            VALUE "ProductVersion", "4.9.2.0"
         END
     END
     BLOCK "VarFileInfo"
@@ -1635,7 +1640,6 @@ BEGIN
 
     IDD_CHIPSET, DIALOG
     BEGIN
-        BOTTOMMARGIN, 280
     END
 
     IDD_CHIPSET2, DIALOG
@@ -2048,7 +2052,7 @@ END
 
 STRINGTABLE
 BEGIN
-    IDS_QS_MODELS           "A500\nA500+\nA600\nA1000\nA1200\nA3000\nA4000\nCD32\nCDTV\nArcadia Multi Select system\nMacrosystem Casablanca/DraCo\nExpanded WinUAE example configuration\n"
+    IDS_QS_MODELS           "A500\nA500+\nA600\nA1000\nA1200\nA3000\nA4000\nCD32\nCDTV\nAmerican Laser Games\nArcadia Multi Select system\nMacrosystem Casablanca/DraCo\nExpanded WinUAE example configuration\n"
     IDS_QS_MODEL_A500       "1.3 ROM, OCS, 512 KB Chip + 512 KB Slow RAM (most common)\nThis configuration is capable of running most games and demos produced for first-generation hardware. Only few exceptions need a different configuration (e.g. the oldest games tend to be incompatible with this configuration).\n1.3 ROM, ECS Agnus, 512 KB Chip RAM + 512 KB Slow RAM\nLater hardware revision of the A500. Nearly 100% compatible with the previous configuration.\n1.3 ROM, ECS Agnus, 1 MB Chip RAM\nFew newer games and demos require this configuration.\n1.3 ROM, OCS Agnus, 512 KB Chip RAM\nVery old (e.g. pre-1988) games and demos may require this configuration.\n1.2 ROM, OCS Agnus, 512 KB Chip RAM\nAs available for the A1000, and installed on the first A500 and A2000 series. Some very old programs only work correctly with this configuration. Note: This system ROM version can only boot from floppy disk (no hard disk boot support).\n1.2 ROM, OCS Agnus, 512 KB Chip RAM + 512 KB Slow RAM\nThis configuration adds expansion memory to the first A500 produced. Try this if your game does not work with newer configurations, but works with the previous one. It could add some features to the game, including faster loading times. Note: This system ROM version can only boot from floppy disk (no hard disk boot support)."
     IDS_QS_MODEL_A500P      "Basic non-expanded configuration\nThe A500+ adds an ECS Agnus chip, 1 MB of Chip RAM and a 2.0 ROM to the A500. Many A500 games and demos don't work properly on an A500+.\n2 MB Chip RAM expanded configuration\n\n4 MB Fast RAM expanded configuration\n"
     IDS_QS_MODEL_A600       "Basic non-expanded configuration\nThe A600 is smaller than the A500+ and has an updated 2.0 ROM.\n2 MB Chip RAM expanded configuration\n\n4 MB Fast RAM expanded configuration\n"
@@ -2062,6 +2066,7 @@ STRINGTABLE
 BEGIN
     IDS_QS_MODEL_UAE        "High-end expanded configuration"
     IDS_QS_MODEL_ARCADIA    "Arcadia\nArcadia Multi Select system is arcade platform developed by Arcadia and  Mastertronic. It is based on an A500 mainboard with ROM cage attached to expansion port. Arcadia ROM files go to ""Cartridge ROM File"" in ROM-panel."
+    IDS_QS_MODEL_ALG        "American Laser Games\n"
     IDS_QS_MODEL_A3000      "1.4 ROM, 2MB Chip + 8MB Fast\n\n2.04 ROM, 2MB Chip + 8MB Fast\n\n3.1 ROM, 2MB Chip + 8MB Fast\n"
     IDS_QS_MODEL_A4000      "68030, 3.1 ROM, 2MB Chip + 8MB Fast\n\n68040, 3.1 ROM, 2MB Chip + 8MB Fast\n\nCyberStorm PPC\n"
     IDS_QS_MODEL_A4000T     "A4000T (test)\nA4000T\n"

@@ -67,15 +67,9 @@ static struct fb_struct *fb_last;
 static bool fb_get_surface(struct fb_struct *data)
 {
 	struct amigadisplay *ad = &adisplays[data->monitor_id];
-	bool gotsurf = false;
 	if (ad->picasso_on) {
 		if (data->surface == NULL) {
 			data->surface = gfx_lock_picasso(data->monitor_id, false);
-			gotsurf = true;
-		}
-		if (data->surface && gotsurf) {
-			if (softstatusline())
-				picasso_statusline(data->monitor_id, data->surface);
 		}
 	}
 	return data->surface != NULL;
@@ -359,6 +353,8 @@ static bool harlequin_vsync(void *userdata, struct gfxboard_mode *mode)
 		mode->width = data->width;
 		mode->height = data->height;
 		mode->mode = data->rgbtype;
+		mode->hlinedbl = 1;
+		mode->vlinedbl = 1;
 
 		if (fb_get_surface(data)) {
 			if (data->fb_modified || data->modechanged || mode->redraw_required) {

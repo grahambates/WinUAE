@@ -274,7 +274,7 @@ void devices_rethink(void)
 	cpuboard_rethink();
 }
 
-void devices_update_sound(double clk, double syncadjust)
+void devices_update_sound(float clk, float syncadjust)
 {
 	update_sound (clk);
 	update_sndboard_sound (clk / syncadjust);
@@ -282,7 +282,7 @@ void devices_update_sound(double clk, double syncadjust)
 	x86_update_sound(clk / syncadjust);
 }
 
-void devices_update_sync(double svpos, double syncadjust)
+void devices_update_sync(float svpos, float syncadjust)
 {
 	cd32_fmv_set_sync(svpos, syncadjust);
 }
@@ -389,6 +389,7 @@ void devices_restore_start(void)
 {
 	restore_cia_start();
 	restore_blkdev_start();
+	restore_blitter_start();
 	changed_prefs.bogomem.size = 0;
 	changed_prefs.chipmem.size = 0;
 	for (int i = 0; i < MAX_RAM_BOARDS; i++) {

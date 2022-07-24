@@ -33,7 +33,7 @@
 #include "newcpu.h"
 #include "traps.h"
 #include "sounddep/sound.h"
-#include "dxwrap.h"
+#include "render.h"
 #include "win32.h"
 #include "parser.h"
 #include "enforcer.h"
@@ -413,7 +413,7 @@ int ahi_open_sound (void)
 
 static void *bswap_buffer = NULL;
 static uae_u32 bswap_buffer_size = 0;
-static double syncdivisor;
+static float syncdivisor;
 
 #define FAKE_HANDLE_WINLAUNCH 0xfffffffe
 
@@ -676,7 +676,7 @@ uae_u32 REGPARAM2 ahi_demux (TrapContext *context)
 		if (OpenClipboard (0)) {
 			clipdat = (TCHAR*)GetClipboardData (CF_UNICODETEXT);
 			if (clipdat) {
-				clipsize = _tcslen (clipdat);
+				clipsize = uaetcslen(clipdat);
 				clipsize++;
 				return clipsize;
 			}
@@ -710,7 +710,7 @@ uae_u32 REGPARAM2 ahi_demux (TrapContext *context)
 
 			if (OpenClipboard (0)) {
 				EmptyClipboard();
-				slen = _tcslen (s);
+				slen = uaetcslen(s);
 				if (p)
 					GlobalFree (p);
 				p = (LPTSTR)GlobalAlloc (GMEM_MOVEABLE, (slen + 1) * sizeof (TCHAR));
@@ -794,7 +794,7 @@ uae_u32 REGPARAM2 ahi_demux (TrapContext *context)
 			}
 #endif
 			xfree (dllname);
-			syncdivisor = (3580000.0 * CYCLE_UNIT) / (double)syncbase;
+			syncdivisor = (3580000.0f * CYCLE_UNIT) / (float)syncbase;
 			return (uae_u32)h;
 		}
 
@@ -829,7 +829,7 @@ uae_u32 REGPARAM2 ahi_demux (TrapContext *context)
 					}
 				}
 #if defined(X86_MSVC_ASSEMBLY)
-				unsigned long rate1;
+				frame_time_t rate1;
 				double v;
 				rate1 = read_processor_time ();
 				ret = emulib_ExecuteNativeCode2 (context);

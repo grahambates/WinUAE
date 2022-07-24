@@ -231,7 +231,7 @@ char *ua_fs_copy (char *dst, int maxlen, const TCHAR *src, int defchar)
 
 WCHAR *au_fs (const char *s)
 {
-	int i, len;
+	size_t i, len;
 	WCHAR *d;
 	
 	len = strlen (s);
@@ -326,14 +326,23 @@ int same_aname (const TCHAR *an1, const TCHAR *an2)
 void to_lower(TCHAR *s, int len)
 {
 	if (len < 0) {
-		len = _tcslen(s);
+		len = uaetcslen(s);
 	}
 	CharLowerBuff(s, len);
 }
 void to_upper(TCHAR *s, int len)
 {
 	if (len < 0) {
-		len = _tcslen(s);
+		len = uaetcslen(s);
 	}
 	CharUpperBuff(s, len);
+}
+
+int uaestrlen(const char* s)
+{
+	return (int)strlen(s);
+}
+int uaetcslen(const TCHAR* s)
+{
+	return (int)_tcslen(s);
 }

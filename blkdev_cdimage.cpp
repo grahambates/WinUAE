@@ -176,7 +176,7 @@ static int do_read (struct cdunit *cdu, struct cdtoc *t, uae_u8 *data, int secto
 		}
 		if (audio && size == 2352)
 			type = CD_TRACK_AUDIO;
-		if (cdrom_read_data(cdu->chd_cdf, sector + t->offset, tmpbuf, type, true)) {
+		if (cdrom_read_data(cdu->chd_cdf, sector + (UINT32)t->offset, tmpbuf, type, true)) {
 			memcpy(data, tmpbuf + offset, size);
 			return 1;
 		}
@@ -409,7 +409,7 @@ static void cdda_unpack_func (void *v)
 			zfile_fread (&b, 1, 1, t->handle);
 			zfile_fseek (t->handle, pos, SEEK_SET);
 			if (!t->data && (t->enctype == AUDENC_MP3 || t->enctype == AUDENC_FLAC)) {
-				t->data = xcalloc (uae_u8, t->filesize + 2352);
+				t->data = xcalloc (uae_u8, (int)t->filesize + 2352);
 				cdimage_unpack_active = 1;
 				if (t->data) {
 					if (t->enctype == AUDENC_MP3) {
@@ -419,7 +419,7 @@ static void cdda_unpack_func (void *v)
 							} catch (exception) { };
 						}
 						if (mp3dec)
-							t->data = mp3dec->get (t->handle, t->data, t->filesize);
+							t->data = mp3dec->get (t->handle, t->data, (int)t->filesize);
 					} else if (t->enctype == AUDENC_FLAC) {
 						flac_get_data (t);
 					}
@@ -472,7 +472,6 @@ static bool cdda_play_func2 (struct cdunit *cdu, int *outpos)
 	int silentframes = 0;
 	bool foundsub;
 	int oldtrack = -1;
-	int mode = currprefs.sound_cdaudio;
 	bool restart = false;
 	bool first = true;
 
@@ -486,7 +485,7 @@ static bool cdda_play_func2 (struct cdunit *cdu, int *outpos)
 	cdu->cda_bufon[0] = cdu->cda_bufon[1] = 0;
 	bufnum = 0;
 
-	cdu->cda = new cda_audio (CDDA_BUFFERS, 2352, 44100, mode != 0);
+	cdu->cda = new cda_audio (CDDA_BUFFERS, 2352, 44100);
 
 	while (cdu->cdda_play > 0) {
 
@@ -554,7 +553,7 @@ static bool cdda_play_func2 (struct cdunit *cdu, int *outpos)
 
 			if (*outpos < 0) {
 				_ftime (&tb2);
-				diff = (tb2.time * (uae_s64)1000 + tb2.millitm) - (tb1.time * (uae_s64)1000 + tb1.millitm);
+				diff = (int)((tb2.time * (uae_s64)1000 + tb2.millitm) - (tb1.time * (uae_s64)1000 + tb1.millitm));
 				diff -= cdu->cdda_delay;
 				if (idleframes >= 0 && diff < 0 && cdu->cdda_play > 0)
 					sleep_millis(-diff);
@@ -576,16 +575,12 @@ static bool cdda_play_func2 (struct cdunit *cdu, int *outpos)
 			}
 		}
 
-		if (mode) {
-			while (cdu->cda_bufon[bufnum] && cdu->cdda_play > 0) {
-				if (cd_audio_mode_changed) {
-					restart = true;
-					goto end;
-				}
-				sleep_millis(10);
+		while (cdu->cda_bufon[bufnum] && cdu->cdda_play > 0) {
+			if (cd_audio_mode_changed) {
+				restart = true;
+				goto end;
 			}
-		} else {
-			cdu->cda->wait(bufnum);
+			sleep_millis(10);
 		}
 
 		cdu->cda_bufon[bufnum] = 0;
@@ -637,7 +632,7 @@ static bool cdda_play_func2 (struct cdunit *cdu, int *outpos)
 #endif
 						} else if (t->handle) {
 							int totalsize = t->size + t->skipsize;
-							int offset = t->offset;
+							int offset = (int)t->offset;
 							if (offset >= 0) {
 								if ((t->enctype == AUDENC_MP3 || t->enctype == AUDENC_FLAC) && t->data) {
 									if (t->filesize >= sector * totalsize + offset + t->size)
@@ -685,22 +680,12 @@ static bool cdda_play_func2 (struct cdunit *cdu, int *outpos)
 			if (idleframes <= 0)
 				cdu->cd_last_pos = cdda_pos;
 
-			if (mode) {
-				if (cdu->cda_bufon[0] == 0 && cdu->cda_bufon[1] == 0) {
-					cdu->cda_bufon[bufnum] = 1;
-					next_cd_audio_buffer_callback(1 - bufnum, cdu);
-				}
-				audio_cda_volume(&cdu->cas, cdu->cdda_volume[0], cdu->cdda_volume[1]);
+			if (cdu->cda_bufon[0] == 0 && cdu->cda_bufon[1] == 0) {
 				cdu->cda_bufon[bufnum] = 1;
-			} else {
-				cdu->cda_bufon[bufnum] = 1;
-				cdu->cda->setvolume (cdu->cdda_volume[0], cdu->cdda_volume[1]);
-				if (!cdu->cda->play (bufnum)) {
-					if (cdu->cdda_play > 0)
-						setstate (cdu, AUDIO_STATUS_PLAY_ERROR, -1);
-					goto end;
-				}
+				next_cd_audio_buffer_callback(1 - bufnum, cdu);
 			}
+			audio_cda_volume(&cdu->cas, cdu->cdda_volume[0], cdu->cdda_volume[1]);
+			cdu->cda_bufon[bufnum] = 1;
 
 			if (first) {
 				first = false;
@@ -731,14 +716,9 @@ static bool cdda_play_func2 (struct cdunit *cdu, int *outpos)
 
 end:
 	*outpos = cdda_pos;
-	if (mode) {
-		next_cd_audio_buffer_callback(-1, cdu);
-		if (restart)
-			audio_cda_new_buffer(&cdu->cas, NULL, -1, -1, NULL, NULL);
-	} else {
-		cdu->cda->wait (0);
-		cdu->cda->wait (1);
-	}
+	next_cd_audio_buffer_callback(-1, cdu);
+	if (restart)
+		audio_cda_new_buffer(&cdu->cas, NULL, -1, -1, NULL, NULL);
 
 	while (cdimage_unpack_active == 1)
 		sleep_millis(10);
@@ -1303,14 +1283,14 @@ static int parsemds (struct cdunit *cdu, struct zfile *zmds, const TCHAR *img, c
 	MDS_Header *head;
 	struct cdtoc *t;
 	uae_u8 *mds = NULL;
-	uae_u64 size;
+	uae_u32 size;
 	MDS_SessionBlock *sb;
 
 	if (curdir)
 		my_setcurrentdir(occurdir, NULL);
 
 	write_log (_T("MDS TOC: '%s'\n"), img);
-	size = zfile_size (zmds);
+	size = zfile_size32(zmds);
 	mds = xmalloc (uae_u8, size);
 	if (!mds)
 		goto end;
@@ -1463,7 +1443,7 @@ static int parsechd (struct cdunit *cdu, struct zfile *zcue, const TCHAR *img, c
 		dtrack->filesize = cf->logical_bytes ();
 		dtrack->track = i + 1;
 		dtrack[1].address = dtrack->address + strack->frames;
-		if (cf->hunk_info(dtrack->offset * CD_FRAME_SIZE / hunksize, compr, cbytes) == CHDERR_NONE) {
+		if (cf->hunk_info((UINT32)(dtrack->offset * CD_FRAME_SIZE / hunksize), compr, cbytes) == CHDERR_NONE) {
 			TCHAR tmp[100];
 			uae_u32 c = (uae_u32)compr;
 			for (int j = 0; j < 4; j++) {
@@ -2034,7 +2014,7 @@ static int parsenrg(struct cdunit *cdu, struct zfile *znrg, const TCHAR *img, co
 						t->address = 0;
 					}
 					t->offset = index0;
-					t->index1 = (index1 - index0) / sectorsize;
+					t->index1 = (int)((index1 - index0) / sectorsize);
 					t->size = sectorsize;
 					t->handle = zfile_dup(znrg);
 					t->fname = my_strdup(zfile_getname(znrg));
@@ -2042,7 +2022,7 @@ static int parsenrg(struct cdunit *cdu, struct zfile *znrg, const TCHAR *img, co
 						t->enctype = AUDENC_PCM;
 						if (type == 0x1000) {
 							// audio with sub.
-							t->suboffset = t->offset;
+							t->suboffset = (int)t->offset;
 							t->size -= SUB_CHANNEL_SIZE;
 							t->subcode = 1;
 							t->subhandle = zfile_dup(t->handle);

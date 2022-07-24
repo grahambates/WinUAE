@@ -2,7 +2,6 @@
 #define PNG_SCREENSHOTS 1
 
 #include <windows.h>
-#include <ddraw.h>
 
 #include <stdio.h>
 
@@ -10,11 +9,10 @@
 #include "sysdeps.h"
 #include "options.h"
 #include "custom.h"
-#include "dxwrap.h"
+#include "render.h"
 #include "win32.h"
 #include "win32gfx.h"
 #include "direct3d.h"
-#include "opengl.h"
 #include "registry.h"
 #include "gfxfilter.h"
 #include "xwin.h"
@@ -42,7 +40,7 @@ static void namesplit (TCHAR *s)
 {
 	int l;
 
-	l = _tcslen (s) - 1;
+	l = uaetcslen(s) - 1;
 	while (l >= 0) {
 		if (s[l] == '.')
 			s[l] = 0;
@@ -53,7 +51,7 @@ static void namesplit (TCHAR *s)
 		l--;
 	}
 	if (l > 0)
-		memmove (s, s + l, (_tcslen (s + l) + 1) * sizeof (TCHAR));
+		memmove (s, s + l, (uaetcslen(s + l) + 1) * sizeof (TCHAR));
 }
 
 static int toclipboard (BITMAPINFO *bi, void *bmp)
@@ -788,7 +786,7 @@ static int filenumber = 0;
 static int dirnumber = 1;
 
 /*
-Captures the Amiga display (DirectDraw, D3D or OpenGL) surface and saves it to file as a 24bit bitmap.
+Captures the Amiga display (GDI, D3D) surface and saves it to file as a 24bit bitmap.
 */
 int screenshotf(int monid, const TCHAR *spath, int mode, int doprepare, int imagemode, struct vidbuffer *vb)
 {
@@ -950,7 +948,7 @@ void screenshot_reset(void)
 	screenshot_free();
 }
 
-uae_u8 *save_screenshot(int monid, int *len)
+uae_u8 *save_screenshot(int monid, size_t *len)
 {
 #if 0
 	struct amigadisplay *ad = &adisplays[monid];

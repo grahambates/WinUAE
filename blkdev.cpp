@@ -581,7 +581,6 @@ void blkdev_entergui (void)
 {
 	for (int i = 0; i < MAX_TOTAL_SCSI_DEVICES; i++) {
 		struct blkdevstate *st = &state[i];
-		st->waspaused = 0;
 		struct device_info di;
 		if (sys_command_info (i, &di, 1)) {
 			if (sys_command_cd_pause (i, 1) == 0)
@@ -2410,7 +2409,7 @@ void restore_blkdev_start(void)
 	}
 }
 
-uae_u8 *save_cd (int num, int *len)
+uae_u8 *save_cd (int num, size_t *len)
 {
 	struct blkdevstate *st = &state[num];
 	uae_u8 *dstbak, *dst;

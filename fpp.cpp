@@ -3249,10 +3249,10 @@ static void fpuop_arithmetic2 (uae_u32 opcode, uae_u16 extra)
 					return;
 				}
 				if (extra & 0x2000) {
-					// An -> FPIAR
+					// FPIAR -> An
 					m68k_areg (regs, opcode & 7) = regs.fpiar;
 				} else {
-					// FPIAR -> An
+					// An -> FPIAR
 					regs.fpiar = m68k_areg (regs, opcode & 7);
 				}
 			} else if ((opcode & 0x3f) == 0x3c) {
@@ -3792,7 +3792,7 @@ uae_u8 *restore_fpu (uae_u8 *src)
 	return src;
 }
 
-uae_u8 *save_fpu (int *len, uae_u8 *dstptr)
+uae_u8 *save_fpu(size_t *len, uae_u8 *dstptr)
 {
 	uae_u32 w1, w2, w3, v;
 	uae_u8 *dstbak, *dst;

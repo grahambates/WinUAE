@@ -170,7 +170,7 @@ static const TCHAR *getmsg (int msg)
 static void trimws (TCHAR *s)
 {
 	/* Delete trailing whitespace.  */
-	int len = _tcslen (s);
+	size_t len = _tcslen (s);
 	while (len > 0 && _tcscspn (s + len - 1, _T("\t \r\n")) == 0)
 		s[--len] = '\0';
 }
@@ -250,7 +250,7 @@ static LRESULT deviceactivity(WPARAM wParam, LPARAM lParam)
 {
 	int num = HIBYTE(wParam);
 	int cat = LOBYTE(wParam);
-	uae_u32 mask = lParam;
+	uae_u32 mask = (uae_u32)lParam;
 	write_log(_T("DEVICEACTIVITY %04x %08x (%d,%d)\n"), wParam, lParam, num, cat);
 	if (cat != RP_DEVICECATEGORY_INPUTPORT && cat != RP_DEVICECATEGORY_MULTITAPPORT) {
 		write_log(_T("DEVICEACTIVITY Not RP_DEVICECATEGORY_INPUTPORT or RP_DEVICECATEGORY_MULTITAPPORT.\n"));
@@ -485,11 +485,11 @@ int port_insert_custom (int inputmap_port, int devicetype, DWORD flags, const TC
 			if (!p3 || p3 >= p2) {
 				p3 = NULL;
 				if (eventlen < 0)
-					eventlen = p2 - p;
+					eventlen = (int)(p2 - p);
 				break;
 			}
 			if (eventlen < 0)
-				eventlen = p3 - p;
+				eventlen = (int)(p3 - p);
 			if (!_tcsnicmp (p3 + 1, L"autorepeat", 10))
 				flags |= IDEV_MAPPED_AUTOFIRE_SET;
 			p4 = p3 + 1;
@@ -688,7 +688,7 @@ static void fixup_size (struct uae_prefs *prefs)
 		int hres = prefs->gfx_resolution;
 		if (prefs->gf[0].gfx_filter) {
 			if (prefs->gf[0].gfx_filter_horiz_zoom_mult)
-				hres += prefs->gf[0].gfx_filter_horiz_zoom_mult - 1;
+				hres += (int)prefs->gf[0].gfx_filter_horiz_zoom_mult - 1;
 			hres += uaefilters[prefs->gf[0].gfx_filter].intmul - 1;
 		}
 		if (hres > max_horiz_dbl)
@@ -700,7 +700,7 @@ static void fixup_size (struct uae_prefs *prefs)
 		int vres = prefs->gfx_vresolution;
 		if (prefs->gf[0].gfx_filter) {
 			if (prefs->gf[0].gfx_filter_vert_zoom_mult)
-				vres += prefs->gf[0].gfx_filter_vert_zoom_mult - 1;
+				vres += (int)prefs->gf[0].gfx_filter_vert_zoom_mult - 1;
 			vres += uaefilters[prefs->gf[0].gfx_filter].intmul - 1;
 		}
 		if (vres > max_vert_dbl)
@@ -748,7 +748,7 @@ static void get_screenmode (struct RPScreenMode *sm, struct uae_prefs *p, bool g
 	int full = 0;
 	int hres, vres;
 	int totalhdbl = -1, totalvdbl = -1;
-	int hmult, vmult;
+	float hmult, vmult;
 	bool half;
 	bool rtg;
 
@@ -963,13 +963,13 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 
 			hres = hdbl;
 			if (hres > max_horiz_dbl) {
-				hmult = 1 << (hres - max_horiz_dbl);
+				hmult = (float)(1 << (hres - max_horiz_dbl));
 				hres = max_horiz_dbl;
 			}
 
 			vres = vdbl;
 			if (vres > max_vert_dbl) {
-				vmult = 1 << (vres - max_vert_dbl);
+				vmult = (float)(1 << (vres - max_vert_dbl));
 				vres = max_vert_dbl;
 			}
 		}
@@ -1032,7 +1032,7 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 			m = 4;
 		}
 	}
-	p->rtg_horiz_zoom_mult = p->rtg_vert_zoom_mult = m;
+	p->rtg_horiz_zoom_mult = p->rtg_vert_zoom_mult = (float)m;
 
 	if (WIN32GFX_IsPicassoScreen(mon)) {
 
@@ -1053,8 +1053,8 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 		gm->gfx_size_win.width = vidinfo->width * m;
 		gm->gfx_size_win.height = vidinfo->height * m;
 
-		hmult = m;
-		vmult = m;
+		hmult = (float)m;
+		vmult = (float)m;
 
 	} else {
 
@@ -1212,7 +1212,7 @@ static int movescreenoverlay(WPARAM wParam, LPARAM lParam)
 	struct extoverlay eo = { 0 };
 	if (!D3D_extoverlay)
 		return 0;
-	eo.idx = wParam;
+	eo.idx = (int)wParam;
 	eo.xpos = LOWORD(lParam);
 	eo.ypos = HIWORD(lParam);
 	int ret = D3D_extoverlay(&eo);
@@ -1229,7 +1229,7 @@ static int deletescreenoverlay(WPARAM wParam)
 	if (!D3D_extoverlay)
 		return 0;
 	delayed_refresh = gett();
-	eo.idx = wParam;
+	eo.idx = (int)wParam;
 	eo.width = -1;
 	eo.height = -1;
 	return D3D_extoverlay(&eo);
@@ -1261,7 +1261,7 @@ static void dos_execute_callback(uae_u32 id, uae_u32 status, uae_u32 flags, cons
 	if (flags & (RP_EXECUTE_RETURN_EXIT_CODE | RP_EXECUTE_RETURN_OUTPUT)) {
 		int outsize = 0;
 		if (outbuf) {
-			outsize = strlen(outbuf);
+			outsize = uaestrlen(outbuf);
 		}
 		size += (outsize + 1) * sizeof(TCHAR);
 		er = (RPExecuteResult *)xcalloc(uae_u8, size);
@@ -1308,18 +1308,21 @@ static int screencap(LPCVOID pData, struct AmigaMonitor *mon)
 		if (rpsc->szScreenFiltered[0])
 			ok = screenshotf(0, rpsc->szScreenFiltered, 1, 1, 0, NULL);
 		if (rpsc->szScreenRaw[0]) {
+#if 0
 			struct vidbuf_description *avidinfo = &adisplays[0].gfxvidinfo;
 			struct vidbuffer vb;
 			int w = avidinfo->drawbuffer.inwidth;
 			int h = get_vertical_visible_height(true);
 			allocvidbuffer(0, &vb, w, h, avidinfo->drawbuffer.pixbytes * 8);
-			set_custom_limits(0, 0, 0, 0);
+			set_custom_limits(-1, -1, -1, -1);
 			draw_frame(&vb);
 			ok |= screenshotf(0, rpsc->szScreenRaw, 1, 1, 1, &vb);
 			if (log_rp & 2)
 				write_log(_T("Rawscreenshot %dx%d\n"), w, h);
-			//ok |= screenshotf (_T("c:\\temp\\1.bmp"), 1, 1, 1, &vb);
 			freevidbuffer(0, &vb);
+#else
+			ok |= screenshotf(0, rpsc->szScreenRaw, 1, 1, 1, NULL);
+#endif
 		}
 		screenshotmode = ossm;
 		if (log_rp & 2)
@@ -1385,8 +1388,8 @@ static LRESULT CALLBACK RPHostMsgFunction2 (UINT uMessage, WPARAM wParam, LPARAM
 		}
 		return 1;
 	case RP_IPC_TO_GUEST_VOLUME:
-		currprefs.sound_volume_master = changed_prefs.sound_volume_master = 100 - wParam;
-		currprefs.sound_volume_cd = changed_prefs.sound_volume_cd = 100 - wParam;
+		currprefs.sound_volume_master = changed_prefs.sound_volume_master = 100 - (int)wParam;
+		currprefs.sound_volume_cd = changed_prefs.sound_volume_cd = 100 - (int)wParam;
 		set_volume (currprefs.sound_volume_master, 0);
 		return TRUE;
 #if 0
@@ -1459,7 +1462,7 @@ static LRESULT CALLBACK RPHostMsgFunction2 (UINT uMessage, WPARAM wParam, LPARAM
 				savestate_initsave (NULL, 0, TRUE, true);
 				return 1;
 			}
-			if (vpos == 0) {
+			if (vpos == maxvpos_display_vsync) {
 				savestate_initsave (_T(""), 1, TRUE, true);
 				save_state (s, _T("AmigaForever"));
 				ret = 1;
@@ -1520,7 +1523,7 @@ static LRESULT CALLBACK RPHostMsgFunction2 (UINT uMessage, WPARAM wParam, LPARAM
 	case RP_IPC_TO_GUEST_MOVESCREENOVERLAY:
 		return movescreenoverlay(wParam, lParam);
 	case RP_IPC_TO_GUEST_SENDMOUSEEVENTS:
-		sendmouseevents = wParam;
+		sendmouseevents = (int)wParam;
 		if (sendmouseevents) {
 			LPARAM lp = MAKELONG(mouseevent_x, mouseevent_y);
 			RPPostMessagex(RP_IPC_TO_HOST_MOUSEMOVE, 0, lp, &guestinfo);
@@ -1695,8 +1698,7 @@ static void sendfeatures (void)
 	if (currprefs.gfx_api)
 		feat |= RP_FEATURE_SCREENOVERLAY;
 	if (WIN32GFX_IsPicassoScreen(mon)) {
-		if (currprefs.gfx_api)
-			feat |= RP_FEATURE_SCREEN2X | RP_FEATURE_SCREEN3X | RP_FEATURE_SCREEN4X;
+		feat |= RP_FEATURE_SCREEN2X | RP_FEATURE_SCREEN3X | RP_FEATURE_SCREEN4X;
 	} else {
 		feat |= RP_FEATURE_SCREEN2X | RP_FEATURE_SCREEN3X | RP_FEATURE_SCREEN4X;
 		feat |= RP_FEATURE_SCALING_SUBPIXEL | RP_FEATURE_SCALING_STRETCH | RP_FEATURE_SCANLINES;
@@ -1760,8 +1762,7 @@ void rp_fixup_options (struct uae_prefs *p)
 	rp_filter_default = rp_filter = currprefs.gf[0].gfx_filter;
 	if (rp_filter == 0) {
 		rp_filter = UAE_FILTER_NULL;
-		if (currprefs.gfx_api)
-			changed_prefs.gf[0].gfx_filter = currprefs.gf[0].gfx_filter = rp_filter;
+		changed_prefs.gf[0].gfx_filter = currprefs.gf[0].gfx_filter = rp_filter;
 	}
 
 	fixup_size (p);
@@ -2116,7 +2117,7 @@ void rp_mouse_magic (int magic)
 	rp_mouse ();
 }
 
-void rp_activate (int active, LPARAM lParam)
+void rp_activate (WPARAM active, LPARAM lParam)
 {
 	if (!cando ())
 		return;
@@ -2382,8 +2383,9 @@ void rp_test(void)
 	struct AmigaMonitor *mon = &AMonitors[0];
 	struct RPScreenCapture rpsc = { 0 };
 
-	_tcscpy(rpsc.szScreenRaw, _T("c:\\temp\\test.png"));
-	
+	_tcscpy(rpsc.szScreenRaw, _T("c:\\temp\\test_r.png"));
+	_tcscpy(rpsc.szScreenFiltered, _T("c:\\temp\\test_f.png"));
+
 	screencap((void*)&rpsc, mon);
 #endif
 #if 0

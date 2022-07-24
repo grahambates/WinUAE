@@ -21,6 +21,8 @@ void write_disk_history (void);
 #define MAX_GUIIDPARAMS 16
 #define MAX_DLGID 100
 
+#define xSendDlgItemMessage(a, b, c, d, e) (int)SendDlgItemMessage(a, b, c, (WPARAM)d, (LPARAM)e)
+
 struct dlgstore
 {
 	RECT r;
@@ -42,7 +44,7 @@ typedef struct
 	HMENU     hMenu;       /* Dialog menu */
 	UINT      xBaseUnit;   /* Dialog units (depends on the font) */
 	UINT      yBaseUnit;
-	INT       idResult;    /* EndDialog() result / default pushbutton ID */
+	LONG_PTR  idResult;    /* EndDialog() result / default pushbutton ID */
 	UINT      flags;       /* EndDialog() called for this dialog */
 } DIALOGINFO;
 
@@ -70,7 +72,7 @@ typedef struct
 struct newreswnd
 {
 	HWND hwnd;
-	uae_s16 x, y, w, h;
+	LONG x, y, w, h;
 };
 
 struct newresource
@@ -102,9 +104,12 @@ struct newresource
 #define MIN_GUI_INTERNAL_WIDTH 512
 #define MIN_GUI_INTERNAL_HEIGHT 400
 
-#define GUI_INTERNAL_WIDTH 800
-#define GUI_INTERNAL_HEIGHT 600
-#define GUI_INTERNAL_FONT 8
+#define GUI_INTERNAL_WIDTH_OLD 800
+#define GUI_INTERNAL_HEIGHT_OLD 600
+#define GUI_INTERNAL_FONT_OLD 8
+#define GUI_INTERNAL_WIDTH_NEW 1280
+#define GUI_INTERNAL_HEIGHT_NEW 960
+#define GUI_INTERNAL_FONT_NEW 10
 
 extern struct uae_prefs workprefs;
 extern int dialog_inhibit;

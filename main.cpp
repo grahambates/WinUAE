@@ -91,13 +91,13 @@ uae_u32 uaerandgetseed (void)
 	return randseed;
 }
 
-void my_trim (TCHAR *s)
+void my_trim(TCHAR *s)
 {
 	int len;
-	while (_tcslen (s) > 0 && _tcscspn (s, _T("\t \r\n")) == 0)
-		memmove (s, s + 1, (_tcslen (s + 1) + 1) * sizeof (TCHAR));
-	len = _tcslen (s);
-	while (len > 0 && _tcscspn (s + len - 1, _T("\t \r\n")) == 0)
+	while (uaetcslen(s) > 0 && _tcscspn(s, _T("\t \r\n")) == 0)
+		memmove (s, s + 1, (uaetcslen(s + 1) + 1) * sizeof (TCHAR));
+	len = uaetcslen(s);
+	while (len > 0 && _tcscspn(s + len - 1, _T("\t \r\n")) == 0)
 		s[--len] = '\0';
 }
 
@@ -108,13 +108,13 @@ TCHAR *my_strdup_trim (const TCHAR *s)
 
 	if (s[0] == 0)
 		return my_strdup(s);
-	while (_tcscspn (s, _T("\t \r\n")) == 0)
+	while (_tcscspn(s, _T("\t \r\n")) == 0)
 		s++;
-	len = _tcslen (s);
-	while (len > 0 && _tcscspn (s + len - 1, _T("\t \r\n")) == 0)
+	len = uaetcslen(s);
+	while (len > 0 && _tcscspn(s + len - 1, _T("\t \r\n")) == 0)
 		len--;
-	out = xmalloc (TCHAR, len + 1);
-	memcpy (out, s, len * sizeof (TCHAR));
+	out = xmalloc(TCHAR, len + 1);
+	memcpy(out, s, len * sizeof (TCHAR));
 	out[len] = 0;
 	return out;
 }
@@ -199,7 +199,7 @@ void fixup_prefs_dimensions (struct uae_prefs *prefs)
 			if (ap->gfx_backbuffers >= 2)
 				ap->gfx_vflip = -1;
 		}
-		if (prefs->gf[i].gfx_filter == 0 && ((prefs->gf[i].gfx_filter_autoscale && !prefs->gfx_api) || (prefs->gfx_apmode[APMODE_NATIVE].gfx_vsyncmode))) {
+		if (prefs->gf[i].gfx_filter == 0) {
 			prefs->gf[i].gfx_filter = 1;
 		}
 		if (i == 0) {
@@ -422,10 +422,6 @@ void fixup_prefs (struct uae_prefs *p, bool userconfig)
 
 #ifdef _WIN32
 	if (p->monitoremu && p->monitoremu_mon > 0) {
-		if (!p->gfx_api) {
-			p->monitoremu_mon = 0;
-			error_log(_T("Multi virtual monitor support requires Direct3D mode."));
-		}
 		if (isfullscreen() != 0) {
 			p->monitoremu_mon = 0;
 			error_log(_T("Multi virtual monitor support requires windowed mode."));
