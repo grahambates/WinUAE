@@ -111,7 +111,7 @@ int cpu_tracer;
 // BARTO
 uaecptr cpu_profiler_start_addr = 0;
 uaecptr cpu_profiler_end_addr = 0;
-uint32_t cpu_profiler_last_cycles = 0;
+evt_t cpu_profiler_last_cycles = 0;
 cpu_profiler_unwind* cpu_profiler_unwind_buffer = nullptr; // for each possible code location (every 2 bytes) 2 s16: cfa, return address
 #include <vector>
 std::vector<uint32_t> cpu_profiler_output;
@@ -140,9 +140,10 @@ void stop_cpu_profiler() {
 }
 
 struct cpu_profiler {
-	uae_u32 cycles = 0;
+	evt_t cycles = 0;
 	uae_u32 callstack[16];
 	uae_u32 callstack_depth = 0;
+	uae_u32 registers[16];
 
 	cpu_profiler(uae_u32 pc) {
 		if(cpu_profiler_end_addr) {
@@ -153,11 +154,14 @@ struct cpu_profiler {
 			};
 
 			cycles = get_cycles();
+			memcpy(registers, regs.regs, sizeof(registers));
 			// some cycles burned by IRQ, etc.
 			if(cycles > cpu_profiler_last_cycles) {
-				auto cycles_for_instr = (cycles - cpu_profiler_last_cycles) / cpucycleunit;
-				cpu_profiler_output.push_back(0x7fffffff);
+				auto cycles_for_instr = static_cast<uae_u32>((cycles - cpu_profiler_last_cycles) / cpucycleunit);
+				cpu_profiler_output.push_back(0x7fff'ffff); // PC: IRQ marker
 				cpu_profiler_output.push_back(~0 - cycles_for_instr);
+				for(const auto& r : registers)
+					cpu_profiler_output.push_back(r);
 			}
 
 			// kickstart
@@ -172,7 +176,7 @@ struct cpu_profiler {
 						break;
 					const auto& unwind = cpu_profiler_unwind_buffer[(pc - cpu_profiler_start_addr) >> 1];
 					if(unwind.cfa == ~0 || unwind.ra == ~0) break; // should not happen
-					uae_u32 new_cfa;
+					uae_u32 new_cfa{};
 					switch(unwind.cfa >> 12) {
 					case 13: new_cfa = r13; break;
 					case 15: new_cfa = r15; break;
@@ -193,10 +197,12 @@ struct cpu_profiler {
 	~cpu_profiler() {
 		if(cpu_profiler_end_addr && cycles) { // profiling may have been switched on or off in vsync (which is called from 'r->opcode' above)
 			cpu_profiler_last_cycles = get_cycles();
-			auto cycles_for_instr = (cpu_profiler_last_cycles - cycles) / cpucycleunit;
+			auto cycles_for_instr = static_cast<uae_u32>((cpu_profiler_last_cycles - cycles) / cpucycleunit);
 			for(int i = 0; i < callstack_depth; i++)
 				cpu_profiler_output.push_back(callstack[i]);
 			cpu_profiler_output.push_back(~0 - cycles_for_instr);
+			for(const auto& r : registers)
+				cpu_profiler_output.push_back(r);
 		}
 	}
 };
