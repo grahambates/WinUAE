@@ -1642,6 +1642,7 @@ void barto_buf_rect_filled(int16_t left, int16_t top, int16_t right, int16_t bot
 			barto_buf_pixel(x, y, color);
 }
 
+// must match gcc8_c_support.cpp
 enum barto_cmd {
 	barto_cmd_clear,
 	barto_cmd_rect,
@@ -1650,6 +1651,8 @@ enum barto_cmd {
 	barto_cmd_register_resource,
 	barto_cmd_set_idle,
 	barto_cmd_unregister_resource,
+	barto_cmd_load,
+	barto_cmd_save
 };
 
 enum debug_resource_type {
@@ -1672,8 +1675,7 @@ bool barto_debug_idle_stack[16];
 unsigned int barto_debug_idle_count{ 0 };
 uint32_t barto_debug_idle[1024]; // top bit: idle, other bits: cycle
 
-extern int debug_barto_cmd(TrapContext* ctx, uae_u32 arg1, uae_u32 arg2, uae_u32 arg3, uae_u32 arg4, uae_u32 arg5)
-{
+extern int debug_barto_cmd(TrapContext* ctx, uae_u32 arg1, uae_u32 arg2, uae_u32 arg3, uae_u32 arg4, uae_u32 arg5) {
 	switch((barto_cmd)arg1) {
 	case barto_cmd_clear:
 		barto_buf_clear();
@@ -1731,7 +1733,7 @@ extern int debug_barto_cmd(TrapContext* ctx, uae_u32 arg1, uae_u32 arg2, uae_u32
 	}
 	case barto_cmd_unregister_resource:
 		for(int i = barto_debug_resources_count - 1; i >= 0; i--) {
-			if(barto_debug_resources[i].address == arg2) {
+			if(barto_debug_resources[i].address == arg2 || arg2 == 0) { // 0: unregister all resources
 				barto_debug_resources_count--;
 				if(barto_debug_resources_count > 0) // move last entry into hole
 					barto_debug_resources[i] = barto_debug_resources[barto_debug_resources_count];
@@ -1758,9 +1760,46 @@ extern int debug_barto_cmd(TrapContext* ctx, uae_u32 arg1, uae_u32 arg2, uae_u32
 		if(barto_debug_idle_count >= _countof(barto_debug_idle))
 			return 1;
 
-		barto_debug_idle[barto_debug_idle_count++] = (get_cycles() / cpucycleunit) | ((barto_debug_idle_flag ? 1 : 0) << 31);
+		barto_debug_idle[barto_debug_idle_count++] = static_cast<uint32_t>(get_cycles() / cpucycleunit) | ((barto_debug_idle_flag ? 1 : 0) << 31);
+		return 1;
+	case barto_cmd_load: {
+		barto_debug_resource resource{};
+		trap_get_bytes(ctx, &resource, arg2, sizeof(resource));
+		unsigned int address = _byteswap_ulong(resource.address);
+		std::string fn = std::string("debug\\") + resource.name;
+		if(auto f = fopen(fn.c_str(), "rb")) {
+			fseek(f, 0, SEEK_END);
+			auto size = ftell(f);
+			fseek(f, 0, SEEK_SET);
+			resource.size = _byteswap_ulong(size);
+			auto data = new char[size]();
+			fread(data, 1, size, f);
+			trap_put_bytes(ctx, data, address, size);
+			delete[] data;
+			fclose(f);
+		} else {
+			resource.size = 0;
+		}
+		trap_put_bytes(ctx, &resource, arg2, sizeof(resource));
 		return 1;
 	}
+	case barto_cmd_save: {
+		barto_debug_resource resource{};
+		trap_get_bytes(ctx, &resource, arg2, sizeof(resource));
+		unsigned int address = _byteswap_ulong(resource.address);
+		unsigned int size = _byteswap_ulong(resource.size);
+		CreateDirectory(_T("debug"), NULL);
+		std::string fn = std::string("debug\\") + resource.name;
+		if(auto f = fopen(fn.c_str(), "wb")) {
+			auto data = new char[size]();
+			trap_get_bytes(ctx, data, address, size);
+			fwrite(data, 1, size, f);
+			delete[] data;
+			fclose(f);
+		}
+		return 1;
+	}
+	} // switch
 
 	return 0;
 }
