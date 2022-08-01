@@ -303,7 +303,12 @@ namespace barto_gdbserver {
 
 	bool init() {
 		if(currprefs.debugging_features & (1 << 2)) { // "gdbserver"
-			warpmode(1);
+			//warpmode(1);
+			cfgfile_modify(-1, _T("cpu_speed max"), 0, nullptr, 0);
+			cfgfile_modify(-1, _T("cpu_cycle_exact false"), 0, nullptr, 0);
+			cfgfile_modify(-1, _T("cpu_memory_cycle_exact false"), 0, nullptr, 0);
+			cfgfile_modify(-1, _T("blitter_cycle_exact false"), 0, nullptr, 0);
+			cfgfile_modify(-1, _T("warp true"), 0, nullptr, 0); // last
 
 			// disable console
 			static TCHAR empty[2] = { 0 };
@@ -322,7 +327,7 @@ namespace barto_gdbserver {
 			} else {
 				// savestate debugging
 				baseText = 0;
-				sizeText = 0x7fffffff;
+				sizeText = 0x7fff'ffff;
 			}
 
 			// call as early as possible to avoid delays with GDB having to retry to connect...
@@ -449,11 +454,13 @@ namespace barto_gdbserver {
 				buf[result] = '\0';
 				barto_log("GDBSERVER: received %d bytes: >>%s<<\n", result, buf);
 				std::string request{ buf }, ack{}, response;
-				if(request[0] == '+') {
-					request = request.substr(1);
-				} else if(request[0] == '-') {
-					barto_log("GDBSERVER: client non-ack'd our last packet\n");
-					request = request.substr(1);
+				while(!request.empty() && (request[0] == '+' || request[0] == '-')) {
+					if(request[0] == '+') {
+						request = request.substr(1);
+					} else if(request[0] == '-') {
+						barto_log("GDBSERVER: client non-ack'd our last packet\n");
+						request = request.substr(1);
+					}
 				}
 				if(!request.empty() && request[0] == 0x03) {
 					// Ctrl+C
@@ -1174,7 +1181,12 @@ start_profile:
 		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
 			return false;
 
-		warpmode(0);
+		//warpmode(0);
+		cfgfile_modify(-1, _T("warp false"), 0, nullptr, 0);
+		cfgfile_modify(-1, _T("cpu_speed real"), 0, nullptr, 0);
+		cfgfile_modify(-1, _T("cpu_cycle_exact true"), 0, nullptr, 0);
+		cfgfile_modify(-1, _T("cpu_memory_cycle_exact true"), 0, nullptr, 0);
+		cfgfile_modify(-1, _T("blitter_cycle_exact true"), 0, nullptr, 0);
 
 		// break at start of process
 		if(debugger_state == state::inited) {
