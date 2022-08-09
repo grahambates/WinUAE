@@ -298,17 +298,20 @@ namespace barto_gdbserver {
 			return false;
 		}
 
+		barto_log("GDBSERVER: listen() succeeded\n");
 		return true;
 	}
 
 	bool init() {
 		if(currprefs.debugging_features & (1 << 2)) { // "gdbserver"
-			//warpmode(1);
-			cfgfile_modify(-1, _T("cpu_speed max"), 0, nullptr, 0);
-			cfgfile_modify(-1, _T("cpu_cycle_exact false"), 0, nullptr, 0);
-			cfgfile_modify(-1, _T("cpu_memory_cycle_exact false"), 0, nullptr, 0);
-			cfgfile_modify(-1, _T("blitter_cycle_exact false"), 0, nullptr, 0);
-			cfgfile_modify(-1, _T("warp true"), 0, nullptr, 0); // last
+			close();
+
+			warpmode(1);
+			//cfgfile_modify(-1, _T("cpu_speed max"), 0, nullptr, 0);
+			//cfgfile_modify(-1, _T("cpu_cycle_exact false"), 0, nullptr, 0);
+			//cfgfile_modify(-1, _T("cpu_memory_cycle_exact false"), 0, nullptr, 0);
+			//cfgfile_modify(-1, _T("blitter_cycle_exact false"), 0, nullptr, 0);
+			//cfgfile_modify(-1, _T("warp true"), 0, nullptr, 0); // last
 
 			// disable console
 			static TCHAR empty[2] = { 0 };
@@ -338,6 +341,7 @@ namespace barto_gdbserver {
 	}
 
 	void close() {
+		barto_log(_T("GDBSERVER: close()\n"));
 		if(gdbconn != INVALID_SOCKET)
 			closesocket(gdbconn);
 		gdbconn = INVALID_SOCKET;
@@ -931,12 +935,12 @@ start_profile:
 				fwrite(&stackUpper, sizeof(uint32_t), 1, profile_outfile);
 
 				// store chipmem
-				auto profile_chipmem_size = chipmem_bank.allocated_size;
+				auto profile_chipmem_size = chipmem_bank.reserved_size;
 				auto profile_chipmem = std::make_unique<uint8_t[]>(profile_chipmem_size);
 				memcpy(profile_chipmem.get(), chipmem_bank.baseaddr, profile_chipmem_size);
 
 				// store bogomem
-				auto profile_bogomem_size = bogomem_bank.allocated_size;
+				auto profile_bogomem_size = bogomem_bank.reserved_size;
 				auto profile_bogomem = std::make_unique<uint8_t[]>(profile_bogomem_size);
 				memcpy(profile_bogomem.get(), bogomem_bank.baseaddr, profile_bogomem_size);
 
@@ -944,7 +948,7 @@ start_profile:
 				// from memory.cpp@save_rom()
 				auto kick_start = 0xf80000;
 				auto kick_real_start = kickmem_bank.baseaddr;
-				auto kick_size = kickmem_bank.allocated_size;
+				auto kick_size = kickmem_bank.reserved_size;
 				// 256KB or 512KB ROM?
 				int i;
 				for(i = 0; i < kick_size / 2 - 4; i++) {
@@ -990,7 +994,7 @@ start_profile:
 			// start profiler
 			start_cpu_profiler(baseText, baseText + sizeText, profile_unwind.get());
 			debug_dma = 1;
-			profile_start_cycles = get_cycles() / cpucycleunit;
+			profile_start_cycles = static_cast<uae_u32>(get_cycles() / cpucycleunit);
 			//barto_log("GDBSERVER: Start CPU Profiler @ %u cycles\n", get_cycles() / cpucycleunit);
 			debugger_state = state::profiling;
 		} else if(debugger_state == state::profiling) {
@@ -998,7 +1002,7 @@ start_profile:
 			// end profiling
 			stop_cpu_profiler();
 			debug_dma = 0;
-			uae_u32 profile_end_cycles = get_cycles() / cpucycleunit;
+			uae_u32 profile_end_cycles = static_cast<uae_u32>(get_cycles() / cpucycleunit);
 			//barto_log("GDBSERVER: Stop CPU Profiler @ %u cycles => %u cycles\n", profile_end_cycles, profile_end_cycles - profile_start_cycles);
 
 			// process dma records
@@ -1181,12 +1185,12 @@ start_profile:
 		if(!(currprefs.debugging_features & (1 << 2))) // "gdbserver"
 			return false;
 
-		//warpmode(0);
-		cfgfile_modify(-1, _T("warp false"), 0, nullptr, 0);
-		cfgfile_modify(-1, _T("cpu_speed real"), 0, nullptr, 0);
-		cfgfile_modify(-1, _T("cpu_cycle_exact true"), 0, nullptr, 0);
-		cfgfile_modify(-1, _T("cpu_memory_cycle_exact true"), 0, nullptr, 0);
-		cfgfile_modify(-1, _T("blitter_cycle_exact true"), 0, nullptr, 0);
+		warpmode(0);
+		//cfgfile_modify(-1, _T("warp false"), 0, nullptr, 0);
+		//cfgfile_modify(-1, _T("cpu_speed real"), 0, nullptr, 0);
+		//cfgfile_modify(-1, _T("cpu_cycle_exact true"), 0, nullptr, 0);
+		//cfgfile_modify(-1, _T("cpu_memory_cycle_exact true"), 0, nullptr, 0);
+		//cfgfile_modify(-1, _T("blitter_cycle_exact true"), 0, nullptr, 0);
 
 		// break at start of process
 		if(debugger_state == state::inited) {
