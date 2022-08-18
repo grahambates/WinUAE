@@ -909,8 +909,8 @@ namespace barto_gdbserver {
 			return;
 
 		static uae_u32 profile_start_cycles{};
-		static uae_u16 profile_dmacon{};
-		static uae_u16 profile_custom_regs[256]{}; // at start of profile 
+		static size_t profile_custom_regs_size{};
+		static uae_u8* profile_custom_regs{}; // at start of profile 
 		static FILE* profile_outfile{};
 
 		if(debugger_state == state::profile) {
@@ -974,16 +974,8 @@ start_profile:
 				fwrite(&cpucycleunit, sizeof(int), 1, profile_outfile);
 			}
 
-			// store DMACON
-			profile_dmacon = dmacon;
-
 			// store custom registers
-			for(int i = 0; i < _countof(custom_storage); i++)
-				profile_custom_regs[i] = custom_storage[i].value;
-
-			// colors (ECS only)
-			for(int i = 0; i < _countof(current_colors.color_regs_ecs); i++)
-				profile_custom_regs[i + 0x180 / 2] = current_colors.color_regs_ecs[i];
+			profile_custom_regs = save_custom(&profile_custom_regs_size, 0, TRUE);
 
 			// reset idle
 			if(barto_debug_idle_count > 0) {
@@ -1034,8 +1026,12 @@ start_profile:
 				idle_cycles += profile_end_cycles - max(profile_start_cycles, (last_idle & 0x7fffffff));
 			//barto_log("idle_cycles: %d\n", idle_cycles);
 
-			fwrite(&profile_dmacon, sizeof(profile_dmacon), 1, profile_outfile);
-			fwrite(&profile_custom_regs, sizeof(uae_u16), _countof(profile_custom_regs), profile_outfile);
+			// Custom Regs
+			int custom_len = (int)profile_custom_regs_size;
+			fwrite(&custom_len, sizeof(int), 1, profile_outfile);
+			fwrite(profile_custom_regs, 1, custom_len, profile_outfile);
+			free(profile_custom_regs);
+			profile_custom_regs = nullptr;
 
 			// DMA
 			int dmarec_size = sizeof(dma_rec);
