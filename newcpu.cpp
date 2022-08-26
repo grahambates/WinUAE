@@ -144,8 +144,9 @@ struct cpu_profiler {
 	uae_u32 callstack[16];
 	uae_u32 callstack_depth = 0;
 	uae_u32 registers[16];
+	uae_u16 sr;
 
-	cpu_profiler(uae_u32 pc) {
+	explicit cpu_profiler(uae_u32 pc) {
 		if(cpu_profiler_end_addr) {
 			auto get_long_debug_no_custom = [](uaecptr addr) -> int {
 				if(&get_mem_bank(addr) == &custom_bank)
@@ -155,6 +156,7 @@ struct cpu_profiler {
 
 			cycles = get_cycles();
 			memcpy(registers, regs.regs, sizeof(registers));
+			sr = regs.sr;
 			// some cycles burned by IRQ, etc.
 			if(cycles > cpu_profiler_last_cycles) {
 				auto cycles_for_instr = static_cast<uae_u32>((cycles - cpu_profiler_last_cycles) / cpucycleunit);
@@ -162,6 +164,7 @@ struct cpu_profiler {
 				cpu_profiler_output.push_back(~0 - cycles_for_instr);
 				for(const auto& r : registers)
 					cpu_profiler_output.push_back(r);
+				cpu_profiler_output.push_back(sr); // 16->32 bit. hmm...
 			}
 
 			// kickstart
@@ -203,6 +206,7 @@ struct cpu_profiler {
 			cpu_profiler_output.push_back(~0 - cycles_for_instr);
 			for(const auto& r : registers)
 				cpu_profiler_output.push_back(r);
+			cpu_profiler_output.push_back(sr); // 16->32 bit. hmm...
 		}
 	}
 };
