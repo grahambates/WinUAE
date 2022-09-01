@@ -369,7 +369,7 @@ static int target_get_display_scanline2(int displayindex)
 	return -13;
 }
 
-extern uae_u64 spincount;
+extern uae_s64 spincount;
 bool calculated_scanline = true;
 
 int target_get_display_scanline(int displayindex)
@@ -384,18 +384,18 @@ int target_get_display_scanline(int displayindex)
 			sl = -1;
 		return sl;
 	} else {
-		static uae_u64 lastrdtsc;
+		static uae_s64 lastrdtsc;
 		static int lastvpos;
 		if (spincount == 0 || currprefs.m68k_speed >= 0) {
 			lastrdtsc = 0;
 			lastvpos = target_get_display_scanline2(displayindex);
 			return lastvpos;
 		}
-		uae_u64 v = __rdtsc();
+		uae_s64 v = read_processor_time_rdtsc();
 		if (lastrdtsc > v)
 			return lastvpos;
 		lastvpos = target_get_display_scanline2(displayindex);
-		lastrdtsc = __rdtsc() + spincount * 4;
+		lastrdtsc = read_processor_time_rdtsc() + spincount * 4;
 		return lastvpos;
 	}
 }
@@ -926,17 +926,15 @@ void reenumeratemonitors(void)
 
 static void getd3dmonitornames (void)
 {
-	struct MultiDisplay *md = Displays;
-	IDirect3D9 *d3d;
-	int max;
-
 	// XP does not support hybrid displays, don't load Direct3D
-	if (!os_vista)
+	// Windows 10+ seems to use same names by default
+	if (!os_vista || os_win10)
 		return;
-	d3d = Direct3DCreate9 (D3D_SDK_VERSION);
+	IDirect3D9 *d3d = Direct3DCreate9 (D3D_SDK_VERSION);
 	if (!d3d)
 		return;
-	max = d3d->GetAdapterCount ();
+	int max = d3d->GetAdapterCount ();
+	struct MultiDisplay* md = Displays;
 	while (md - Displays < MAX_DISPLAYS && md->monitorid) {
 		POINT pt;
 		HMONITOR winmon;
@@ -1539,7 +1537,26 @@ void flush_clear_screen (struct vidbuffer *vb)
 	}
 }
 
-void getrtgfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int dst_height)
+float filterrectmult(int v1, float v2, int dmode)
+{
+	float v = v1 / v2;
+	int vv = (int)(v + 0.5f);
+	if (v > 1.5f && vv * v2 <= v1 && vv * (v2 + vv - 1) >= v1) {
+		return (float)vv;
+	}
+	if (!dmode) {
+		return v;
+	}
+	if (v > 0.2f && v < 0.3f) {
+		return 0.25f;
+	}
+	if (v > 0.4f && v < 0.6f) {
+		return 0.5f;
+	}
+	return (float)(int)(v + 0.5f);
+}
+
+void getrtgfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int *mode, int dst_width, int dst_height)
 {
 	struct AmigaMonitor *mon = &AMonitors[monid];
 	struct amigadisplay *ad = &adisplays[monid];
@@ -1553,6 +1570,8 @@ void getrtgfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, i
 	picasso_offset_y = 0;
 	picasso_offset_mx = 1.0;
 	picasso_offset_my = 1.0;
+
+	*mode = 0;
 
 	if (!ad->picasso_on)
 		return;
@@ -1576,16 +1595,23 @@ void getrtgfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, i
 
 	float mx = (float)mon->currentmode.native_width / srcwidth;
 	float my = (float)mon->currentmode.native_height / srcheight;
+	int outwidth;
+	int outheight;
+
 	if (mon->scalepicasso == RTG_MODE_INTEGER_SCALE) {
 		int divx = mon->currentmode.native_width / srcwidth;
 		int divy = mon->currentmode.native_height / srcheight;
-		int mul = divx > divy ? divy : divx;
-		SetRect (dr, 0, 0, mon->currentmode.native_width / mul, mon->currentmode.native_height / mul);
+		int mul = !divx || !divy ? 1 : (divx > divy ? divy : divx);
+		SetRect(dr, 0, 0, mon->currentmode.native_width / mul, mon->currentmode.native_height / mul);
 		int xx = (mon->currentmode.native_width / mul - srcwidth) / 2;
-		int yy = (mon->currentmode.native_height / mul  - srcheight) / 2;
+		int yy = (mon->currentmode.native_height / mul - srcheight) / 2;
 		picasso_offset_x = -xx;
 		picasso_offset_y = -yy;
-		mx = my = 1.0;
+		mx = mul;
+		my = mul;
+		outwidth = srcwidth;
+		outheight = srcheight;
+		*mode = 1;
 	} else if (mon->scalepicasso == RTG_MODE_CENTER) {
 		int xx = (mon->currentmode.native_width - srcwidth) / 2;
 		int yy = (mon->currentmode.native_height - srcheight) / 2;
@@ -1593,6 +1619,8 @@ void getrtgfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, i
 		picasso_offset_y = -yy;
 		SetRect (sr, 0, 0, mon->currentmode.native_width, mon->currentmode.native_height);
 		SetRect (dr, 0, 0, mon->currentmode.native_width, mon->currentmode.native_height);
+		outwidth = dr->right - dr->left;
+		outheight = dr->bottom - dr->top;
 		mx = my = 1.0;
 	} else {
 		if (currprefs.win32_rtgscaleaspectratio < 0) {
@@ -1619,6 +1647,8 @@ void getrtgfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, i
 			SetRect (dr, 0, 0, xx, srcheight);
 			picasso_offset_x = (state->Width - xx) / 2;
 		}
+		outwidth = dr->right - dr->left;
+		outheight = dr->bottom - dr->top;
 	}
 
 	OffsetRect (zr, picasso_offset_x, picasso_offset_y);
@@ -1626,8 +1656,8 @@ void getrtgfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, i
 	picasso_offset_x /= state->HLineDBL;
 	picasso_offset_y /= state->VLineDBL;
 
-	picasso_offset_mx = (float)(srcwidth * mx * state->HLineDBL) / (dr->right - dr->left);
-	picasso_offset_my = (float)(srcheight * my * state->VLineDBL) / (dr->bottom - dr->top);
+	picasso_offset_mx = (float)(srcwidth * mx * state->HLineDBL) / outwidth;
+	picasso_offset_my = (float)(srcheight * my * state->VLineDBL) / outheight;
 }
 
 static uae_u8 *gfx_lock_picasso2(int monid, bool fullupdate)
@@ -1726,7 +1756,7 @@ static void close_hwnds(struct AmigaMonitor *mon)
 	if (!mon->monitor_id) {
 		display_vblank_thread_kill();
 #ifdef AVIOUTPUT
-		AVIOutput_Restart();
+		AVIOutput_Restart(true);
 #endif
 #ifdef RETROPLATFORM
 		rp_set_hwnd(NULL);
@@ -1872,18 +1902,28 @@ static void update_gfxparams(struct AmigaMonitor *mon)
 
 	mon->scalepicasso = 0;
 	if (mon->screen_is_picasso) {
+		bool diff = state->Width != mon->currentmode.native_width || state->Height != mon->currentmode.native_height;
 		if (isfullscreen () < 0) {
-			if ((currprefs.gf[1].gfx_filter_autoscale == RTG_MODE_CENTER || currprefs.gf[1].gfx_filter_autoscale == RTG_MODE_SCALE || currprefs.win32_rtgallowscaling) && (state->Width != mon->currentmode.native_width || state->Height != mon->currentmode.native_height))
-				mon->scalepicasso = 1;
-			if (currprefs.gf[1].gfx_filter_autoscale == RTG_MODE_CENTER)
+			if ((currprefs.gf[1].gfx_filter_autoscale == RTG_MODE_CENTER || currprefs.gf[1].gfx_filter_autoscale == RTG_MODE_SCALE || currprefs.win32_rtgallowscaling) && diff) {
+				mon->scalepicasso = RTG_MODE_SCALE;
+			}
+			if (currprefs.gf[1].gfx_filter_autoscale == RTG_MODE_INTEGER_SCALE && diff) {
+				mon->scalepicasso = RTG_MODE_INTEGER_SCALE;
+			}
+			if (currprefs.gf[1].gfx_filter_autoscale == RTG_MODE_CENTER && diff) {
 				mon->scalepicasso = currprefs.gf[1].gfx_filter_autoscale;
-			if (!mon->scalepicasso && currprefs.win32_rtgscaleaspectratio)
+			}
+			if (!mon->scalepicasso && currprefs.win32_rtgscaleaspectratio) {
 				mon->scalepicasso = -1;
+			}
 		} else if (isfullscreen () > 0) {
 			if (!canmatchdepth()) { // can't scale to different color depth
 				if (mon->currentmode.native_width > state->Width && mon->currentmode.native_height > state->Height) {
 					if (currprefs.gf[1].gfx_filter_autoscale)
-						mon->scalepicasso = 1;
+						mon->scalepicasso = RTG_MODE_SCALE;
+					if (currprefs.gf[1].gfx_filter_autoscale == RTG_MODE_INTEGER_SCALE) {
+						mon->scalepicasso = RTG_MODE_INTEGER_SCALE;
+					}
 				}
 				if (currprefs.gf[1].gfx_filter_autoscale == RTG_MODE_CENTER)
 					mon->scalepicasso = currprefs.gf[1].gfx_filter_autoscale;
@@ -1911,9 +1951,9 @@ static void update_gfxparams(struct AmigaMonitor *mon)
 				}
 			} else if (currprefs.gf[1].gfx_filter_autoscale == RTG_MODE_SCALE) {
 				if (currprefs.gfx_monitor[mon->monitor_id].gfx_size.width > state->Width || currprefs.gfx_monitor[mon->monitor_id].gfx_size.height > state->Height)
-					mon->scalepicasso = 1;
+					mon->scalepicasso = RTG_MODE_SCALE;
 				if ((currprefs.gfx_monitor[mon->monitor_id].gfx_size.width != state->Width || currprefs.gfx_monitor[mon->monitor_id].gfx_size.height != state->Height) && currprefs.win32_rtgallowscaling) {
-					mon->scalepicasso = 1;
+					mon->scalepicasso = RTG_MODE_SCALE;
 				} else if (currprefs.gfx_monitor[mon->monitor_id].gfx_size.width < state->Width || currprefs.gfx_monitor[mon->monitor_id].gfx_size.height < state->Height) {
 					// no always scaling and smaller? Back to normal size and set new configured max size
 					mon->currentmode.current_width = changed_prefs.gfx_monitor[mon->monitor_id].gfx_size_win.width = state->Width;
@@ -1925,7 +1965,7 @@ static void update_gfxparams(struct AmigaMonitor *mon)
 				}
 			} else {
 				if ((currprefs.gfx_monitor[mon->monitor_id].gfx_size.width != state->Width || currprefs.gfx_monitor[mon->monitor_id].gfx_size.height != state->Height) && currprefs.win32_rtgallowscaling)
-					mon->scalepicasso = 1;
+					mon->scalepicasso = RTG_MODE_SCALE;
 				if (!mon->scalepicasso && currprefs.win32_rtgscaleaspectratio)
 					mon->scalepicasso = -1;
 			}
@@ -3934,9 +3974,17 @@ retry:
 		if (currprefs.gf[ad->picasso_on].gfx_filter_filtermodev == 0) {
 			fmv = fmh;
 		}
+		int errv = 0;
 		const TCHAR *err = D3D_init(mon->hAmigaWnd, mon->monitor_id, mon->currentmode.native_width, mon->currentmode.native_height,
-			mon->currentmode.current_depth, &mon->currentmode.freq, fmh, fmv);
-		if (err) {
+			mon->currentmode.current_depth, &mon->currentmode.freq, fmh, fmv, &errv);
+		if (errv) {
+			if (errv == -1 && currprefs.gfx_api == 0) {
+				write_log("Retrying D3D %s\n", err);
+				changed_prefs.gfx_api = currprefs.gfx_api = 2;
+				changed_prefs.color_mode = currprefs.color_mode = 5;
+				update_gfxparams(mon);
+				goto retry;
+			}
 			gfx_hdr = false;
 			if (currprefs.gfx_api >= 2) {
 				D3D_free(0, true);
@@ -3949,9 +3997,9 @@ retry:
 				d3d_select(&currprefs);
 				error_log(_T("Direct3D11 failed to initialize ('%s'), falling back to Direct3D9."), err);
 				err = D3D_init(mon->hAmigaWnd, mon->monitor_id, mon->currentmode.native_width, mon->currentmode.native_height,
-					mon->currentmode.current_depth, &mon->currentmode.freq, fmh, fmv);
+					mon->currentmode.current_depth, &mon->currentmode.freq, fmh, fmv, &errv);
 			}
-			if (err) {
+			if (errv) {
 				D3D_free(0, true);
 				if (isfullscreen() > 0) {
 					int idx = mon->screen_is_picasso ? 1 : 0;

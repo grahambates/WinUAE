@@ -10,13 +10,15 @@
 #include "debugmem.h"
 #include "disasm.h"
 
-int disasm_flags = DISASM_FLAG_LC_MNEMO | DISASM_FLAG_LC_REG | DISASM_FLAG_LC_SIZE | DISASM_FLAG_LC_HEX | DISASM_FLAG_CC | DISASM_FLAG_EA | DISASM_FLAG_VAL | DISASM_FLAG_WORDS;
+int disasm_flags = DISASM_FLAG_LC_MNEMO | DISASM_FLAG_LC_REG | DISASM_FLAG_LC_SIZE | DISASM_FLAG_LC_HEX |
+	DISASM_FLAG_CC | DISASM_FLAG_EA | DISASM_FLAG_VAL | DISASM_FLAG_WORDS | DISASM_FLAG_ABSSHORTLONG;
 int disasm_min_words = 5;
 int disasm_max_words = 16;
 TCHAR disasm_hexprefix[3] = { '$', 0 };
 
-static TCHAR disasm_areg, disasm_dreg;
+static TCHAR disasm_areg, disasm_dreg, disasm_byte, disasm_word, disasm_long;
 static TCHAR disasm_pcreg[3], disasm_fpreg[3];
+static bool absshort_long = false;
 
 void disasm_init(void)
 {
@@ -28,6 +30,10 @@ void disasm_init(void)
 	}
 	disasm_areg = (disasm_flags & DISASM_FLAG_LC_REG) ? 'a' : 'A';
 	disasm_dreg = (disasm_flags & DISASM_FLAG_LC_REG) ? 'd' : 'D';
+	disasm_byte = (disasm_flags & DISASM_FLAG_LC_REG) ? 'b' : 'B';
+	disasm_word = (disasm_flags & DISASM_FLAG_LC_REG) ? 'w' : 'W';
+	disasm_long = (disasm_flags & DISASM_FLAG_LC_REG) ? 'l' : 'L';
+	absshort_long = (disasm_flags & DISASM_FLAG_ABSSHORTLONG) != 0;
 
 }
 
@@ -338,7 +344,7 @@ uaecptr ShowEA_disp(uaecptr *pcp, uaecptr base, TCHAR *buffer, const TCHAR *name
 				name = NULL;
 		}
 		if (buffer)
-			_stprintf(dr, _T("%c%d.%c"), dp & 0x8000 ? 'A' : 'D', (int)r, dp & 0x800 ? 'L' : 'W');
+			_stprintf(dr, _T("%c%d.%c"), dp & 0x8000 ? disasm_areg : disasm_dreg, (int)r, dp & 0x800 ? disasm_long : disasm_word);
 		if (dp & 0x40) { // IS (index suppress)
 			dispreg = 0;
 			dr[0] = 0;
@@ -460,7 +466,7 @@ uaecptr ShowEA_disp(uaecptr *pcp, uaecptr base, TCHAR *buffer, const TCHAR *name
 			}
 		}
 		regstr[0] = 0;
-		_stprintf(regstr, _T(",%c%d.%c"), dp & 0x8000 ? disasm_areg : disasm_dreg, (int)r, dp & 0x800 ? 'L' : 'W');
+		_stprintf(regstr, _T(",%c%d.%c"), dp & 0x8000 ? disasm_areg : disasm_dreg, (int)r, dp & 0x800 ? disasm_long : disasm_word);
 		addr = base + (uae_s32)((uae_s8)disp8) + dispreg;
 		if (buffer) {
 			if (pcrel) {
@@ -560,10 +566,19 @@ uaecptr ShowEA(void *f, uaecptr pc, uae_u16 opcode, int reg, amodes mode, wordsi
 		}
 		break;
 	case absw:
-		addr = (uae_s32)(uae_s16)get_iword_debug (pc);
-		_stprintf (buffer, disasm_lc_hex(_T("$%04X")), (uae_u16)addr);
-		pc += 2;
-		showea_val(buffer, opcode, addr, size);
+		{
+			addr = (uae_s32)(uae_s16)get_iword_debug (pc);
+			uae_s16 saddr = (uae_s16)addr;
+			if (absshort_long) {
+				_stprintf(buffer, disasm_lc_hex(_T("$%08X.%c")), addr, disasm_word);
+			} else if (saddr < 0) {
+				_stprintf(buffer, disasm_lc_hex(_T("-$%04X.%c")), -saddr, disasm_word);
+			} else {
+				_stprintf(buffer, disasm_lc_hex(_T("$%04X.%c")), saddr, disasm_word);
+			}
+			pc += 2;
+			showea_val(buffer, opcode, addr, size);
+		}
 		break;
 	case absl:
 		addr = get_ilong_debug (pc);

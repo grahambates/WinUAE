@@ -181,6 +181,7 @@ static uae_u8 color_regs_genlock[256];
 static uae_u16 cregs[256];
 
 uae_u16 intena, intreq;
+static uae_u16 intena2, intreq2;
 uae_u16 dmacon;
 uae_u16 adkcon; /* used by audio code */
 uae_u16 last_custom_value;
@@ -7670,8 +7671,8 @@ int intlev(void)
 		}
 		return lvl;
 	}
-	uae_u16 imask = intreq & intena;
-	if (!(imask && (intena & 0x4000)))
+	uae_u16 imask = intreq2 & intena2;
+	if (!(imask && (intena2 & 0x4000)))
 		return -1;
 	if (imask & (0x4000 | 0x2000))						// 13 14
 		return 6;
@@ -7723,34 +7724,81 @@ static void rethink_intreq(void)
 	devices_rethink();
 }
 
-static void send_interrupt_do(uae_u32 v)
+static void intreq_checks(uae_u16 oldreq, uae_u16 newreq)
 {
-	INTREQ_0(0x8000 | (1 << v));
-}
-
-// external delayed interrupt (4 CCKs minimum)
-void send_interrupt(int num, int delay)
-{
-	if (delay > 0 && m68k_interrupt_delay) {
-		event2_newevent_xx(-1, delay, num, send_interrupt_do);
-	} else {
-		send_interrupt_do(num);
+	if ((oldreq & 0x0800) && !(newreq & 0x0800)) {
+		serial_rbf_clear();
 	}
 }
 
-static void doint_delay_do(uae_u32 v)
+static void doint_delay_do_ext(uae_u32 v)
 {
+	uae_u16 old = intreq2;
+	setclr(&intreq, (1 << v) | 0x8000);
+	setclr(&intreq2, (1 << v) | 0x8000);
+	intreq_checks(old, intreq2);
+
 	doint();
 }
 
-static void doint_delay(void)
+static void send_interrupt_do_ext(uae_u32 v)
+{
+	//uae_u16 old = intreq;
+	//setclr(&intreq, (1 << v) | 0x8000);
+	//intreq_checks(old);
+
+	event2_newevent_xx(-1, 1 * CYCLE_UNIT, v, doint_delay_do_ext);
+}
+
+// external delayed interrupt
+void INTREQ_INT(int num, int delay)
+{
+	if (m68k_interrupt_delay) {
+		if (delay < CYCLE_UNIT) {
+			delay *= CYCLE_UNIT;
+		}
+		event2_newevent_xx(-1, delay + CYCLE_UNIT, num, doint_delay_do_ext);
+	} else {
+		doint_delay_do_ext(num);
+	}
+}
+
+static void doint_delay_do_intreq(uae_u32 v)
+{
+	uae_u16 old = intreq2;
+	setclr(&intreq2, v);
+	intreq_checks(old, intreq2);
+
+	doint();
+}
+
+static void doint_delay_intreq(uae_u16 v)
 {
 	if (m68k_interrupt_delay) {
 		// INTREQ or INTENA write: IPL line changes 0.5 CCKs later.
 		// 68000 needs one more CPU clock (0.5 CCK) before it detects it.
-		event2_newevent_xx(-1, 1 * CYCLE_UNIT, 0, doint_delay_do);
+		event2_newevent_xx(-1, 1 * CYCLE_UNIT, v, doint_delay_do_intreq);
 	} else {
-		doint_delay_do(0);
+		doint_delay_do_intreq(v);
+	}
+}
+
+static void doint_delay_do_intena(uae_u32 v)
+{
+	setclr(&intena2, v);
+
+	doint();
+}
+
+static void doint_delay_intena(uae_u16 v)
+{
+	if (m68k_interrupt_delay) {
+		// INTREQ or INTENA write: IPL line changes 0.5 CCKs later.
+		// 68000 needs one more CPU clock (0.5 CCK) before it detects it.
+		event2_newevent_xx(-1, 1 * CYCLE_UNIT, v, doint_delay_do_intena);
+	}
+	else {
+		doint_delay_do_intena(v);
 	}
 }
 
@@ -7760,13 +7808,16 @@ static void INTENA(uae_u16 v)
 	setclr(&intena, v);
 
 	if (old != intena) {
-		doint_delay();
+		doint_delay_intena(v);
 	}
 }
 
 static void INTREQ_nodelay(uae_u16 v)
 {
+	uae_u16 old = intreq;
 	setclr(&intreq, v);
+	intreq2 = intreq;
+	intreq_checks(old, intreq);
 	doint();
 }
 
@@ -7774,9 +7825,8 @@ void INTREQ_f(uae_u16 v)
 {
 	uae_u16 old = intreq;
 	setclr(&intreq, v);
-	if ((old & 0x0800) && !(intreq & 0x0800)) {
-		serial_rbf_clear();
-	}
+	intreq2 = intreq;
+	intreq_checks(old, intreq);
 }
 
 bool INTREQ_0(uae_u16 v)
@@ -7784,14 +7834,8 @@ bool INTREQ_0(uae_u16 v)
 	uae_u16 old = intreq;
 	setclr(&intreq, v);
 
-	//write_log("%04x %04x -> %04x %08x\n", v, old, intreq, M68K_GETPC);
-
-	if ((old & 0x0800) && !(intreq & 0x0800)) {
-		serial_rbf_clear();
-	}
-
 	if (old != intreq) {
-		doint_delay();
+		doint_delay_intreq(v);
 	}
 	return true;
 }
@@ -8862,6 +8906,7 @@ static void SPRxPOS(int hpos, uae_u16 v, int num)
 
 static void SPRxPTH(int hpos, uae_u16 v, int num)
 {
+	decide_line(hpos);
 	decide_fetch_safe(hpos);
 	decide_sprites(hpos);
 	if (get_sprite_dma_rel(hpos, 1) != num || (!copper_access && !currprefs.cpu_memory_cycle_exact)) {
@@ -8880,6 +8925,7 @@ static void SPRxPTH(int hpos, uae_u16 v, int num)
 }
 static void SPRxPTL(int hpos, uae_u16 v, int num)
 {
+	decide_line(hpos);
 	decide_fetch_safe(hpos);
 	decide_sprites(hpos);
 	if (get_sprite_dma_rel(hpos, 1) != num || (!copper_access && !currprefs.cpu_memory_cycle_exact)) {
@@ -9770,7 +9816,7 @@ static void do_copper_fetch(int hpos, uae_u16 id)
 				}
 			}
 #ifdef DEBUGGER
-			if (debug_copper && !cop_state.ignore_next) {
+			if (debug_copper && cop_state.ignore_next <= 0) {
 				uaecptr next = 0xffffffff;
 				if (reg == 0x88) {
 					next = cop1lc;
@@ -10002,16 +10048,15 @@ static void update_copper(int until_hpos)
 			// Wait finished, request IR1.
 		case COP_wait:
 			{
+				if (copper_cant_read(hpos, CYCLE_PIPE_COPPER | 0x04)) {
+					goto next;
+				}
 #ifdef DEBUGGER
 				if (debug_dma)
 					record_dma_event(DMA_EVENT_COPPERWAKE, hpos, vpos);
 				if (debug_copper)
 					record_copper(cop_state.ip - 4, 0xffffffff, cop_state.ir[0], cop_state.ir[1], hpos, vpos);
 #endif
-				if (copper_cant_read(hpos, CYCLE_PIPE_COPPER | 0x04)) {
-					goto next;
-				}
-
 				cop_state.state = COP_read1;
 			}
 			break;
@@ -10045,17 +10090,16 @@ static void update_copper(int until_hpos)
 
 			if (!coppercomp(hpos, false)) {
 				cop_state.ignore_next = 1;
-
-#ifdef DEBUGGER
-				if (debug_dma && cop_state.ignore_next > 0)
-					record_dma_event(DMA_EVENT_COPPERSKIP, hpos, vpos);
-				if (debug_copper)
-					record_copper(cop_state.ip - 4, 0xffffffff, cop_state.ir[0], cop_state.ir[1], hpos, vpos);
-#endif
-
 			} else {
 				cop_state.ignore_next = -1;
 			}
+
+#ifdef DEBUGGER
+			if (debug_dma && cop_state.ignore_next > 0)
+				record_dma_event(DMA_EVENT_COPPERSKIP, hpos, vpos);
+			if (debug_copper)
+				record_copper(cop_state.ip - 4, 0xffffffff, cop_state.ir[0], cop_state.ir[1], hpos, vpos);
+#endif
 
 			cop_state.state = COP_read1;
 			break;
@@ -11717,6 +11761,11 @@ static void set_hpos(void)
 	maxhposeven = (maxhpos & 1) == 0;
 	eventtab[ev_hsync].evtime = get_cycles() + HSYNCTIME;
 	eventtab[ev_hsync].oldcycles = get_cycles();
+#ifdef DEBUGGER
+	if (debug_dma) {
+		record_dma_hsync(maxhpos);
+	}
+#endif
 }
 
 // this finishes current line
@@ -11775,6 +11824,11 @@ static void hsync_handler_pre(bool onvsync)
 		vpos = 0;
 	}
 	if (onvsync) {
+#ifdef DEBUGGER
+		if (debug_dma) {
+			record_dma_vsync(vpos);
+		}
+#endif
 		vpos = 0;
 		vsync_counter++;
 	}
@@ -12510,7 +12564,7 @@ static void check_vblank_copjmp(uae_u32 v)
 static void delayed_framestart(uae_u32 v)
 {
 	check_vblank_copjmp(0);
-	send_interrupt(5, 2 * CYCLE_UNIT); // total REFRESH_FIRST_HPOS + 1
+	INTREQ_INT(5, 2); // total REFRESH_FIRST_HPOS + 1
 }
 
 // this prepares for new line
@@ -12607,7 +12661,7 @@ static void hsync_handler_post(bool onvsync)
 		// copper and vblank trigger in same line
 		event2_newevent_xx(-1, 2 * CYCLE_UNIT, 0, delayed_framestart);
 	} else if (vb_start_line == 1) {
-		send_interrupt(5, (REFRESH_FIRST_HPOS + 1) * CYCLE_UNIT);
+		INTREQ_INT(5, REFRESH_FIRST_HPOS + 1);
 	} else if (vpos == 0) {
 		event2_newevent_xx(-1, 2 * CYCLE_UNIT, 0, check_vblank_copjmp);
 	}
@@ -12768,7 +12822,6 @@ static void hsync_handler_post(bool onvsync)
 		if (lol) {
 			record_dma_event(DMA_EVENT_LOL, REFRESH_FIRST_HPOS + 2, vpos);
 		}
-		record_dma_hsync();
 	}
 
 
@@ -13051,6 +13104,8 @@ void custom_cpuchange(void)
 	// after CPU mode changes
 	intreq = intreq | 0x8000;
 	intena = intena | 0x8000;
+	intreq2 = intreq;
+	intena2 = intena;
 }
 
 
@@ -13075,15 +13130,16 @@ void custom_reset(bool hardreset, bool keyboardreset)
 	lightpen_y[1] = -1;
 	nr_armed = 0;
 	next_lineno = 0;
-	vb_start_line = 0;
+	vb_start_line = 1;
+	if (currprefs.cs_dipagnus) {
+		vb_start_line = 0;
+	}
+	vb_state = true;
 	vs_state = false;
 	vs_state_hw = false;
 	vs_state_on = false;
 	dmal_htotal_mask = 0xffff;
 	memset(custom_storage, 0, sizeof(custom_storage));
-	if (!currprefs.cs_dipagnus) {
-		vb_start_line = 1;
-	}
 	toscr_res_old = -1;
 	toscr_nbits = 0;
 	update_denise_vars();
@@ -13154,8 +13210,8 @@ void custom_reset(bool hardreset, bool keyboardreset)
 		memset(spr, 0, sizeof spr);
 
 		dmacon = 0;
-		intreq = 0;
-		intena = 0;
+		intreq = intreq2 = 0;
+		intena = intena2 = 0;
 
 		copcon = 0;
 		DSKLEN (0, 0);
@@ -14169,6 +14225,9 @@ uae_u8 *restore_custom(uae_u8 *src)
 	bitplane_dma_change(dmacon);
 	vdiw_change(vdiwstate == diw_states::DIW_waiting_stop);
 
+	intreq2 = intreq;
+	intena2 = intena;
+
 	current_colors.extra = 0;
 	if (isbrdblank(-1, bplcon0, bplcon3)) {
 		current_colors.extra |= 1 << CE_BORDERBLANK;
@@ -14211,7 +14270,7 @@ uae_u8 *save_custom(size_t *len, uae_u8 *dstptr, int full)
 	}
 
 	SL(currprefs.chipset_mask);
-	SW(0);					/* 000 BLTDDAT */
+	SW(blt_info.bltddat);	/* 000 BLTDDAT */
 	SW(dmacon);				/* 002 DMACONR */
 	SW(VPOSR());			/* 004 VPOSR */
 	SW(VHPOSR());			/* 006 VHPOSR */
@@ -14597,7 +14656,7 @@ uae_u8 *restore_custom_event_delay(uae_u8 *src)
 		evt_t e = restore_u64();
 		uae_u32 data = restore_u32();
 		if (type == 1)
-			event2_newevent_xx(-1, e, data, send_interrupt_do);
+			event2_newevent_xx(-1, e, data, send_interrupt_do_ext);
 	}
 	return src;
 }
@@ -14608,7 +14667,7 @@ uae_u8 *save_custom_event_delay(size_t *len, uae_u8 *dstptr)
 
 	for (int i = ev2_misc; i < ev2_max; i++) {
 		struct ev2 *e = &eventtab2[i];
-		if (e->active && e->handler == send_interrupt_do) {
+		if (e->active && e->handler == send_interrupt_do_ext) {
 			cnt++;
 		}
 	}
@@ -14624,7 +14683,7 @@ uae_u8 *save_custom_event_delay(size_t *len, uae_u8 *dstptr)
 	save_u8(cnt);
 	for (int i = ev2_misc; i < ev2_max; i++) {
 		struct ev2 *e = &eventtab2[i];
-		if (e->active && e->handler == send_interrupt_do) {
+		if (e->active && e->handler == send_interrupt_do_ext) {
 			save_u8(1);
 			save_u64(e->evtime - get_cycles());
 			save_u32(e->data);

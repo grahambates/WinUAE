@@ -1462,8 +1462,9 @@ static void set_debug_colors(void)
 }
 
 static int cycles_toggle;
+static int record_dma_maxhpos, record_dma_maxvpos;
 
-static void debug_draw_cycles (uae_u8 *buf, int bpp, int line, int width, int height, uae_u32 *xredcolors, uae_u32 *xgreencolors, uae_u32 *xbluescolors)
+static void debug_draw_cycles(uae_u8 *buf, int bpp, int line, int width, int height, uae_u32 *xredcolors, uae_u32 *xgreencolors, uae_u32 *xbluescolors)
 {
 	int y, x, xx, dx, xplus, yplus;
 	struct dma_rec *dr;
@@ -1487,41 +1488,49 @@ static void debug_draw_cycles (uae_u8 *buf, int bpp, int line, int width, int he
 
 	if (y < 0)
 		return;
-	if (y > maxvpos)
+	if (y > record_dma_maxvpos)
 		return;
 	if (y >= height)
 		return;
 
-	dx = width - xplus * ((maxhpos + 1) & ~1) - 16;
+	dx = width - xplus * ((record_dma_maxhpos + 1) & ~1) - 16;
 
+	bool ended = false;
 	uae_s8 intlev = 0;
-	for (x = 0; x < maxhpos; x++) {
+	for (x = 0; x < record_dma_maxhpos; x++) {
 		uae_u32 c = debug_colors[0].l[0];
 		xx = x * xplus + dx;
 		dr = &dma_record[t][y * NR_DMA_REC_HPOS + x];
 
-		if (dr->reg != 0xffff && debug_colors[dr->type].enabled) {
-			// General DMA slots
-			c = debug_colors[dr->type].l[dr->extra & 7];
+		if (dr->end) {
+			ended = true;
+		}
+		if (ended) {
+			c = 0;
+		} else {
+			if (dr->reg != 0xffff && debug_colors[dr->type].enabled) {
+				// General DMA slots
+				c = debug_colors[dr->type].l[dr->extra & 7];
 
-			// Special cases
-			if (dr->cf_reg != 0xffff && ((cycles_toggle ^ line) & 1)) {
-				c = debug_colors[DMARECORD_CONFLICT].l[0];
-			} else if (dr->extra > 0xF) {
-				// High bits of "extra" contain additional blitter state.
-				if (dr->extra & 0x10)
-					c = debug_colors[dr->type].l[4]; // blit fill, channels A-D
-				else if (dr->extra & 0x20)
-					c = debug_colors[dr->type].l[6]; // blit line, channels A-D
+				// Special cases
+				if (dr->cf_reg != 0xffff && ((cycles_toggle ^ line) & 1)) {
+					c = debug_colors[DMARECORD_CONFLICT].l[0];
+				} else if (dr->extra > 0xF) {
+					// High bits of "extra" contain additional blitter state.
+					if (dr->extra & 0x10)
+						c = debug_colors[dr->type].l[4]; // blit fill, channels A-D
+					else if (dr->extra & 0x20)
+						c = debug_colors[dr->type].l[6]; // blit line, channels A-D
+				}
 			}
 		}
 		if (dr->intlev > intlev)
 			intlev = dr->intlev;
-		putpixel (buf, bpp, xx + 4, c);
-		if (xplus)
-			putpixel (buf, bpp, xx + 4 + 1, c);
-		if (debug_dma >= 6)
-			putpixel (buf, bpp, xx + 4 + 2, c);
+		putpixel(buf, bpp, xx + 4, c);
+		if (xplus > 1)
+			putpixel(buf, bpp, xx + 4 + 1, c);
+		if (xplus > 2)
+			putpixel(buf, bpp, xx + 4 + 2, c);
 	}
 	putpixel (buf, bpp, dx + 0, 0);
 	putpixel (buf, bpp, dx + 1, lc(intlevc[intlev]));
@@ -2158,11 +2167,46 @@ void debug_mark_refreshed(uaecptr rp)
 	rd->cnt = 0;
 }
 
-void record_dma_hsync(void)
+void record_dma_vsync(int vp)
 {
+	struct dma_rec *dr;
+
+	if (!dma_record[0])
+		return;
+	if (vp >= NR_DMA_REC_VPOS)
+		return;
+
+	dr = &dma_record[dma_record_toggle][vp * NR_DMA_REC_HPOS];
+	dr->end = true;
+
+	record_dma_maxvpos = vp;
+
+	cycles_toggle = cycles_toggle ? 0 : 1;
+}
+
+void record_dma_hsync(int lasthpos)
+{
+	struct dma_rec *dr;
+
+	if (!dma_record[0])
+		return;
+	if (lasthpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
+		return;
+
+	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + lasthpos];
+	dr->end = true;
+
 	if (vpos == 0) {
-		cycles_toggle = cycles_toggle ? 0 : 1;
+		record_dma_maxhpos = lasthpos;
+	} else {
+		if (lasthpos > record_dma_maxhpos) {
+			record_dma_maxhpos = lasthpos;
+		}
+		if (vpos > record_dma_maxvpos) {
+			record_dma_maxvpos = vpos;
+		}
 	}
+
 #if 0
 	refcheck_count++;
 	if (refcheck_count >= REFRESH_LINES / 8) {
@@ -2170,6 +2214,19 @@ void record_dma_hsync(void)
 		check_refreshed();
 	}
 #endif
+}
+
+void record_dma_ipl(int hpos, int vpos)
+{
+	struct dma_rec *dr;
+
+	if (!dma_record[0])
+		return;
+	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
+		return;
+	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
+	dr->intlev = regs.intmask;
+	dr->ipl = regs.ipl_pin;
 }
 
 void record_dma_event(uae_u32 evt, int hpos, int vpos)
@@ -2182,6 +2239,22 @@ void record_dma_event(uae_u32 evt, int hpos, int vpos)
 		return;
 	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
 	dr->evt |= evt;
+	dr->ipl = regs.ipl_pin;
+}
+
+void record_dma_event_data(uae_u32 evt, int hpos, int vpos, uae_u32 data)
+{
+	struct dma_rec *dr;
+
+	if (!dma_record[0])
+		return;
+	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
+		return;
+	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
+	dr->evt |= evt;
+	dr->evtdata = data;
+	dr->evtdataset = true;
+	dr->ipl = regs.ipl_pin;
 }
 
 void record_dma_replace(int hpos, int vpos, int type, int extra)
@@ -2239,7 +2312,9 @@ void record_dma_write(uae_u16 reg, uae_u32 dat, uae_u32 addr, int hpos, int vpos
 	dr->type = type;
 	dr->extra = extra;
 	dr->intlev = regs.intmask;
+	dr->ipl = regs.ipl_pin;
 	dr->size = 2;
+	dr->end = false;
 	last_dma_rec = dr;
 	debug_mark_refreshed(dr->addr);
 }
@@ -2345,11 +2420,14 @@ void record_dma_read(uae_u16 reg, uae_u32 addr, int hpos, int vpos, int type, in
 	dr->type = type;
 	dr->extra = extra;
 	dr->intlev = regs.intmask;
+	dr->ipl = regs.ipl_pin;
+	dr->end = false;
+
 	last_dma_rec = dr;
 	debug_mark_refreshed(dr->addr);
 }
 
-static bool get_record_dma_info(struct dma_rec *dr, int hpos, int vpos, evt_t cycles, TCHAR *l1, TCHAR *l2, TCHAR *l3, TCHAR *l4, TCHAR *l5, TCHAR *l6)
+static bool get_record_dma_info(struct dma_rec *dr, int hpos, int vpos, TCHAR *l1, TCHAR *l2, TCHAR *l3, TCHAR *l4, TCHAR *l5, TCHAR *l6, uae_u32 *split, int *iplp)
 {
 	int longsize = dr->size;
 	bool got = false;
@@ -2363,8 +2441,6 @@ static bool get_record_dma_info(struct dma_rec *dr, int hpos, int vpos, evt_t cy
 	uae_u32 extraval;
 	bool noval = false;
 
-	cycles += (vpos * maxhpos + hpos) * CYCLE_UNIT;
-
 	if (l1)
 		l1[0] = 0;
 	if (l2)
@@ -2377,6 +2453,12 @@ static bool get_record_dma_info(struct dma_rec *dr, int hpos, int vpos, evt_t cy
 		l5[0] = 0;
 	if (l6)
 		l6[0] = 0;
+
+	if (split) {
+		if ((dr->evt & DMA_EVENT_CPUINS) && dr->evtdataset) {
+			*split = dr->evtdata;
+		}
+	}
 
 	if (dr->type != 0 || dr->reg != 0xffff || dr->evt)
 		got = true;
@@ -2442,7 +2524,23 @@ static bool get_record_dma_info(struct dma_rec *dr, int hpos, int vpos, evt_t cy
 	} else {
 		_tcscpy(srtext, sr);
 	}
-	_stprintf (l1, _T("[%02X %3d]"), hpos, hpos);
+	int ipl = 0;
+	if (iplp) {
+		ipl = *iplp;
+		if (dr->ipl > 0) {
+			ipl = dr->ipl;
+		} else if (dr->ipl < 0) {
+			ipl = 0;
+		}
+		*iplp = ipl;
+	}
+	if (ipl >= 0) {
+		_stprintf(l1, _T("[%02X   %d]"), hpos, ipl);
+	} else if (ipl == -2) {
+		_stprintf(l1, _T("[%02X   -]"), hpos);
+	} else {
+		_stprintf(l1, _T("[%02X    ]"), hpos);
+	}
 	if (l4) {
 		_tcscpy(l4, _T("        "));
 	}
@@ -2618,8 +2716,7 @@ static bool get_record_dma_info(struct dma_rec *dr, int hpos, int vpos, evt_t cy
 static void decode_dma_record (int hpos, int vpos, int toggle, bool logfile)
 {
 	struct dma_rec *dr, *dr_start;
-	int h, i, maxh;
-	evt_t cycles;
+	int h, i, maxh = 0;
 
 	if (!dma_record[0] || hpos < 0 || vpos < 0)
 		return;
@@ -2631,13 +2728,21 @@ static void decode_dma_record (int hpos, int vpos, int toggle, bool logfile)
 	else
 		console_out_f (_T("Line: %02X %3d HPOS %02X %3d:\n"), vpos, vpos, hpos, hpos);
 	h = hpos;
-	dr += hpos;
-	maxh = hpos + (logfile ? maxhpos_short : 80);
-	if (maxh > maxhpos_short)
-		maxh = maxhpos_short;
-	cycles = vsync_cycles;
-	if (toggle)
-		cycles -= maxvpos * maxhpos_short * CYCLE_UNIT;
+	while (maxh < NR_DMA_REC_HPOS) {
+		if (dr->end)
+			break;
+		maxh++;
+		dr++;
+	}
+	dr = dr_start + hpos;
+	if (!logfile && maxh - h > 80) {
+		int maxh2 = maxh;
+		maxh = h + 80;
+		if (maxh > maxh2) {
+			maxh = maxh2;
+		}
+	}
+	int ipl = -2;
 	while (h < maxh) {
 		int cols = (logfile ? 16 : 8);
 		TCHAR l1[200];
@@ -2654,13 +2759,9 @@ static void decode_dma_record (int hpos, int vpos, int toggle, bool logfile)
 		l6[0] = 0;
 		for (i = 0; i < cols && h < maxh; i++, h++, dr++) {
 			TCHAR l1l[16], l2l[16], l3l[16], l4l[16], l5l[16], l6l[16];
+			uae_u32 split = 0xffffffff;
 
-			get_record_dma_info(dr, h, vpos, cycles, l1l, l2l, l3l, l4l, l5l, l6l);
-			if (dr_start[3 + 2].evt & DMA_EVENT_LOL) {
-				if (maxh == maxhpos_short) {
-					maxh++;
-				}
-			}
+			get_record_dma_info(dr, h, vpos, l1l, l2l, l3l, l4l, l5l, l6l, &split, &ipl);
 
 			TCHAR *p = l1 + _tcslen(l1);
 			_stprintf(p, _T("%9s "), l1l);
@@ -2674,6 +2775,39 @@ static void decode_dma_record (int hpos, int vpos, int toggle, bool logfile)
 			_stprintf(p, _T("%9s "), l5l);
 			p = l6 + _tcslen(l6);
 			_stprintf(p, _T("%9s "), l6l);
+
+			if (split != 0xffffffff) {
+				if (split < 0x10000) {
+					struct instr *dp = table68k + split;
+					if (dp->mnemo == i_ILLG) {
+						split = 0x4AFC;
+						dp = table68k + split;
+					}
+					struct mnemolookup *lookup;
+					for (lookup = lookuptab; lookup->mnemo != dp->mnemo; lookup++)
+						;
+					const TCHAR *opcodename = lookup->friendlyname;
+					if (!opcodename) {
+						opcodename = lookup->name;
+					}
+					TCHAR *ptrs[7];
+					ptrs[0] = &l1[_tcslen(l1)];
+					ptrs[1] = &l2[_tcslen(l2)];
+					ptrs[2] = &l3[_tcslen(l3)];
+					ptrs[3] = &l4[_tcslen(l4)];
+					ptrs[4] = &l5[_tcslen(l5)];
+					ptrs[5] = &l6[_tcslen(l6)];
+					for (int i = 0; i < 6; i++) {
+						if (!opcodename[i]) {
+							break;
+						}
+						TCHAR *p = ptrs[i];
+						p[-1] = opcodename[i];
+					}
+				} else {
+					l1[_tcslen(l1) - 1] = '*';
+				}
+			}
 		}
 		if (logfile) {
 			write_dlog(_T("%s\n"), l1);
@@ -4783,10 +4917,11 @@ static void memory_map_dump_3(UaeMemoryMap *map, int log)
 					size_out /= 1024;
 					size_ext = 'M';
 				}
-				_stprintf (txt, _T("%08X %7d%c/%d = %7d%c %s%s %s %s"), (j << 16) | bankoffset, size_out, size_ext,
+				_stprintf (txt, _T("%08X %7d%c/%d = %7d%c %s%s%c %s %s"), (j << 16) | bankoffset, size_out, size_ext,
 					mirrored, mirrored ? size_out / mirrored : size_out, size_ext,
 					(a1->flags & ABFLAG_CACHE_ENABLE_INS) ? _T("I") : _T("-"),
 					(a1->flags & ABFLAG_CACHE_ENABLE_DATA) ? _T("D") : _T("-"),
+					a1->baseaddr == NULL ? ' ' : '*',
 					bankmodes[ce_banktype[j]],
 					name);
 				tmp[0] = 0;
@@ -6164,11 +6299,11 @@ static void dma_disasm(int frames, int vp, int hp, int frames_end, int vp_end, i
 		if (!dr)
 			return;
 		TCHAR l1[16], l2[16], l3[16], l4[16];
-		if (get_record_dma_info(dr, hp, vp, 0, l1, l2, l3, l4, NULL, NULL)) {
+		if (get_record_dma_info(dr, hp, vp, l1, l2, l3, l4, NULL, NULL, NULL, NULL)) {
 			console_out_f(_T(" - %02X %s %s %s\n"), hp, l2, l3, l4);
 		}
 		hp++;
-		if (hp >= maxhpos) {
+		if (dr->end) {
 			hp = 0;
 			vp++;
 			if (vp >= maxvpos + 1) {

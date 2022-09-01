@@ -2043,7 +2043,7 @@ int scan_roms (HWND hDlg, int show)
 	infoboxdialogstate = true;
 	infoboxhwnd = NULL;
 	if (!rp_isactive ()) {
-		HWND hwnd = CreateDialog (hUIDLL ? hUIDLL : hInst, MAKEINTRESOURCE (IDD_INFOBOX), hDlg, InfoBoxDialogProc);
+		HWND hwnd = CustomCreateDialog(IDD_INFOBOX, hDlg, InfoBoxDialogProc);
 		if (!hwnd)
 			goto end;
 		infoboxhwnd = hwnd;
@@ -2319,6 +2319,7 @@ static void flipgui(int opengui)
 	}
 }
 
+static bool get_avioutput_file(HWND);
 static int GetSettings (int all_options, HWND hwnd);
 /* if drive is -1, show the full GUI, otherwise file-requester for DF[drive] */
 void gui_display (int shortcut)
@@ -2374,6 +2375,21 @@ void gui_display (int shortcut)
 			savestate_state = STATE_DORESTORE;
 	} else if (shortcut == 6) {
 		DiskSelection(mon->hAmigaWnd, IDC_CD_SELECT, 17, &changed_prefs, NULL, NULL);
+	} else if (shortcut == 7) {
+		if (get_avioutput_file(mon->hAmigaWnd)) {
+			_tcscpy(avioutput_filename_inuse, avioutput_filename_gui);
+			AVIOutput_SetSettings();
+			if (!avioutput_requested) {
+				AVIOutput_Toggle(true, false);
+				if (avioutput_audio != AVIAUDIO_WAV) {
+					TCHAR tmp[MAX_DPATH];
+					avioutput_audio = AVIOutput_GetAudioCodec(tmp, sizeof tmp / sizeof(TCHAR));
+					avioutput_video = AVIOutput_GetVideoCodec(tmp, sizeof tmp / sizeof(TCHAR));
+				} 
+			} else {
+				AVIOutput_Restart(false);
+			}
+		}
 	}
 	mon->manual_painting_needed--; /* So that WM_PAINT doesn't need to use custom refreshing */
 	reset_sound ();
@@ -2438,7 +2454,8 @@ static const GUID diskselectionguids[] = {
 	{ 0x05aa5db2, 0x470b, 0x4725, { 0x96, 0x03, 0xee, 0x61, 0x30, 0xfc, 0x54, 0x99 } },
 	{ 0x68366188, 0xa6d4, 0x4278, { 0xb7, 0x55, 0x6a, 0xb8, 0x17, 0xa6, 0x71, 0xd9 } },
 	{ 0xe990bee1, 0xd7cc, 0x4768, { 0xaf, 0x34, 0xef, 0x39, 0x87, 0x48, 0x09, 0x50 } },
-	{ 0x12c53317, 0xd99c, 0x4494, { 0x8d, 0x81, 0x00, 0x6d, 0x8c, 0x62, 0x7d, 0x83 } }
+	{ 0x12c53317, 0xd99c, 0x4494, { 0x8d, 0x81, 0x00, 0x6d, 0x8c, 0x62, 0x7d, 0x83 } },
+	{ 0x406859ac, 0x5283, 0x4f7e, { 0xb7, 0xee, 0x0c, 0x2b, 0x78, 0x3d, 0x1d, 0xcc } }
 };
 
 static void getfilter (int num, const TCHAR *name, int *filter, TCHAR *fname)
@@ -2797,7 +2814,6 @@ int DiskSelection_2 (HWND hDlg, WPARAM wParam, int flag, struct uae_prefs *prefs
 			break;
 		case 6:
 		case 7:
-		case 11:
 			getfilter (flag, _T("KickstartPath"), previousfilter, filtername);
 			fetch_path (_T("KickstartPath"), init_path, sizeof (init_path) / sizeof (TCHAR));
 			guid = &diskselectionguids[2];
@@ -2835,6 +2851,12 @@ int DiskSelection_2 (HWND hDlg, WPARAM wParam, int flag, struct uae_prefs *prefs
 				}
 				guid = &diskselectionguids[4];
 			}
+			break;
+		case 11:
+		case 19:
+			getfilter(flag, _T("NVRAMPath"), previousfilter, filtername);
+			fetch_path(_T("NVRAMPath"), init_path, sizeof(init_path) / sizeof(TCHAR));
+			guid = &diskselectionguids[10];
 			break;
 		case 15:
 		case 16:
@@ -6571,18 +6593,20 @@ static void wsetpath (HWND hDlg, const TCHAR *name, DWORD d, const TCHAR *def)
 
 static void values_to_pathsdialog (HWND hDlg)
 {
-	wsetpath (hDlg, _T("KickstartPath"), IDC_PATHS_ROM, _T("Roms"));
-	wsetpath (hDlg, _T("ConfigurationPath"), IDC_PATHS_CONFIG, _T("Configurations"));
-	wsetpath (hDlg, _T("ScreenshotPath"), IDC_PATHS_SCREENSHOT, _T("ScreenShots"));
-	wsetpath (hDlg, _T("StatefilePath"), IDC_PATHS_SAVESTATE, _T("Savestates"));
-	wsetpath (hDlg, _T("SaveimagePath"), IDC_PATHS_SAVEIMAGE, _T("SaveImages"));
-	wsetpath (hDlg, _T("VideoPath"), IDC_PATHS_AVIOUTPUT, _T("Videos"));
-	wsetpath (hDlg, _T("RipperPath"), IDC_PATHS_RIP, _T(".\\"));
+	wsetpath(hDlg, _T("KickstartPath"), IDC_PATHS_ROM, _T("ROMs"));
+	wsetpath(hDlg, _T("ConfigurationPath"), IDC_PATHS_CONFIG, _T("Configurations"));
+	wsetpath(hDlg, _T("NVRAMPath"), IDC_PATHS_NVRAM, _T("NVRAMs"));
+	wsetpath(hDlg, _T("ScreenshotPath"), IDC_PATHS_SCREENSHOT, _T("ScreenShots"));
+	wsetpath(hDlg, _T("StatefilePath"), IDC_PATHS_SAVESTATE, _T("Savestates"));
+	wsetpath(hDlg, _T("SaveimagePath"), IDC_PATHS_SAVEIMAGE, _T("SaveImages"));
+	wsetpath(hDlg, _T("VideoPath"), IDC_PATHS_AVIOUTPUT, _T("Videos"));
+	wsetpath(hDlg, _T("RipperPath"), IDC_PATHS_RIP, _T(".\\"));
 }
 
 static const TCHAR *pathnames[] = {
 	_T("KickstartPath"),
 	_T("ConfigurationPath"),
+	_T("NVRAMPath"),
 	_T("ScreenshotPath"),
 	_T("StatefilePath"),
 	_T("SaveimagePath"),
@@ -6612,6 +6636,7 @@ static void resetregistry (void)
 	regdelete(NULL, _T("ConfigFileHardware_Auto"));
 	regdelete(NULL, _T("ConfigFileHost_Auto"));
 	regdelete(NULL, _T("ConfigurationPath"));
+	regdelete(NULL, _T("NVRAMPath"));
 	regdelete(NULL, _T("SaveimagePath"));
 	regdelete(NULL, _T("ScreenshotPath"));
 	regdelete(NULL, _T("StatefilePath"));
@@ -6809,13 +6834,14 @@ static INT_PTR CALLBACK PathsDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM
 	case WM_INITDIALOG:
 		recursive++;
 		pages[PATHS_ID] = hDlg;
-		setac (hDlg, IDC_PATHS_ROM);
-		setac (hDlg, IDC_PATHS_CONFIG);
-		setac (hDlg, IDC_PATHS_SCREENSHOT);
-		setac (hDlg, IDC_PATHS_SAVESTATE);
-		setac (hDlg, IDC_PATHS_SAVEIMAGE);
-		setac (hDlg, IDC_PATHS_AVIOUTPUT);
-		setac (hDlg, IDC_PATHS_RIP);
+		setac(hDlg, IDC_PATHS_ROM);
+		setac(hDlg, IDC_PATHS_CONFIG);
+		setac(hDlg, IDC_PATHS_NVRAM);
+		setac(hDlg, IDC_PATHS_SCREENSHOT);
+		setac(hDlg, IDC_PATHS_SAVESTATE);
+		setac(hDlg, IDC_PATHS_SAVEIMAGE);
+		setac(hDlg, IDC_PATHS_AVIOUTPUT);
+		setac(hDlg, IDC_PATHS_RIP);
 		CheckDlgButton(hDlg, IDC_PATHS_RECURSIVEROMS, recursiveromscan);
 		CheckDlgButton(hDlg, IDC_PATHS_CONFIGCACHE, configurationcache);
 		CheckDlgButton(hDlg, IDC_PATHS_ARTCACHE, artcache);
@@ -6951,6 +6977,18 @@ static INT_PTR CALLBACK PathsDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM
 				set_path (_T("ConfigurationPath"), tmp);
 				FreeConfigStore ();
 				break;
+			case IDC_PATHS_NVRAMS:
+				fetch_path (_T("NVRAMPath"), tmp, sizeof (tmp) / sizeof (TCHAR));
+				if (DirectorySelection (hDlg, &pathsguid, tmp)) {
+					set_path (_T("NVRAMPath"), tmp);
+					values_to_pathsdialog (hDlg);
+					FreeConfigStore ();
+				}
+				break;
+			case IDC_PATHS_NVRAM:
+				GetWindowText(GetDlgItem(hDlg, IDC_PATHS_NVRAM), tmp, sizeof(tmp) / sizeof(TCHAR));
+				set_path(_T("NVRAMPath"), tmp);
+				break;
 			case IDC_PATHS_SCREENSHOTS:
 				fetch_path (_T("ScreenshotPath"), tmp, sizeof (tmp) / sizeof (TCHAR));
 				if (DirectorySelection (hDlg, &pathsguid, tmp)) {
@@ -7027,14 +7065,15 @@ static INT_PTR CALLBACK PathsDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM
 					}
 					SetCurrentDirectory (start_path_data);
 					setpathmode (path_type);
-					set_path (_T("KickstartPath"), NULL, path_type);
-					set_path (_T("ConfigurationPath"), NULL, path_type);
-					set_path (_T("ScreenshotPath"), NULL, path_type);
-					set_path (_T("StatefilePath"), NULL, path_type);
-					set_path (_T("SaveimagePath"), NULL, path_type);
-					set_path (_T("VideoPath"), NULL, path_type);
-					set_path (_T("RipperPath"), NULL, path_type);
-					set_path (_T("InputPath"), NULL, path_type);
+					set_path(_T("KickstartPath"), NULL, path_type);
+					set_path(_T("ConfigurationPath"), NULL, path_type);
+					set_path(_T("NVRAMPath"), NULL, path_type);
+					set_path(_T("ScreenshotPath"), NULL, path_type);
+					set_path(_T("StatefilePath"), NULL, path_type);
+					set_path(_T("SaveimagePath"), NULL, path_type);
+					set_path(_T("VideoPath"), NULL, path_type);
+					set_path(_T("RipperPath"), NULL, path_type);
+					set_path(_T("InputPath"), NULL, path_type);
 					values_to_pathsdialog (hDlg);
 					FreeConfigStore ();
 				}
@@ -7113,8 +7152,8 @@ static void load_quickstart (HWND hDlg, int romcheck)
 	bool cdmodel = quickstart_model == 8 || quickstart_model == 9;
 	ew (guiDlg, IDC_RESETAMIGA, FALSE);
 	workprefs.nr_floppies = quickstart_floppy;
-	quickstart_ok = built_in_prefs (&workprefs, quickstart_model, quickstart_conf, quickstart_compa, romcheck);
 	workprefs.ntscmode = quickstart_ntsc != 0;
+	quickstart_ok = built_in_prefs (&workprefs, quickstart_model, quickstart_conf, quickstart_compa, romcheck);
 	quickstart_cd = workprefs.floppyslots[1].dfxtype == DRV_NONE && cdmodel;
 	// DF0: HD->DD
 	if (quickstart_model <= 4) {
@@ -13111,7 +13150,6 @@ static void values_to_cpudlg(HWND hDlg, WPARAM wParam)
 	CheckDlgButton (hDlg, IDC_CPUDATACACHE, workprefs.cpu_data_cache);
 	CheckDlgButton (hDlg, IDC_COMPATIBLE_FPU, workprefs.fpu_strict);
 	CheckDlgButton (hDlg, IDC_FPU_UNIMPLEMENTED, !workprefs.fpu_no_unimplemented || workprefs.cachesize);
-	xSendDlgItemMessage(hDlg, IDC_FPU_MODE, CB_SETCURSEL, workprefs.fpu_mode < 0 ? 1 : (workprefs.fpu_mode > 0 ? 2 : 0), 0);
 	CheckDlgButton (hDlg, IDC_CPU_UNIMPLEMENTED, !workprefs.int_no_unimplemented || workprefs.cachesize);
 	xSendDlgItemMessage (hDlg, IDC_CPUIDLE, TBM_SETPOS, TRUE, workprefs.cpu_idle == 0 ? 0 : 12 - workprefs.cpu_idle / 15);
 	_stprintf(buffer, _T("%d%%"), (workprefs.cpu_idle == 0 ? 0 : 12 - workprefs.cpu_idle / 15) * 10);
@@ -13337,7 +13375,7 @@ static void values_from_cpudlg(HWND hDlg, WPARAM wParam)
 		int m = workprefs.cpu_clock_multiplier;
 		workprefs.cpu_frequency = 0;
 		workprefs.cpu_clock_multiplier = 0;
-		if (idx < 4) {
+		if (idx < 5) {
 			workprefs.cpu_clock_multiplier = (1 << 8) << idx;
 			if (workprefs.cpu_cycle_exact || workprefs.cpu_compatible) {
 				TCHAR txt[20];
@@ -13377,18 +13415,19 @@ static INT_PTR CALLBACK CPUDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 		recursive++;
 		pages[CPU_ID] = hDlg;
 		currentpage = CPU_ID;
-		xSendDlgItemMessage (hDlg, IDC_CACHE, TBM_SETRANGE, TRUE, MAKELONG (MIN_CACHE_SIZE, MAX_CACHE_SIZE));
-		xSendDlgItemMessage (hDlg, IDC_CACHE, TBM_SETPAGESIZE, 0, 1);
-		xSendDlgItemMessage (hDlg, IDC_CPUIDLE, TBM_SETRANGE, TRUE, MAKELONG (0, 10));
-		xSendDlgItemMessage (hDlg, IDC_CPUIDLE, TBM_SETPAGESIZE, 0, 1);
-		xSendDlgItemMessage (hDlg, IDC_PPC_CPUIDLE, TBM_SETRANGE, TRUE, MAKELONG (0, 10));
-		xSendDlgItemMessage (hDlg, IDC_PPC_CPUIDLE, TBM_SETPAGESIZE, 0, 1);
+		xSendDlgItemMessage(hDlg, IDC_CACHE, TBM_SETRANGE, TRUE, MAKELONG(MIN_CACHE_SIZE, MAX_CACHE_SIZE));
+		xSendDlgItemMessage(hDlg, IDC_CACHE, TBM_SETPAGESIZE, 0, 1);
+		xSendDlgItemMessage(hDlg, IDC_CPUIDLE, TBM_SETRANGE, TRUE, MAKELONG(0, 10));
+		xSendDlgItemMessage(hDlg, IDC_CPUIDLE, TBM_SETPAGESIZE, 0, 1);
+		xSendDlgItemMessage(hDlg, IDC_PPC_CPUIDLE, TBM_SETRANGE, TRUE, MAKELONG(0, 10));
+		xSendDlgItemMessage(hDlg, IDC_PPC_CPUIDLE, TBM_SETPAGESIZE, 0, 1);
 
-		xSendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY, CB_RESETCONTENT, 0, 0);
-		xSendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("1x"));
-		xSendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("2x (A500)"));
-		xSendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("4x (A1200)"));
-		xSendDlgItemMessage (hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("8x"));
+		xSendDlgItemMessage(hDlg, IDC_CPU_FREQUENCY, CB_RESETCONTENT, 0, 0);
+		xSendDlgItemMessage(hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("1x"));
+		xSendDlgItemMessage(hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("2x (A500)"));
+		xSendDlgItemMessage(hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("4x (A1200)"));
+		xSendDlgItemMessage(hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("8x"));
+		xSendDlgItemMessage(hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("16x"));
 		if (workprefs.cpu_cycle_exact) {
 			xSendDlgItemMessage(hDlg, IDC_CPU_FREQUENCY, CB_ADDSTRING, 0, (LPARAM)_T("Custom"));
 		}
@@ -13397,11 +13436,13 @@ static INT_PTR CALLBACK CPUDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
 		xSendDlgItemMessage(hDlg, IDC_FPU_MODE, CB_ADDSTRING, 0, (LPARAM)_T("Host (64-bit)"));
 		xSendDlgItemMessage(hDlg, IDC_FPU_MODE, CB_ADDSTRING, 0, (LPARAM)_T("Host (80-bit)"));
 		xSendDlgItemMessage(hDlg, IDC_FPU_MODE, CB_ADDSTRING, 0, (LPARAM)_T("Softfloat (80-bit)"));
+		idx = workprefs.fpu_mode < 0 ? 1 : (workprefs.fpu_mode > 0 ? 2 : 0);
+		xSendDlgItemMessage(hDlg, IDC_FPU_MODE, CB_SETCURSEL, idx, 0);
 
-		idx = 4;
+		idx = 5;
 		if (workprefs.cpu_clock_multiplier >= 1 << 8) {
 			idx = 0;
-			while (idx < 3) {
+			while (idx < 4) {
 				if (workprefs.cpu_clock_multiplier <= (1 << 8) << idx)
 					break;
 				idx++;
@@ -20805,6 +20846,47 @@ static void enable_for_avioutputdlg (HWND hDlg)
 	ew (hDlg, IDC_STATEREC_PLAY, input_record != INPREC_RECORD_RERECORD);
 }
 
+static bool get_avioutput_file(HWND hDlg)
+{
+	OPENFILENAME ofn;
+
+	ZeroMemory(&ofn, sizeof(OPENFILENAME));
+	ofn.lStructSize = sizeof(OPENFILENAME);
+	ofn.hwndOwner = hDlg;
+	ofn.hInstance = hInst;
+	ofn.Flags = OFN_EXTENSIONDIFFERENT | OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+	ofn.lpstrCustomFilter = NULL;
+	ofn.nMaxCustFilter = 0;
+	ofn.nFilterIndex = avioutput_audio == AVIAUDIO_WAV ? 2 : 0;
+	ofn.lpstrFile = avioutput_filename_gui;
+	ofn.nMaxFile = MAX_DPATH;
+	ofn.lpstrFileTitle = NULL;
+	ofn.nMaxFileTitle = 0;
+	ofn.lpstrInitialDir = NULL;
+	ofn.lpfnHook = NULL;
+	ofn.lpTemplateName = NULL;
+	ofn.lCustData = 0;
+	ofn.lpstrFilter = _T("Video Clip (*.avi)\0*.avi\0Wave Sound (*.wav)\0");
+
+	if (!GetSaveFileName(&ofn))
+		return false;
+
+	if (ofn.nFilterIndex == 2) {
+		avioutput_audio = AVIAUDIO_WAV;
+		avioutput_video = 0;
+		if (_tcslen(avioutput_filename_gui) > 4 && !_tcsicmp(avioutput_filename_gui + _tcslen(avioutput_filename_gui) - 4, _T(".avi")))
+			_tcscpy(avioutput_filename_gui + _tcslen(avioutput_filename_gui) - 4, _T(".wav"));
+		_tcscpy(avioutput_filename_auto, avioutput_filename_gui);
+	} else if (avioutput_audio == AVIAUDIO_WAV) {
+		avioutput_audio = 0;
+		avioutput_video = 0;
+		if (_tcslen(avioutput_filename_gui) > 4 && !_tcsicmp(avioutput_filename_gui + _tcslen(avioutput_filename_gui) - 4, _T(".wav")))
+			_tcscpy(avioutput_filename_gui + _tcslen(avioutput_filename_gui) - 4, _T(".avi"));
+		_tcscpy(avioutput_filename_auto, avioutput_filename_gui);
+	}
+	return true;
+}
+
 static INT_PTR CALLBACK AVIOutputDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	static int recursive = 0;
@@ -20988,42 +21070,9 @@ static INT_PTR CALLBACK AVIOutputDlgProc (HWND hDlg, UINT msg, WPARAM wParam, LP
 			}
 		case IDC_AVIOUTPUT_FILE:
 			{
-				OPENFILENAME ofn;
-
-				ZeroMemory (&ofn, sizeof (OPENFILENAME));
-				ofn.lStructSize = sizeof (OPENFILENAME);
-				ofn.hwndOwner = hDlg;
-				ofn.hInstance = hInst;
-				ofn.Flags = OFN_EXTENSIONDIFFERENT | OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-				ofn.lpstrCustomFilter = NULL;
-				ofn.nMaxCustFilter = 0;
-				ofn.nFilterIndex = avioutput_audio == AVIAUDIO_WAV ? 2 : 0;
-				ofn.lpstrFile = avioutput_filename_gui;
-				ofn.nMaxFile = MAX_DPATH;
-				ofn.lpstrFileTitle = NULL;
-				ofn.nMaxFileTitle = 0;
-				ofn.lpstrInitialDir = NULL;
-				ofn.lpfnHook = NULL;
-				ofn.lpTemplateName = NULL;
-				ofn.lCustData = 0;
-				ofn.lpstrFilter = _T("Video Clip (*.avi)\0*.avi\0Wave Sound (*.wav)\0");
-
-				if(!GetSaveFileName (&ofn))
-					break;
-				if (ofn.nFilterIndex == 2) {
-					avioutput_audio = AVIAUDIO_WAV;
-					avioutput_video = 0;
-					if (_tcslen (avioutput_filename_gui) > 4 && !_tcsicmp (avioutput_filename_gui + _tcslen (avioutput_filename_gui) - 4, _T(".avi")))
-						_tcscpy (avioutput_filename_gui + _tcslen (avioutput_filename_gui) - 4, _T(".wav"));
-					_tcscpy (avioutput_filename_auto, avioutput_filename_gui);
-				} else if (avioutput_audio == AVIAUDIO_WAV) {
-					avioutput_audio = 0;
-					avioutput_video = 0;
-					if (_tcslen(avioutput_filename_gui) > 4 && !_tcsicmp(avioutput_filename_gui + _tcslen(avioutput_filename_gui) - 4, _T(".wav")))
-						_tcscpy(avioutput_filename_gui + _tcslen(avioutput_filename_gui) - 4, _T(".avi"));
-					_tcscpy(avioutput_filename_auto, avioutput_filename_gui);
+				if (get_avioutput_file(hDlg)) {
+					AVIOutput_SetSettings();
 				}
-				AVIOutput_SetSettings();
 				break;
 			}
 		}
@@ -21156,7 +21205,7 @@ static const int ignorewindows[] = {
 	-1,
 	IDD_MISC1, IDC_LANGUAGE, IDC_STATENAME,
 	-1,
-	IDD_PATHS, IDC_PATHS_ROM, IDC_PATHS_CONFIG, IDC_PATHS_SCREENSHOT, IDC_PATHS_SAVESTATE, IDC_PATHS_AVIOUTPUT, IDC_PATHS_SAVEIMAGE, IDC_PATHS_RIP, IDC_LOGPATH,
+	IDD_PATHS, IDC_PATHS_ROM, IDC_PATHS_CONFIG, IDC_PATHS_NVRAM, IDC_PATHS_SCREENSHOT, IDC_PATHS_SAVESTATE, IDC_PATHS_AVIOUTPUT, IDC_PATHS_SAVEIMAGE, IDC_PATHS_RIP, IDC_LOGPATH,
 	-1,
 	IDD_IOPORTS, IDC_PRINTERLIST, IDC_SAMPLERLIST, IDC_PS_PARAMS, IDC_SERIAL, IDC_MIDIOUTLIST, IDC_MIDIINLIST, IDC_DONGLELIST,
 	-1,
@@ -22924,23 +22973,24 @@ void gui_led (int led, int on, int brightness)
 		ptr = drive_text + pos * LED_STRING_WIDTH;
 		if (fps > 9999.9)
 			fps = 9999.9;
+		const TCHAR *rec = avioutput_requested ? _T("R") : _T("");
 		if (gui_data.fps_color == 2) {
-			_tcscpy(ptr, _T("No Sync"));
+			_stprintf(ptr, _T("No Sync%s"), rec);
 		} else if (gui_data.fps_color == 3) {
-			_tcscpy(ptr, _T("FPS: ----"));
+			_stprintf(ptr, _T("FPS: ---%s"), rec);
 		} else if (fps < 1000) {
 			if (ad->picasso_on)
-				_stprintf (ptr, _T("%.1f [%.1f]"), p96vblank, fps);
+				_stprintf (ptr, _T("%.1f%s[%.1f]"), p96vblank, rec, fps);
 			else
-				_stprintf (ptr, _T("FPS: %.1f"), fps);
+				_stprintf (ptr, _T("FPS: %.1f%s"), fps, rec);
 		} else {
 			if (ad->picasso_on)
-				_stprintf(ptr, _T("%.0f [%.0f]"), p96vblank, fps);
+				_stprintf(ptr, _T("%.0f%s[%.0f]"), p96vblank, rec, fps);
 			else
-				_stprintf(ptr, _T("FPS: %.0f"), fps);
+				_stprintf(ptr, _T("FPS: %.0f%s"), fps, rec);
 		}
 		if (gui_data.cpu_halted > 0) {
-			_stprintf (ptr, _T("HALT%d"), gui_data.cpu_halted);
+			_stprintf (ptr, _T("HALT%d%s"), gui_data.cpu_halted, rec);
 			center = 1;
 		}
 		if (pause_emulation) {
