@@ -5941,7 +5941,7 @@ static void dma_disasm(int frames, int vp, int hp, int frames_end, int vp_end, i
 static uaecptr nxdis, nxmem, asmaddr;
 static bool ppcmode, asmmode;
 
-static bool debug_line (TCHAR *input)
+/*static*/ bool debug_line (TCHAR *input)
 {
 	TCHAR cmd, *inptr;
 	uaecptr addr;

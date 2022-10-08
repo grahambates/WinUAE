@@ -60,6 +60,11 @@ extern void memwatch_setup(void);
 /*static*/ extern struct memwatch_node mwhit;
 extern int debug_illegal;
 extern uae_u64 debug_illegal_mask;
+/*static*/ extern bool debug_line(TCHAR *input);
+
+// from writelog.cpp
+extern void capture_start();
+extern TCHAR *capture_end();
 
 // from custom.cpp
 extern uae_u8* save_custom(int* len, uae_u8* dstptr, int full);
@@ -635,6 +640,14 @@ namespace barto_gdbserver {
 				deactivate_debugger();
 				return ""; // response is sent when profile is finished (vsync)
 			}
+		} else if(cmd.substr(0, strlen("console ")) == "console ") {
+			std::string cmd_args = cmd.substr(strlen("console "));
+			TCHAR *input = const_cast<char*>(cmd_args.c_str());
+			barto_log("GDBSERVER: console %s\n", input);
+			capture_start();
+			debug_line(input);
+			TCHAR *output = capture_end();
+			return std::string(output, strlen(output));
 		} else if(cmd == "reset" && currprefs.debugging_trigger[0]) {
 			savestate_quick(0, 0); // restore state saved at process entry
 			barto_debug_resources_count = 0;

@@ -13,6 +13,30 @@
 #include "registry.h"
 #include "uae.h"
 
+// Store output written to console so we can return it from remote debugger
+char capture_buffer[1024 * 32];
+bool capturing = false;
+char *capture_p;
+
+void capture_start() {
+	memset(capture_buffer, 0, 1);
+	capturing = true;
+	capture_p = capture_buffer;
+}
+
+void capture_write(const TCHAR *txt) {
+	if (capturing) {
+		int len = strlen(txt);
+		strncpy(capture_p, txt, len);
+		capture_p += len;
+	}
+}
+
+TCHAR *capture_end() {
+	capturing = false;
+	return capture_buffer;
+}
+
 static void premsg (void)
 {
 #if 0
@@ -357,6 +381,7 @@ TCHAR *setconsolemode (TCHAR *buffer, int maxlen)
 
 static void console_put (const TCHAR *buffer)
 {
+	capture_write(buffer);
 	if (console_buffer) {
 		if (_tcslen (console_buffer) + _tcslen (buffer) < console_buffer_size)
 			_tcscat (console_buffer, buffer);
@@ -378,6 +403,11 @@ void console_out_f (const TCHAR *format,...)
 
 	pbuf = buffer;
 	va_start (parms, format);
+	if (capturing) {
+		va_list arg_ptr1;
+		va_copy(arg_ptr1, params);
+		capture_p += vsprintf(capture_p, format, arg_ptr1);
+	}
 	len = _vsntprintf (pbuf, WRITE_LOG_BUF_SIZE - 1, format, parms);
 	if (!len)
 		return;
