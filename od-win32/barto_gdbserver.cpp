@@ -1296,7 +1296,7 @@ start_profile:
 			barto_log("\n");
 			useAck = true;
 			debugger_state = state::debugging;
-			debugmem_enable_stackframe(true);
+			//debugmem_enable_stackframe(true); // crashes WinUAE if stackframe overrun
 			debugmem_trace = true;
 		}
 
