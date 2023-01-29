@@ -1841,10 +1841,10 @@ static int createmask2texture (struct d3dstruct *d3d, const TCHAR *filename)
 	xmult = d3d->mask2texture_multx;
 	ymult = d3d->mask2texture_multy;
 
-	d3d->mask2rect.left *= (LONG)xmult;
-	d3d->mask2rect.right *= (LONG)xmult;
-	d3d->mask2rect.top *= (LONG)ymult;
-	d3d->mask2rect.bottom *= (LONG)ymult;
+	d3d->mask2rect.left = (LONG)(d3d->mask2rect.left * xmult);
+	d3d->mask2rect.right = (LONG)(d3d->mask2rect.right * xmult);
+	d3d->mask2rect.top = (LONG)(d3d->mask2rect.top * ymult);
+	d3d->mask2rect.bottom = (LONG)(d3d->mask2rect.bottom * ymult);
 	d3d->mask2texture_wwx = d3d->mask2texture_w * xmult;
 	if (d3d->mask2texture_wwx > d3d->window_w)
 		d3d->mask2texture_wwx = (float)d3d->window_w;
@@ -1949,7 +1949,7 @@ static int createmasktexture (struct d3dstruct *d3d, const TCHAR *filename, stru
 	D3DXIMAGE_INFO dinfo;
 	TCHAR tmp[MAX_DPATH];
 	int maskwidth, maskheight;
-	int idx = (int)(sd - &d3d->shaders[0]);
+	int idx = addrdiff(sd, &d3d->shaders[0]);
 
 	if (filename[0] == 0)
 		return 0;
@@ -2150,8 +2150,8 @@ static void setupscenecoords(struct d3dstruct *d3d, bool normalrender)
 
 	} else {
 
-		tx = dw * d3d->tin_w / d3d->window_w / 2;
-		ty = dh * d3d->tin_h / d3d->window_h / 2;
+		tx = -0.5f + dw * d3d->tin_w / d3d->window_w / 2;
+		ty = +0.5f + dh * d3d->tin_h / d3d->window_h / 2;
 
 		float xshift = (float)(- zr.left - sr.left); // - (tin_w - 2 * zr.left - w),
 		float yshift = (float)(+ zr.top + sr.top - (d3d->tin_h - h));
@@ -2159,14 +2159,9 @@ static void setupscenecoords(struct d3dstruct *d3d, bool normalrender)
 		sw = dw * d3d->tin_w / d3d->window_w;
 		sh = dh * d3d->tin_h / d3d->window_h;
 
-		//sw -= 0.5f;
-		//sh += 0.5f;
-
 		tx += xshift;
 		ty += yshift;
 
-		tx = (float)(int)(tx + 0.0f);
-		ty = (float)(int)(ty + 0.0f);
 	}
 
 	d3d->xmult = filterrectmult(d3d->window_w, w, d3d->dmode);
@@ -2184,9 +2179,6 @@ static void setupscenecoords(struct d3dstruct *d3d, bool normalrender)
 	// ratio between Amiga texture and overlay mask texture
 	float sw2 = dw * d3d->tin_w / d3d->window_w;
 	float sh2 = dh * d3d->tin_h / d3d->window_h;
-
-	//sw2 -= 0.5f;
-	//sh2 += 0.5f;
 
 	d3d->maskmult.x = sw2 * d3d->maskmult_x / w;
 	d3d->maskmult.y = sh2 * d3d->maskmult_y / h;
@@ -2654,7 +2646,7 @@ static const TCHAR *D3D_init2 (struct d3dstruct *d3d, HWND ahwnd, int w_w, int w
 	struct apmode ap;
 	D3DADAPTER_IDENTIFIER9 did;
 
-	d3d->filterd3didx = ad->picasso_on;
+	d3d->filterd3didx = ad->gf_index;
 	d3d->filterd3d = &currprefs.gf[d3d->filterd3didx];
 
 	D3D_free2 (d3d);
@@ -2670,12 +2662,8 @@ static const TCHAR *D3D_init2 (struct d3dstruct *d3d, HWND ahwnd, int w_w, int w
 	if (d3dx == NULL) {
 		static bool warned;
 		if (!warned) {
-			if (os_vista)
-				_tcscpy(errmsg, _T("Direct3D: Optional DirectX9 components are not installed.\n")
-					_T("\nhttps://www.microsoft.com/en-us/download/details.aspx?id=8109"));
-			else
-				_tcscpy (errmsg, _T("Direct3D: Newer DirectX Runtime required or optional DirectX9 components are not installed.\n")
-					_T("\nhttps://www.microsoft.com/en-us/download/details.aspx?id=8109"));
+			_tcscpy(errmsg, _T("Direct3D: Optional DirectX9 components are not installed.\n")
+				_T("\nhttps://www.microsoft.com/en-us/download/details.aspx?id=8109"));
 			warned = true;
 		}
 		return errmsg;

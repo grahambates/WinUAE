@@ -826,8 +826,8 @@ static void mouseupdate(struct AmigaMonitor *mon)
 	struct picasso96_state_struct *state = &picasso96_state[mon->monitor_id];
 	int x = newcursor_x;
 	int y = newcursor_y;
-	float mx = currprefs.gf[1].gfx_filter_horiz_zoom_mult;
-	float my = currprefs.gf[1].gfx_filter_vert_zoom_mult;
+	float mx = currprefs.gf[GF_RTG].gfx_filter_horiz_zoom_mult;
+	float my = currprefs.gf[GF_RTG].gfx_filter_vert_zoom_mult;
 	int forced = 0;
 
 	if (!hwsprite)
@@ -841,7 +841,7 @@ static void mouseupdate(struct AmigaMonitor *mon)
 	}
 
 	if (D3D_setcursor) {
-		if (currprefs.gf[1].gfx_filter_autoscale == RTG_MODE_CENTER) {
+		if (currprefs.gf[GF_RTG].gfx_filter_autoscale == RTG_MODE_CENTER) {
 			D3D_setcursor(mon->monitor_id, x, y, WIN32GFX_GetWidth(mon), WIN32GFX_GetHeight(mon), mx, my, cursorvisible, mon->scalepicasso == 2);
 		} else {
 			D3D_setcursor(mon->monitor_id, x, y, state->Width, state->Height, mx, my, cursorvisible, false);
@@ -1086,8 +1086,8 @@ static void setconvert(int monid)
 	gfx_set_picasso_colors(monid, state->RGBFormat);
 	picasso_palette(state->CLUT, vidinfo->clut);
 	if (vidinfo->host_mode != vidinfo->ohost_mode || state->RGBFormat != vidinfo->orgbformat) {
-		write_log (_T("RTG conversion: Depth=%d HostRGBF=%d P96RGBF=%d Mode=%d\n"),
-			picasso_vidinfo[monid].pixbytes, vidinfo->host_mode, state->RGBFormat, vidinfo->picasso_convert);
+		write_log (_T("RTG conversion: Depth=%d HostRGBF=%d P96RGBF=%d Mode=%d/%d\n"),
+			picasso_vidinfo[monid].pixbytes, vidinfo->host_mode, state->RGBFormat, vidinfo->picasso_convert[0], vidinfo->picasso_convert[1]);
 		vidinfo->ohost_mode = vidinfo->host_mode;
 		vidinfo->orgbformat = state->RGBFormat;
 	}
@@ -1555,7 +1555,7 @@ static void picasso_handle_hsync(void)
 #define BLT_NAME BLIT_SRC_8
 #define BLT_NAME_MASK BLIT_SRC_MASK_8
 #define BLT_FUNC(s,d) *d = *s
-#define BLT_FUNC_MASK(s,d,mask) *d = ((*d) & ~mask) | (((*s) | (*d)) & mask)
+#define BLT_FUNC_MASK(s,d,mask) *d = ((*d) & ~mask) | ((*s) & mask)
 #include "../p96_blit.cpp"
 #define BLT_NAME BLIT_NOTONLYDST_8
 #define BLT_NAME_MASK BLIT_NOTONLYDST_MASK_8
@@ -2412,8 +2412,12 @@ int picasso_getwritewatch (int index, int offset, uae_u8 ***gwwbufp, uae_u8 **st
 	ULONG ps;
 	writewatchcount[index] = gwwbufsize[index];
 	watch_offset[index] = offset;
+	if (gfxmem_banks[index]->start + offset >= max_physmem) {
+		writewatchcount[index] = 0;
+		return -1;
+	}
 	uae_u8 *start = gfxmem_banks[index]->start + natmem_offset + offset;
-	if (GetWriteWatch (WRITE_WATCH_FLAG_RESET, gfxmem_banks[index]->start + natmem_offset + offset, (gwwbufsize[index] - 1) * gwwpagesize[index], gwwbuf[index], &writewatchcount[index], &ps)) {
+	if (GetWriteWatch (WRITE_WATCH_FLAG_RESET, start, (gwwbufsize[index] - 1) * gwwpagesize[index], gwwbuf[index], &writewatchcount[index], &ps)) {
 		write_log (_T("picasso_getwritewatch %d\n"), GetLastError ());
 		writewatchcount[index] = 0;
 		return -1;
@@ -3694,7 +3698,8 @@ static uae_u32 REGPARAM2 picasso_BlitPattern(TrapContext *ctx)
 
 		uae_u16 *tmplbuf = NULL;
 		if (indirect) {
-			tmplbuf = xcalloc(uae_u16, 1 << pattern.Size);
+			int size = 1 << pattern.Size;
+			tmplbuf = xcalloc(uae_u16, size);
 			trap_get_words(ctx, tmplbuf, pattern.AMemory, 1 << pattern.Size);
 		}
 
@@ -5376,22 +5381,28 @@ static void picasso_flushoverlay(int index, uae_u8 *src, int scr_offset, uae_u8 
 		return;
 
 	uae_u8 *vram_end = src + gfxmem_banks[0]->allocated_size;
+	uae_u8 *dst_end = dst + vidinfo->height * vidinfo->rowbytes;
 	uae_u8 *s = src + overlay_vram_offset;
 	uae_u8 *ss = src + scr_offset;
 	int mx = overlay_src_width_in * 256 / overlay_w;
 	int my = overlay_src_height_in * 256 / overlay_h;
 	int y = 0;
+
 	int split = 0;
 	if (vidinfo->splitypos >= 0) {
 		split = vidinfo->splitypos;
 	}
+
 	for (int dy = 0; dy < overlay_h; dy++) {
-		if (s + (y >> 8) * overlay_src_width_in * overlay_pix > vram_end)
+		if (s + (y >> 8) * overlay_src_width_in * overlay_pix > vram_end) {
 			break;
-		if (ss + (overlay_y + dy + split) * state->BytesPerRow > vram_end)
+		}
+		if (ss + (overlay_y + dy + split) * state->BytesPerRow > vram_end) {
 			break;
-		if (dst + (overlay_y + dy + split) * vidinfo->rowbytes > vram_end)
+		}
+		if (dst + (overlay_y + dy + split) * vidinfo->rowbytes > dst_end) {
 			break;
+		}
 		copyrow_scale(monid, s, ss, dst,
 			0, (y >> 8), mx, overlay_src_width_in, overlay_src_width * overlay_pix, overlay_pix,
 			state->BytesPerRow, state->BytesPerPixel,
@@ -6662,7 +6673,7 @@ static uaecptr uaegfx_card_install (TrapContext *ctx, uae_u32 extrasize)
 	if (uaegfx_old || !(gfxmem_bank.flags & ABFLAG_MAPPED))
 		return 0;
 
-	uaegfx_resid = ds (_T("UAE Graphics Card 3.4"));
+	uaegfx_resid = ds (_T("UAE Graphics Card 4.0"));
 	uaegfx_vblankname = ds (_T("UAE Graphics Card VBLANK"));
 	uaegfx_portsname = ds (_T("UAE Graphics Card PORTS"));
 

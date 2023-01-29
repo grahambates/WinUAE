@@ -414,6 +414,7 @@
 #define IDS_UNMAPPED_ADDRESS            419
 #define IDS_GENLOCK_OPTIONS             420
 #define IDS_READONLYCONFIRMATION        421
+#define IDS_SCREEN_NATIVELACE           422
 #define IDS_QS_MODELS                   1000
 #define IDS_QS_MODEL_A500               1001
 #define IDS_QS_MODEL_A500P              1002
@@ -972,7 +973,6 @@
 #define IDC_UPBM                        1650
 #define IDC_DISKLISTINSERT              1650
 #define IDC_DF1QENABLE                  1650
-#define IDC_AVIOUTPUT_ORIGINALSIZE2     1650
 #define IDC_SCREENSHOT_ORIGINALSIZE     1650
 #define IDC_SOUNDCARDLIST               1651
 #define IDC_STATE_BUFFERSIZE2           1651
@@ -981,11 +981,12 @@
 #define IDC_SOUNDFREQ                   1652
 #define IDC_STATEREC_AUTOPLAY           1652
 #define IDC_SOUNDFREQTXT                1653
-#define IDC_SCREENSHOT_ORIGINALSIZE2    1653
 #define IDC_SCREENSHOT_CLIP             1653
 #define IDC_SOUNDFILTERTXT              1654
+#define IDC_SCREENSHOT_PALETTED         1654
 #define IDC_SOUNDSTEREO                 1655
 #define IDC_CONFIGTYPE                  1655
+#define IDC_SCREENSHOT_AUTO             1655
 #define IDC_SOUNDDRIVETXT               1656
 #define IDC_PATHS_ROM                   1656
 #define IDC_SOUNDSTEREOSEP              1656
@@ -1079,6 +1080,7 @@
 #define IDC_FILTERKEEPAUTOSCALEASPECT   1710
 #define IDC_CS_CIAA_TOD1                1711
 #define IDC_SOUND_VOLCNT                1711
+#define IDC_FILTERENABLE                1711
 #define IDC_CS_CIAA_TOD2                1712
 #define IDC_CS_EXT                      1712
 #define IDC_CS_CIAA_TOD3                1713
@@ -1119,7 +1121,6 @@
 #define IDC_CS_DENISEREV                1738
 #define IDC_DBG_OUTPUT1                 1739
 #define IDC_CS_PCMCIA                   1739
-#define IDC_CS_SLOWISFAST               1740
 #define IDC_DBG_HELP                    1740
 #define IDC_DBG_INPUT                   1741
 #define IDC_CS_KSMIRROR_A8              1741
@@ -1156,6 +1157,7 @@
 #define IDC_DBG_MEMUPFAST               1760
 #define IDC_CS_CIA                      1760
 #define IDC_DA_RESET                    1761
+#define IDC_CS_MEMORYPATTERN            1761
 #define IDC_DBG_STATUS                  1762
 #define IDC_DBG_BRKPTS                  1763
 #define IDC_DBG_MCUSTOM                 1764
@@ -1250,6 +1252,7 @@
 #define IDC_SAMPLER_STEREO              1812
 #define IDC_FASTMEMFORCE16              1812
 #define IDC_LISTDIALOG_LIST             1813
+#define IDC_FASTMEMSLOW                 1813
 #define IDC_LOGPATH                     1814
 #define IDC_MIDIROUTER                  1815
 #define IDC_CDLIST                      1815

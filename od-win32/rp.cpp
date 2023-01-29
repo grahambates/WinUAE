@@ -38,6 +38,9 @@
 #include "debug.h"
 #include "devices.h"
 
+#define RP_SCREENMODE_SCALE_MAX_X 128
+#define RP_SCREENMODE_SCALE_MAX_X_MASK 127
+
 static int initialized;
 static RPGUESTINFO guestinfo;
 static int maxjports;
@@ -47,8 +50,12 @@ int rp_rpescapekey = 0x01;
 int rp_rpescapeholdtime = 600;
 int rp_screenmode = 0;
 int rp_inputmode = 0;
+int rp_printer = 0;
+int rp_modem = 0;
 int log_rp = 2;
 static int rp_revision, rp_version, rp_build;
+static int rp_printeropen = 0;
+static int rp_modemopen = 0;
 static int max_horiz_dbl = RES_HIRES;
 static int max_vert_dbl = VRES_DOUBLE;
 
@@ -163,6 +170,8 @@ static const TCHAR *getmsg (int msg)
 	case RP_IPC_TO_GUEST_SENDMOUSEEVENTS: return _T("RP_IPC_TO_GUEST_SENDMOUSEEVENTS");
 	case RP_IPC_TO_GUEST_SHOWDEBUGGER: return _T("RP_IPC_TO_GUEST_SHOWDEBUGGER");
 	case RP_IPC_TO_GUEST_EXECUTE: return _T("RP_IPC_TO_GUEST_EXECUTE");
+	case RP_IPC_TO_GUEST_DEVICEWRITEBYTE: return _T("RP_IPC_TO_GUEST_DEVICEWRITEBYTE");
+	case RP_IPC_TO_GUEST_DEVICESETSIGNALS: return _T("RP_IPC_TO_GUEST_DEVICESETSIGNALS");
 	default: return _T("UNKNOWN");
 	}
 }
@@ -563,7 +572,7 @@ static int port_insert (int inputmap_port, int devicetype, DWORD flags, const TC
 	
 	inputdevice_compa_clear (&changed_prefs, inputmap_port);
 	
-	if (_tcslen (name) == 0) {
+	if (name[0] == '\0') {
 		inputdevice_joyport_config (&changed_prefs, _T("none"), NULL, inputmap_port, 0, 0, 0, true);
 		return TRUE;
 	}
@@ -711,24 +720,21 @@ static void fixup_size (struct uae_prefs *prefs)
 	write_log(_T("-> %dx%d\n"), gm->gfx_size_win.width, gm->gfx_size_win.height);
 }
 
-static int getmult (float mult, bool *half)
+static float getmult(float mult)
 {
-	*half = false;
-	if (mult >= 3.5)
-		return 2; // 4x
-	if (mult >= 2.5f) {
-		*half = true;
-		return 1; // 3x
-	}
+	if (mult >= 3.5f)
+		return mult / 2.0f; // 4x+
+	if (mult >= 2.5f)
+		return 1.5f; // 3x
 	if (mult >= 1.5f)
-		return 1; // 2x
+		return 1.0f; // 2x
 	if (mult >= 0.8f)
-		return 0; // 1x
+		return 0.0f; // 1x
 	if (mult >= 0.4f)
-		return -1; // 1/2x
+		return -1.0f; // 1/2x
 	if (mult >= 0.1f)
-		return -2; // 1/4x
-	return 0;
+		return -2.0f; // 1/4x
+	return 0.0f;
 }
 
 static int shift (int val, int shift)
@@ -772,12 +778,12 @@ static void get_screenmode (struct RPScreenMode *sm, struct uae_prefs *p, bool g
 		sm->lClipWidth = -1;//picasso96_state.Width;
 		sm->lClipHeight = -1;//picasso96_state.Height;
 
-		if (hmult >= 3.5f || vmult >= 3.5f)
-			m |= RP_SCREENMODE_SCALE_4X;
-		else if (hmult >= 2.5f || vmult >= 2.5f)
-			m |= RP_SCREENMODE_SCALE_3X;
-		else if (hmult >= 1.5f || vmult >= 1.5f)
-			m |= RP_SCREENMODE_SCALE_2X;
+		for (int i = RP_SCREENMODE_SCALE_MAX_X; i >= RP_SCREENMODE_SCALE_2X; i--) {
+			if (hmult >= (float)i + 0.5) {
+				m |= i;
+				break;
+			}
+		}
 
 	} else {
 
@@ -804,17 +810,21 @@ static void get_screenmode (struct RPScreenMode *sm, struct uae_prefs *p, bool g
 		totalhdbl = hres;
 		if (hres > max_horiz_dbl)
 			hres = max_horiz_dbl;
-		hres += getmult (hmult, &half);
+		float hresm = getmult(hmult);
+		hres += (int)hresm;
 
 		totalvdbl = vres;
 		if (vres > max_vert_dbl)
 			vres = max_vert_dbl;
-		vres += getmult (vmult, &half);
+		float vresm = getmult(vmult);
+		vres += (int)vresm;
 
-		if (hres == RES_SUPERHIRES) {
-			m = half ? RP_SCREENMODE_SCALE_3X : RP_SCREENMODE_SCALE_2X;
+		if (hres > RES_SUPERHIRES) {
+			m = (int)(vresm * 2.0f + 0.5f) - 1;
+		} else if (hres == RES_SUPERHIRES) {
+			m = vresm > 1.0f && vresm < 2.0f ? RP_SCREENMODE_SCALE_3X : RP_SCREENMODE_SCALE_2X;
 		} else if (hres >= RES_SUPERHIRES + 1) {
-			m = half ? RP_SCREENMODE_SCALE_3X : RP_SCREENMODE_SCALE_4X;
+			m = vresm > 1.0f && vresm < 2.0f ? RP_SCREENMODE_SCALE_3X : RP_SCREENMODE_SCALE_4X;
 		} else {
 			m = RP_SCREENMODE_SCALE_1X;
 		}
@@ -881,6 +891,7 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 	struct monconfig *gm = &p->gfx_monitor[mon->monitor_id];
 	struct monconfig *gmc = &currprefs.gfx_monitor[mon->monitor_id];
 	int smm = RP_SCREENMODE_SCALE (sm->dwScreenMode);
+	int smm_m = smm & RP_SCREENMODE_SCALE_MAX_X_MASK;
 	int display = RP_SCREENMODE_DISPLAY (sm->dwScreenMode);
 	int fs = 0;
 	int hdbl = RES_HIRES, vdbl = VRES_DOUBLE;
@@ -893,6 +904,10 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 	bool integerscale = !(sm->dwScreenMode & RP_SCREENMODE_SCALING_SUBPIXEL) && !(sm->dwScreenMode & RP_SCREENMODE_SCALING_STRETCH) && smm >= RP_SCREENMODE_SCALE_TARGET;
 	int width, height;
 	bool half;
+
+//	Sleep(10000);
+//	smm = RP_SCREENMODE_SCALE_4X + 0;
+//	smm_m = smm;
 
 	storeflags = sm->dwScreenMode;
 	minimized = 0;
@@ -918,6 +933,8 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 	}
 
 	if (!WIN32GFX_IsPicassoScreen(mon)) {
+
+		float xtramult = 1.0f;
 
 		if (smm == RP_SCREENMODE_SCALE_3X) {
 
@@ -946,7 +963,7 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 				// 2X
 				hdbl = RES_SUPERHIRES;
 				vdbl = VRES_QUAD;
-			} else if (smm == RP_SCREENMODE_SCALE_4X) {
+			} else if (smm_m >= RP_SCREENMODE_SCALE_4X) {
 				// 4X
 				hdbl = RES_SUPERHIRES + 1;
 				vdbl = VRES_QUAD + 1;
@@ -956,7 +973,7 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 				vdbl = VRES_DOUBLE;
 			}
 
-			if (smm > RP_SCREENMODE_SCALE_4X || smm == RP_SCREENMODE_SCALE_MAX) {
+			if (smm == RP_SCREENMODE_SCALE_MAX) {
 				hdbl = max_horiz_dbl;
 				vdbl = max_vert_dbl;
 			}
@@ -971,6 +988,12 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 			if (vres > max_vert_dbl) {
 				vmult = (float)(1 << (vres - max_vert_dbl));
 				vres = max_vert_dbl;
+			}
+
+			if (smm_m > RP_SCREENMODE_SCALE_4X) {
+				xtramult = (smm_m + 1.0f) / 4.0f;
+				hmult *= xtramult;
+				vmult *= xtramult;
 			}
 		}
 		if (hres == RES_LORES && vres > VRES_NONDOUBLE)
@@ -996,6 +1019,10 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 			else
 				gm->gfx_size_win.height = sm->lClipHeight >> (VRES_MAX - vdbl);
 		}
+		
+		gm->gfx_size_win.width = (int)(gm->gfx_size_win.width * xtramult);
+		gm->gfx_size_win.height = (int)(gm->gfx_size_win.height * xtramult);
+
 		if (half) {
 			gm->gfx_size_win.width = gm->gfx_size_win.width * 3 / 2;
 			gm->gfx_size_win.height = gm->gfx_size_win.height * 3 / 2;
@@ -1024,12 +1051,8 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 
 	int m = 1;
 	if (fs < 2) {
-		if (smm == RP_SCREENMODE_SCALE_2X) {
-			m = 2;
-		} else if (smm == RP_SCREENMODE_SCALE_3X) {
-			m = 3;
-		} else if (smm == RP_SCREENMODE_SCALE_4X) {
-			m = 4;
+		if (smm_m >= RP_SCREENMODE_SCALE_2X) {
+			m = smm_m - RP_SCREENMODE_SCALE_2X + 2;
 		}
 	}
 	p->rtg_horiz_zoom_mult = p->rtg_vert_zoom_mult = (float)m;
@@ -1041,12 +1064,8 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 			p->gf[1].gfx_filter_autoscale = 1;
 		} else {
 			p->gf[1].gfx_filter_autoscale = 0;
-			if (smm == RP_SCREENMODE_SCALE_2X) {
-				m = 2;
-			} else if (smm == RP_SCREENMODE_SCALE_3X) {
-				m = 3;
-			} else if (smm == RP_SCREENMODE_SCALE_4X) {
-				m = 4;
+			if (smm_m >= RP_SCREENMODE_SCALE_2X) {
+				m = smm_m - RP_SCREENMODE_SCALE_2X + 2;
 			}
 		}
 
@@ -1278,6 +1297,47 @@ static void dos_execute_callback(uae_u32 id, uae_u32 status, uae_u32 flags, cons
 			xfree(er);
 		}
 	}
+}
+
+extern bool serreceive_external(uae_u16);
+static int rp_readmodemint(WPARAM wp, LPARAM lp)
+{
+	if (wp != MAKEWORD(RP_DEVICECATEGORY_MODEM, 0)) {
+		return 0;
+	}
+	uae_u8 b = (uae_u8)lp;
+	bool v = serreceive_external(b | 0x100);
+	return v ? 1 : -1;
+}
+
+static bool modem_cts, modem_cd, modem_ri, modem_dsr;
+void rp_readmodemstatus(bool *dsr, bool *cd, bool *cts, bool *ri)
+{
+	*dsr = modem_dsr;
+	*cd = modem_cd;
+	*cts = modem_cts;
+	*ri = modem_ri;
+}
+static int rp_readmodemstatusint(WPARAM wp, LPARAM lp)
+{
+	if (wp != MAKEWORD(RP_DEVICECATEGORY_MODEM, 0)) {
+		return 0;
+	}
+	uae_u16 mask = LOWORD(lp);
+	uae_u16 val = HIWORD(lp);
+	if (mask & RP_SIGNAL_CTS) {
+		modem_cts = (val & RP_SIGNAL_CTS) != 0;
+	}
+	if (mask & RP_SIGNAL_RI) {
+		modem_ri = (val & RP_SIGNAL_RI) != 0;
+	}
+	if (mask & RP_SIGNAL_DSR) {
+		modem_dsr = (val & RP_SIGNAL_DSR) != 0;
+	}
+	if (mask & RP_SIGNAL_CD) {
+		modem_cd = (val & RP_SIGNAL_CD) != 0;
+	}
+	return 1;
 }
 
 static int dosexecute(TCHAR *file, TCHAR *currentdir, TCHAR *parms, uae_u32 stack, uae_s32 priority, uae_u32 id, uae_u32 flags, uae_u8 *bin, uae_u32 binsize)
@@ -1534,6 +1594,10 @@ static LRESULT CALLBACK RPHostMsgFunction2 (UINT uMessage, WPARAM wParam, LPARAM
 		return 1;
 	case RP_IPC_TO_GUEST_EXECUTE:
 		return execute(pData);
+	case RP_IPC_TO_GUEST_DEVICEWRITEBYTE:
+		return rp_readmodemint(wParam, lParam);
+	case RP_IPC_TO_GUEST_DEVICESETSIGNALS:
+		return rp_readmodemstatusint(wParam, lParam);
 	}
 	return FALSE;
 }
@@ -1638,7 +1702,7 @@ static void sendenum (void)
 	cnt = 0;
 	while (max--) {
 		p2 = _tcschr (p1, '\n');
-		if (p2 && _tcslen (p2) > 0) {
+		if (p2 && p2[0] != '\0') {
 			TCHAR tmp2[100];
 			*p2++ = 0;
 			memset (&desc, 0, sizeof desc);
@@ -1694,9 +1758,10 @@ static void sendfeatures (void)
 
 	feat = RP_FEATURE_POWERLED | RP_FEATURE_SCREEN1X | RP_FEATURE_FULLSCREEN;
 	feat |= RP_FEATURE_PAUSE | RP_FEATURE_TURBO_CPU | RP_FEATURE_TURBO_FLOPPY | RP_FEATURE_VOLUME | RP_FEATURE_SCREENCAPTURE;
-	feat |= RP_FEATURE_STATE | RP_FEATURE_DEVICEREADWRITE;
-	if (currprefs.gfx_api)
+	feat |= RP_FEATURE_DEVICEREADWRITE;
+	if (currprefs.gfx_api) {
 		feat |= RP_FEATURE_SCREENOVERLAY;
+	}
 	if (WIN32GFX_IsPicassoScreen(mon)) {
 		feat |= RP_FEATURE_SCREEN2X | RP_FEATURE_SCREEN3X | RP_FEATURE_SCREEN4X;
 	} else {
@@ -1710,7 +1775,10 @@ static void sendfeatures (void)
 	feat |= RP_FEATURE_INPUTDEVICE_ANALOGSTICK;
 	feat |= RP_FEATURE_INPUTDEVICE_LIGHTPEN;
 	feat |= RP_FEATURE_RAWINPUT_EVENT;
-	write_log (_T("RP_IPC_TO_HOST_FEATURES=%x %d\n"), feat, WIN32GFX_IsPicassoScreen(mon));
+	if (!is_savestate_incompatible()) {
+		feat |= RP_FEATURE_STATE;
+	}
+	write_log (_T("RP_IPC_TO_HOST_FEATURES=%08x %d\n"), feat, WIN32GFX_IsPicassoScreen(mon));
 	RPSendMessagex (RP_IPC_TO_HOST_FEATURES, feat, 0, NULL, 0, &guestinfo, NULL);
 }
 
@@ -2375,6 +2443,80 @@ void rp_reset(void)
 	if (!initialized)
 		return;
 	device_add_vsync_pre(rp_vsync);
+}
+
+bool rp_ismodem(void)
+{
+	return rp_modem != 0;
+}
+void rp_writemodem(uae_u8 v)
+{
+	if (!initialized) {
+		return;
+	}
+	if (!rp_modemopen) {
+		rp_modemstate(1);
+	}
+	WPARAM unit = MAKEWORD(RP_DEVICECATEGORY_MODEM, 0);
+	RPSendMessagex(RP_IPC_TO_HOST_DEVICEWRITEBYTE, unit, v, NULL, 0, &guestinfo, NULL);
+}
+void rp_modemstate(int state)
+{
+	if (!initialized) {
+		return;
+	}
+	if (state == rp_modemopen) {
+		return;
+	}
+	WPARAM unit = MAKEWORD(RP_DEVICECATEGORY_MODEM, 0);
+	if (state) {
+		write_log(_T("RP: modem open\n"));
+		RPSendMessagex(RP_IPC_TO_HOST_DEVICEOPEN, unit, 0, NULL, 0, &guestinfo, NULL);
+	} else {
+		write_log(_T("RP: modem close\n"));
+		RPSendMessagex(RP_IPC_TO_HOST_DEVICECLOSE, unit, 0, NULL, 0, &guestinfo, NULL);
+	}
+	rp_modemopen = state;
+}
+void rp_writemodemstatus(bool rts, bool rtschanged, bool dtr, bool dtrchanged)
+{
+	if (!initialized) {
+		return;
+	}
+	WPARAM unit = MAKEWORD(RP_DEVICECATEGORY_MODEM, 0);
+	LPARAM l = MAKELONG((rtschanged ? RP_SIGNAL_RTS :0) | (dtrchanged ? RP_SIGNAL_DTR : 0), (rts ? RP_SIGNAL_RTS : 0) | (dtr ? RP_SIGNAL_DTR : 0));
+	RPSendMessagex(RP_IPC_TO_HOST_DEVICESETSIGNALS, unit, l, NULL, 0, &guestinfo, NULL);
+
+}
+
+bool rp_isprinter(void)
+{
+	return rp_printer != 0;
+}
+bool rp_isprinteropen(void)
+{
+	return rp_printer != 0 && rp_printeropen != 0;
+}
+void rp_writeprinter(uae_char *b, int len)
+{
+	if (!initialized) {
+		return;
+	}
+	WPARAM unit = MAKEWORD(RP_DEVICECATEGORY_PRINTER, 0);
+	if (!b) {
+		if (rp_printeropen) {
+			write_log(_T("RP: printer close\n"));
+			RPSendMessagex(RP_IPC_TO_HOST_DEVICECLOSE, unit, 0, NULL, 0, &guestinfo, NULL);
+		}
+		rp_printeropen = 0;
+		return;
+	}
+	if (!rp_printeropen) {
+		write_log(_T("RP: printer open\n"));
+		RPSendMessagex(RP_IPC_TO_HOST_DEVICEOPEN, unit, 0, NULL, 0, &guestinfo, NULL);
+		rp_printeropen = 1;
+	}
+	RPSendMessagex(RP_IPC_TO_HOST_DEVICEWRITEBYTES, unit, 0, b, len, &guestinfo, NULL);
 }
 
 void rp_test(void)

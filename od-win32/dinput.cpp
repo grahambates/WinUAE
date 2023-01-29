@@ -17,6 +17,7 @@ int tablet_log = 0;
 int no_rawinput = 0;
 int no_directinput = 0;
 int no_windowsmouse = 0;
+int winekeyboard = 0;
 
 #define _WIN32_WINNT 0x501 /* enable RAWINPUT support */
 
@@ -433,7 +434,7 @@ static int doregister_rawinput (bool add)
 			rid[num].dwFlags = RIDEV_INPUTSINK;
 			rid[num].hwndTarget = mon->hMainWnd;
 		}
-		rid[num].dwFlags |= (os_vista ? RIDEV_DEVNOTIFY : 0);
+		rid[num].dwFlags |= RIDEV_DEVNOTIFY;
 	}
 	num++;
 
@@ -448,7 +449,7 @@ static int doregister_rawinput (bool add)
 				rid[num].dwFlags = RIDEV_INPUTSINK;
 				rid[num].hwndTarget = mon->hMainWnd;
 			}
-			rid[num].dwFlags |= RIDEV_NOHOTKEYS | (os_vista ? RIDEV_DEVNOTIFY : 0);
+			rid[num].dwFlags |= RIDEV_NOHOTKEYS | RIDEV_DEVNOTIFY;
 		}
 		num++;
 
@@ -465,7 +466,7 @@ static int doregister_rawinput (bool add)
 				rid[num].dwFlags = RIDEV_INPUTSINK;
 				rid[num].hwndTarget = mon->hMainWnd;
 			}
-			rid[num].dwFlags |= (os_vista ? RIDEV_DEVNOTIFY : 0);
+			rid[num].dwFlags |= RIDEV_DEVNOTIFY;
 		}
 		num++;
 
@@ -479,7 +480,7 @@ static int doregister_rawinput (bool add)
 				rid[num].dwFlags = RIDEV_INPUTSINK;
 				rid[num].hwndTarget = mon->hMainWnd;
 			}
-			rid[num].dwFlags |= (os_vista ? RIDEV_DEVNOTIFY : 0);
+			rid[num].dwFlags |= RIDEV_DEVNOTIFY;
 		}
 		num++;
 	}
@@ -2080,7 +2081,7 @@ static void initialize_windowsmouse (void)
 		}
 		winmousewheelbuttonstart = did->buttons;
 		if (i == 0) {
-			did->axles = os_vista ? 4 : 3;
+			did->axles = 4;
 			did->axissort[0] = 0;
 			did->axisname[0] = my_strdup (_T("X Axis"));
 			did->axissort[1] = 1;
@@ -2470,7 +2471,9 @@ static void handle_rawinput_2 (RAWINPUT *raw, LPARAM lParam)
 				write_log (_T("VK->CODE: %x\n"), scancode);
 
 		}
-		if (rk->VKey == 0xff || (rk->Flags & RI_KEY_E0))
+		if (rk->VKey == 0xff || ((rk->Flags & RI_KEY_E0) && !(winekeyboard && rk->VKey == VK_NUMLOCK)))
+			scancode |= 0x80;
+		if (winekeyboard && rk->VKey == VK_PAUSE)
 			scancode |= 0x80;
 		if (rk->MakeCode == KEYBOARD_OVERRUN_MAKE_CODE)
 			return;
@@ -2614,8 +2617,6 @@ bool is_hid_rawinput(void)
 	if (no_rawinput & 4)
 		return false;
 	if (!rawinput_enabled_hid && !rawinput_enabled_hid_reset)
-		return false;
-	if (!os_vista)
 		return false;
 	return true;
 }
@@ -3203,9 +3204,6 @@ static int di_do_init (void)
 		rawinput_enabled_hid = rawinput_enabled_hid_reset;
 		rawinput_enabled_hid_reset = 0;
 	}
-
-	if (!os_vista && rawinput_enabled_hid < 0)
-		rawinput_enabled_hid = 0;
 
 #if 0
 	IsXInputDevice(NULL);
