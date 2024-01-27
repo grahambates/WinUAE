@@ -15,8 +15,8 @@
 #include "traps.h"
 
 #define UAEMAJOR 4
-#define UAEMINOR 9
-#define UAESUBREV 0
+#define UAEMINOR 10
+#define UAESUBREV 1
 
 #define MAX_AMIGADISPLAYS 4
 
@@ -163,6 +163,7 @@ struct floppyslot
 	int dfxtype;
 	int dfxsubtype;
 	TCHAR dfxsubtypeid[32];
+	TCHAR dfxprofile[32];
 	int dfxclick;
 	TCHAR dfxclickexternal[256];
 	bool forcedwriteprotect;
@@ -297,6 +298,7 @@ enum { CP_GENERIC = 1, CP_CDTV, CP_CDTVCR, CP_CD32, CP_A500, CP_A500P, CP_A600,
 #define OVERSCANMODE_OVERSCAN 3
 #define OVERSCANMODE_BROADCAST 4
 #define OVERSCANMODE_EXTREME 5
+#define OVERSCANMODE_ULTRA 6
 
 #define MAX_FILTERSHADERS 4
 
@@ -320,7 +322,7 @@ struct chipset_refresh
 	int ntsc;
 	int vsync;
 	int framelength;
-	double rate;
+	float rate;
 	TCHAR label[16];
 	TCHAR commands[256];
 	TCHAR filterprofile[64];
@@ -349,8 +351,13 @@ struct apmode
 #define MAX_LUA_STATES 16
 
 
+#define MAX_FILTERDATA 3
+#define GF_NORMAL 0
+#define GF_RTG 1
+#define GF_INTERLACE 2
 struct gfx_filterdata
 {
+	int enable;
 	int gfx_filter;
 	TCHAR gfx_filtershader[2 * MAX_FILTERSHADERS + 1][MAX_DPATH];
 	TCHAR gfx_filtermask[2 * MAX_FILTERSHADERS + 1][MAX_DPATH];
@@ -375,6 +382,7 @@ struct gfx_filterdata
 	int gfx_filter_autoscale;
 	int gfx_filter_integerscalelimit;
 	int gfx_filter_keep_autoscale_aspect;
+	bool changed;
 };
 
 #define MAX_DUPLICATE_EXPANSION_BOARDS 5
@@ -448,6 +456,7 @@ struct ramboard
 	bool readonly;
 	bool nodma;
 	bool force16bit;
+	bool chipramtiming;
 	struct boardloadfile lf;
 };
 struct expansion_params
@@ -527,7 +536,6 @@ struct uae_prefs {
 	bool sound_stereo_swap_paula;
 	bool sound_stereo_swap_ahi;
 	bool sound_auto;
-	bool sound_cdaudio;
 	bool sound_volcnt;
 
 	int sampler_freq;
@@ -581,15 +589,16 @@ struct uae_prefs {
 	int gfx_variable_sync;
 	bool gfx_windowed_resize;
 	int gfx_overscanmode;
+	int gfx_monitorblankdelay;
 
-	struct gfx_filterdata gf[2];
+	struct gfx_filterdata gf[3];
 
 	float rtg_horiz_zoom_mult;
 	float rtg_vert_zoom_mult;
 
 	bool immediate_blits;
 	int waiting_blits;
-	double blitter_speed_throttle;
+	float blitter_speed_throttle;
 	unsigned int chipset_mask;
 	bool chipset_hr;
 	bool keyboard_connected;
@@ -599,12 +608,15 @@ struct uae_prefs {
 	int genlock_mix;
 	int genlock_scale;
 	int genlock_aspect;
+	int genlock_effects;
+	uae_u64 ecs_genlock_features_colorkey_mask[4];
+	uae_u8 ecs_genlock_features_plane_mask;
 	bool genlock_alpha;
 	TCHAR genlock_image_file[MAX_DPATH];
 	TCHAR genlock_video_file[MAX_DPATH];
 	int monitoremu;
 	int monitoremu_mon;
-	double chipset_refreshrate;
+	float chipset_refreshrate;
 	struct chipset_refresh cr[MAX_CHIPSET_REFRESH + 2];
 	int cr_selected;
 	int collision_level;
@@ -675,7 +687,6 @@ struct uae_prefs {
 	int cs_mbdmac;
 	bool cs_cdtvcr;
 	bool cs_df0idhw;
-	bool cs_slowmemisfast;
 	bool cs_resetwarning;
 	bool cs_denisenoehb;
 	bool cs_dipagnus;
@@ -693,6 +704,10 @@ struct uae_prefs {
 	int cs_hacks;
 	int cs_ciatype[2];
 	int cs_kbhandshake;
+	int cs_hvcsync;
+	int cs_eclockphase;
+	int cs_eclocksync;
+	bool cs_memorypatternfill;
 
 	struct boardromconfig expansionboard[MAX_EXPANSION_BOARDS];
 
@@ -728,8 +743,8 @@ struct uae_prefs {
 	struct multipath path_cd;
 
 	int m68k_speed;
-	double m68k_speed_throttle;
-	double x86_speed_throttle;
+	float m68k_speed_throttle;
+	float x86_speed_throttle;
 	int cpu_model;
 	int mmu_model;
 	bool mmu_ec;
@@ -770,6 +785,10 @@ struct uae_prefs {
 	bool rtg_hardwaresprite;
 	bool rtg_more_compatible;
 	bool rtg_multithread;
+	bool rtg_overlay;
+	bool rtg_vgascreensplit;
+	bool rtg_paletteswitch;
+	bool rtg_dacswitch;
 	struct rtgboardconfig rtgboards[MAX_RTG_BOARDS];
 	uae_u32 custom_memory_addrs[MAX_CUSTOM_MEMORY_ADDRS];
 	uae_u32 custom_memory_sizes[MAX_CUSTOM_MEMORY_ADDRS];
@@ -779,6 +798,7 @@ struct uae_prefs {
 	int uaeboard_order;
 
 	bool kickshifter;
+	bool scsidevicedisable;
 	bool filesys_no_uaefsdb;
 	bool filesys_custom_uaefsdb;
 	bool mmkeyboard;
@@ -792,6 +812,7 @@ struct uae_prefs {
 	bool obs_sound_toccata_mixer;
 	bool obs_sound_es1370;
 	bool obs_sound_fm801;
+	bool cputester;
 
 	int mountitems;
 	struct uaedev_config_data mountconfig[MOUNT_CONFIG_SIZE];
@@ -910,7 +931,6 @@ extern void set_config_changed (void);
 
 /* Contains the filename of .uaerc */
 extern TCHAR optionsfile[];
-extern void save_options (struct zfile *, struct uae_prefs *, int);
 
 extern void cfgfile_write (struct zfile *, const TCHAR *option, const TCHAR *format,...);
 extern void cfgfile_dwrite (struct zfile *, const TCHAR *option, const TCHAR *format,...);
@@ -925,7 +945,6 @@ extern void cfgfile_target_dwrite_bool (struct zfile *f, const TCHAR *option, bo
 extern void cfgfile_write_str(struct zfile *f, const TCHAR *option, const TCHAR *value);
 extern void cfgfile_write_str_escape(struct zfile *f, const TCHAR *option, const TCHAR *value);
 extern void cfgfile_dwrite_str(struct zfile *f, const TCHAR *option, const TCHAR *value);
-extern void cfgfile_dwrite_str_escape(struct zfile *f, const TCHAR *option, const TCHAR *value);
 extern void cfgfile_target_write_str(struct zfile *f, const TCHAR *option, const TCHAR *value);
 extern void cfgfile_target_dwrite_str(struct zfile *f, const TCHAR *option, const TCHAR *value);
 extern void cfgfile_target_dwrite_str_escape(struct zfile *f, const TCHAR *option, const TCHAR *value);
@@ -955,7 +974,7 @@ extern TCHAR *cfgfile_option_get(const TCHAR *s, const TCHAR *option);
 extern TCHAR *cfgfile_subst_path(const TCHAR *path, const TCHAR *subst, const TCHAR *file);
 
 extern TCHAR *target_expand_environment (const TCHAR *path, TCHAR *out, int maxlen);
-extern int target_parse_option (struct uae_prefs *, const TCHAR *option, const TCHAR *value);
+extern int target_parse_option (struct uae_prefs *, const TCHAR *option, const TCHAR *value, int type);
 extern void target_save_options (struct zfile*, struct uae_prefs *);
 extern void target_default_options (struct uae_prefs *, int type);
 extern void target_fixup_options (struct uae_prefs *);
@@ -992,7 +1011,7 @@ extern void fixup_cpu (struct uae_prefs *prefs);
 extern void cfgfile_compatibility_romtype(struct uae_prefs *p);
 extern void cfgfile_compatibility_rtg(struct uae_prefs *p);
 extern bool cfgfile_detect_art(struct uae_prefs *p, TCHAR *path);
-extern const TCHAR *cfgfile_getconfigdata(int *len);
+extern const TCHAR *cfgfile_getconfigdata(size_t *len);
 extern bool cfgfile_createconfigstore(struct uae_prefs *p);
 extern void cfgfile_get_shader_config(struct uae_prefs *p, int rtg);
 

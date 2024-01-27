@@ -19,7 +19,8 @@
 #include "zfile.h"
 
 #define MAX_GUI_FONTS 2
-#define DEFAULT_FONTSIZE 8
+#define DEFAULT_FONTSIZE_OLD 8
+#define DEFAULT_FONTSIZE_NEW 9
 
 static float multx, multy;
 static int scaleresource_width, scaleresource_height;
@@ -27,8 +28,9 @@ static int scaleresource_reset;
 static int dux, duy;
 
 static TCHAR fontname_gui[32], fontname_list[32];
-static int fontsize_gui = DEFAULT_FONTSIZE;
-static int fontsize_list = DEFAULT_FONTSIZE;
+static int fontsize_default = DEFAULT_FONTSIZE_OLD;
+static int fontsize_gui = DEFAULT_FONTSIZE_OLD;
+static int fontsize_list = DEFAULT_FONTSIZE_OLD;
 static int fontstyle_gui = 0;
 static int fontstyle_list = 0;
 static int fontweight_gui = FW_REGULAR;
@@ -81,12 +83,9 @@ typedef struct {
 } DLGITEMTEMPLATEEX;
 #include <poppack.h>
 
-static int font_vista_ok;
 static const wchar_t wfont_vista[] = _T("Segoe UI");
-static const wchar_t wfont_xp[] = _T("Tahoma");
 static const wchar_t wfont_old[] = _T("MS Sans Serif");
 static const TCHAR font_vista[] = _T("Segoe UI");
-static const TCHAR font_xp[] = _T("Tahoma");
 
 #define WNDS_DIALOGWINDOW 0X00010000
 #define CW_USEDEFAULT16 ((short)0x8000)
@@ -845,21 +844,13 @@ static void scalechildwindows(struct newresource *nr)
 	for (int i = 0; i < nr->hwndcnt; i++) {
 		struct newreswnd *nw = &nr->hwnds[i];
 
-		int x = nw->x;
-		x *= multx;
-		x /= 100;
+		int x = (int)(nw->x * multx / 100);
 
-		int y = nw->y;
-		y *= multy;
-		y /= 100;
+		int y = (int)(nw->y * multy / 100);
 
-		int w = nw->w;
-		w *= multx;
-		w /= 100;
+		int w = (int)(nw->w * multx / 100);
 
-		int h = nw->h;
-		h *= multy;
-		h /= 100;
+		int h = (int)(nw->h * multy / 100);
 
 		if (nr->fontchanged) {
 			SendMessage(nw->hwnd, WM_SETFONT, (WPARAM)nr->dinfo.hUserFont, 0);
@@ -898,14 +889,12 @@ static void scaleresource_setfont(struct newresource *nr, HWND hDlg)
 {
 	if (!nr)
 		return;
-	if (os_vista) {
-		for (int i = 0; i < nr->setparamcnt; i++) {
-			HWND hwnd = GetDlgItem(hDlg, nr->setparam_id[i]);
-			if (hwnd) {
-				int v = SendMessage(hwnd, CB_GETITEMHEIGHT, -1, NULL);
-				if (v > 0 && mmy(v) > v)
-					SendMessage(hwnd, CB_SETITEMHEIGHT, -1, mmy(v));
-			}
+	for (int i = 0; i < nr->setparamcnt; i++) {
+		HWND hwnd = GetDlgItem(hDlg, nr->setparam_id[i]);
+		if (hwnd) {
+			int v = (int)SendMessage(hwnd, CB_GETITEMHEIGHT, -1, NULL);
+			if (v > 0 && mmy(v) > v)
+				SendMessage(hwnd, CB_SETITEMHEIGHT, -1, mmy(v));
 		}
 	}
 }
@@ -926,13 +915,13 @@ void rescaleresource(struct newresource *nr, bool full)
 	pwi.cbSize = sizeof(WINDOWINFO);
 	GetWindowInfo(nr->hwnd, &pwi);
 
-	float neww = scaleresource_width - pwi.cxWindowBorders * 2;
-	float oldw = (530.0 * nr->unitx) / 8.0;
-	multx = neww * 100.0 / oldw;
+	float neww = (float)scaleresource_width - pwi.cxWindowBorders * 2;
+	float oldw = (530.0f * nr->unitx) / 8.0f;
+	multx = neww * 100.0f / oldw;
 
-	float newh = scaleresource_height - height - pwi.cyWindowBorders * 2;
-	float oldh = (345.0 * nr->unity) / 8.0;
-	multy = newh * 100.0 / oldh;
+	float newh = (float)scaleresource_height - height - pwi.cyWindowBorders * 2;
+	float oldh = (345.0f * nr->unity) / 8.0f;
+	multy = newh * 100.0f / oldh;
 
 	HMONITOR m = MonitorFromWindow(nr->hwnd, MONITOR_DEFAULTTOPRIMARY);
 	int dpi = getdpiformonitor(m);
@@ -1066,7 +1055,7 @@ static int scaleresource2 (struct newresource *res, HWND parent, int resize, int
 	p = skiptextone (p);
 	p = todword (p);
 
-	int remain = ps2 - (BYTE*)res->sourceresource;
+	size_t remain = ps2 - (BYTE*)res->sourceresource;
 	memcpy (p, ps2, res->sourcesize - remain);
 
 	int id2 = 0;
@@ -1120,12 +1109,21 @@ void scalaresource_listview_font_info(int *w)
 
 static void setdeffont (void)
 {
-	_tcscpy (fontname_gui, font_vista_ok ? wfont_vista : wfont_xp);
-	fontsize_gui = DEFAULT_FONTSIZE;
+	int fs = DEFAULT_FONTSIZE_OLD;
+	int w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+	int h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+	if (w >= 1600 && h >= 1024) {
+		fs = DEFAULT_FONTSIZE_NEW;
+	}
+	fontsize_default = fs;
+
+	_tcscpy (fontname_gui, wfont_vista);
+	fontsize_gui = fontsize_default;
 	fontstyle_gui = 0;
 	fontweight_gui = FW_REGULAR;
-	_tcscpy (fontname_list, font_vista_ok ? wfont_vista : wfont_xp);
-	fontsize_list = DEFAULT_FONTSIZE;
+	_tcscpy (fontname_list, wfont_vista);
+	fontsize_list = fontsize_default;
 	fontstyle_list = 0;
 	fontweight_list = FW_REGULAR;
 }
@@ -1173,7 +1171,7 @@ static void regqueryfont (UAEREG *reg, const TCHAR *prefix, const TCHAR *name, T
 	fontweight = _tstoi (p3);
 
 	if (fontsize == 0)
-		fontsize = DEFAULT_FONTSIZE;
+		fontsize = fontsize_default;
 	if (fontsize < 5)
 		fontsize = 5;
 	if (fontsize > 30)
@@ -1201,9 +1199,6 @@ void scaleresource_modification(HWND hwnd)
 
 void scaleresource_init(const TCHAR *prefix, int fullscreen)
 {
-	if (os_vista)
-		font_vista_ok = 1;
-
 	fontprefix = prefix;
 
 	setdeffont();
@@ -1322,7 +1317,7 @@ extern int gui_fullscreen;
 
 void getextendedframebounds(HWND hwnd, RECT *r)
 {
-	if (!pDwmGetWindowAttribute && !dwmapihandle && os_vista) {
+	if (!pDwmGetWindowAttribute && !dwmapihandle) {
 		dwmapihandle = LoadLibrary(_T("dwmapi.dll"));
 		if (dwmapihandle)
 			pDwmGetWindowAttribute = (DWMGETWINDOWATTRIBUTE)GetProcAddress(dwmapihandle, "DwmGetWindowAttribute");
@@ -1553,7 +1548,7 @@ static void boxartpaint(HDC hdc, HWND hwnd)
 			Gdiplus::Rect d(x1, y1, x2, y2);
 			graphics.DrawImage(img, d);
 
-			Gdiplus::Rect d2(x1 - 1, y1 - 1, x2 + 1, y2 + 1);
+			Gdiplus::Rect d2(x1 - 1, y1 - 1, x2 + 2, y2 + 2);
 			if (im->metafile) {
 				graphics.DrawRectangle(&pen2, d2);
 			} else {
@@ -1600,10 +1595,10 @@ bool show_box_art(const TCHAR *path, const TCHAR *configpath)
 		_tcscpy(config_path, configpath);
 	}
 
-	int len = _tcslen(config_path);
+	int len = uaetcslen(config_path);
 	if (len > 4 && !_tcsicmp(config_path + len - 4, _T(".uae")))
 		config_path[len - 4] = 0;
-	if (_tcslen(config_path) > 0)
+	if (uaetcslen(config_path) > 0)
 		SetWindowText(boxarthwnd, config_path);
 
 	if (max_visible_boxart_images < 1) {

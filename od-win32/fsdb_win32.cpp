@@ -53,7 +53,7 @@ static TCHAR evilchars[NUM_EVILCHARS] = { '\\', '*', '?', '\"', '<', '>', '|' };
 
 static TCHAR *make_uaefsdbpath (const TCHAR *dir, const TCHAR *name)
 {
-	int len;
+	size_t len;
 	TCHAR *p;
 
 	len = _tcslen (dir) + 1 + 1;
@@ -304,14 +304,15 @@ static a_inode *aino_from_buf (a_inode *base, uae_u8 *buf, int *winmode)
 /* Return nonzero for any name we can't create on the native filesystem.  */
 static int fsdb_name_invalid_2x (const TCHAR *n, int dir)
 {
-	int i;
+	size_t i;
 	static char s1[MAX_DPATH];
 	static WCHAR s2[MAX_DPATH];
 	TCHAR a = n[0];
 	TCHAR b = (a == '\0' ? a : n[1]);
 	TCHAR c = (b == '\0' ? b : n[2]);
 	TCHAR d = (c == '\0' ? c : n[3]);
-	int l = _tcslen (n), ll;
+	size_t l = _tcslen(n);
+	int ll;
 
 	/* the reserved fsdb filename */
 	if (_tcscmp (n, FSDB_FILE) == 0)
@@ -371,8 +372,6 @@ static int fsdb_name_invalid_2 (a_inode *aino, const TCHAR *n, int dir)
 	int v = fsdb_name_invalid_2x(n, dir);
 	if (v <= 1 || !aino)
 		return v;
-	if (!os_win7)
-		return 1;
 	TCHAR *p = build_nname(aino->nname, n);
 	HANDLE h = CreateFile(p, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, NULL);
 	DWORD err = -1;
@@ -634,7 +633,7 @@ TCHAR *fsdb_create_unique_nname (a_inode *base, const TCHAR *suggestion)
 	}
 }
 
-TCHAR *fsdb_search_dir (const TCHAR *dirname, TCHAR *rel)
+TCHAR *fsdb_search_dir(const TCHAR *dirname, TCHAR *rel, TCHAR **relalt)
 {
 	WIN32_FIND_DATA fd;
 	HANDLE h;
@@ -642,6 +641,7 @@ TCHAR *fsdb_search_dir (const TCHAR *dirname, TCHAR *rel)
 	const TCHAR *namep;
 	TCHAR path[MAX_DPATH];
 	
+	*relalt = NULL;
 	tmp = build_nname (dirname, rel);
 	if (!tmp)
 		return NULL;
@@ -659,6 +659,32 @@ TCHAR *fsdb_search_dir (const TCHAR *dirname, TCHAR *rel)
 		else
 			p = my_strdup (fd.cFileName);
 		FindClose (h);
+	} else {
+		// check if it is *.lnk shortcut
+		TCHAR tmp[MAX_DPATH];
+		_tcscpy(tmp, namep);
+		_tcscat(tmp, _T(".lnk"));
+		DWORD flags = GetFileAttributesSafe(tmp);
+		if (flags != INVALID_FILE_ATTRIBUTES && !(flags & FILE_ATTRIBUTE_SYSTEM) && !(flags & FILE_ATTRIBUTE_DIRECTORY)) {
+			h = FindFirstFile(tmp, &fd);
+			if (h != INVALID_HANDLE_VALUE) {
+				TCHAR tmp2[MAX_DPATH];
+				_tcscpy(tmp2, tmp);
+				if (my_resolvesoftlink(tmp2, sizeof tmp2 / sizeof(TCHAR), false)) {
+					if (_tcslen(fd.cFileName) > 4 && !_tcsicmp(fd.cFileName + _tcslen(fd.cFileName) - 4, _T(".lnk"))) {
+						fd.cFileName[_tcslen(fd.cFileName) - 4] = 0;
+					}
+					if (_tcscmp(fd.cFileName, rel) == 0)
+						p = rel;
+					else
+						p = my_strdup(fd.cFileName);
+					_tcscpy(tmp2, p);
+					_tcscat(tmp2, _T(".lnk"));
+					*relalt = my_strdup(tmp2);
+				}
+				FindClose(h);
+			}
+		}
 	}
 	xfree (tmp);
 	return p;

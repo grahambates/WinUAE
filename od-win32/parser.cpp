@@ -18,7 +18,6 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <mmsystem.h>
-#include <ddraw.h>
 #include <commctrl.h>
 #include <commdlg.h>
 #include <stdio.h>
@@ -57,6 +56,9 @@
 #include "uaeipc.h"
 #include "xwin.h"
 #include "drawing.h"
+#ifdef RETROPLATFORM
+#include "rp.h"
+#endif
 
 #define GSDLLEXPORT __declspec(dllimport)
 
@@ -225,9 +227,9 @@ static void prt_thread (void *p)
 	prt_running--;
 }
 
-static int doflushprinter (void)
+static int doflushprinter(int open)
 {
-	if (prtopen == 0 && prtbufbytes < MIN_PRTBYTES) {
+	if (open == 0 && prtbufbytes < MIN_PRTBYTES) {
 		if (prtbufbytes > 0)
 			write_log (_T("PRINTER: %d bytes received, less than %d bytes, not printing.\n"), prtbufbytes, MIN_PRTBYTES);
 		prtbufbytes = 0;
@@ -268,7 +270,7 @@ static void flushprtbuf (void)
 		if (currprefs.parallel_matrix_emulation >= PARALLEL_MATRIX_EPSON) {
 			int i;
 			if (!prtopen) {
-				if (!doflushprinter ())
+				if (!doflushprinter(prtopen))
 					return;
 				if (epson_init (currprefs.prtname, currprefs.parallel_matrix_emulation))
 					prtopen = 1;
@@ -276,8 +278,20 @@ static void flushprtbuf (void)
 			for (i = 0; i < prtbufbytes; i++)
 				epson_printchar (prtbuf[i]);
 		} else {
+#ifdef RETROPLATFORM
+			if (rp_isprinter()) {
+				bool open = rp_isprinteropen();
+				if (!open) {
+					if (!doflushprinter(open))
+						return;
+				}
+				rp_writeprinter(prtbuf, prtbufbytes);
+				prtbufbytes = 0;
+				return;
+			}
+#endif
 			if (hPrt == INVALID_HANDLE_VALUE) {
-				if (!doflushprinter ())
+				if (!doflushprinter(prtopen))
 					return;
 				openprinter ();
 			}
@@ -344,7 +358,7 @@ static void DoSomeWeirdPrintingStuff (uae_char val)
 			psbuffer[0] = 0;
 			psbuffers = 0;
 			strcpy (prtbuf, "%!PS");
-			prtbufbytes = strlen (prtbuf);
+			prtbufbytes = uaestrlen(prtbuf);
 			flushprtbuf ();
 			write_log (_T("PostScript start detected..\n"));
 			return;
@@ -359,18 +373,23 @@ static void DoSomeWeirdPrintingStuff (uae_char val)
 	}
 }
 
-int isprinter (void)
+int isprinter(void)
 {
+#ifdef RETROPLATFORM
+	if (rp_isprinter()) {
+		return 1;
+	}
+#endif
 	if (!currprefs.prtname[0])
 		return 0;
-	if (!_tcsncmp (currprefs.prtname, _T("LPT"), 3)) {
-		paraport_open (currprefs.prtname);
+	if (!_tcsncmp(currprefs.prtname, _T("LPT"), 3)) {
+		paraport_open(currprefs.prtname);
 		return -1;
 	}
 	return 1;
 }
 
-int isprinteropen (void)
+int isprinteropen(void)
 {
 	if (prtopen || prtbufbytes > 0)
 		return 1;
@@ -508,12 +527,23 @@ static void openprinter (void)
 	}
 }
 
-void flushprinter (void)
+void flushprinter(void)
 {
-	if (!doflushprinter ())
+#ifdef RETROPLATFORM
+	if (rp_isprinter()) {
+		if (!doflushprinter(rp_isprinteropen())) {
+			return;
+		}
+		flushprtbuf();
+		rp_writeprinter(NULL, 0);
+		closeprinter();
 		return;
-	flushprtbuf ();
-	closeprinter ();
+	}
+#endif
+	if (!doflushprinter(prtopen))
+		return;
+	flushprtbuf();
+	closeprinter();
 }
 
 void closeprinter (void)
@@ -957,7 +987,7 @@ static int opentcp (const TCHAR *sername)
 		write_log(_T("SERIAL_TCP: socket() failed, %s:%s: %d\n"), name, port, WSAGetLastError ());
 		goto end;
 	}
-	err = bind (serialsocket, socketinfo->ai_addr, socketinfo->ai_addrlen);
+	err = bind (serialsocket, socketinfo->ai_addr, (int)socketinfo->ai_addrlen);
 	if (err < 0) {
 		write_log(_T("SERIAL_TCP: bind() failed, %s:%s: %d\n"), name, port, WSAGetLastError ());
 		goto end;
@@ -1603,6 +1633,13 @@ int enumserialports (void)
 		comports[cnt]->dev = my_strdup (SERIAL_INTERNAL);
 		comports[cnt]->cfgname = my_strdup (comports[cnt]->dev);
 		comports[cnt]->name = my_strdup (_T("WinUAE inter-process serial port"));
+		cnt++;
+	}
+	if (cnt < MAX_SERPAR_PORTS) {
+		comports[cnt] = xcalloc(struct serparportinfo, 1);
+		comports[cnt]->dev = my_strdup (SERIAL_LOOPBACK);
+		comports[cnt]->cfgname = my_strdup (comports[cnt]->dev);
+		comports[cnt]->name = my_strdup (_T("WinUAE loopback serial port"));
 		cnt++;
 	}
 

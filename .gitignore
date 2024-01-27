@@ -46,7 +46,9 @@ aros.rom.cpp
 /blit.h
 /blitfunc.cpp
 /blitfunc.h
+/blitfunc.c
 /blittable.cpp
+/blittable.c
 /cpudefs.cpp
 /cpuemu_*.cpp
 /cpuemu_*_test.cpp
@@ -58,6 +60,7 @@ aros.rom.cpp
 /jit/compstbl.cpp
 /jit/comptbl.h
 /cputest/data
+/cputest/cputest
 /linetoscr.cpp
 *.iobj
 *.ipdb

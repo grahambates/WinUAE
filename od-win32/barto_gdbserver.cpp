@@ -4,6 +4,7 @@
 
 #include <thread>
 #include <vector>
+#include <array>
 
 #include "options.h"
 #include "memory.h"
@@ -12,7 +13,7 @@
 #include "inputdevice.h"
 #include "uae.h"
 #include "debugmem.h"
-#include "dxwrap.h" // AmigaMonitor
+#include "render.h" // AmigaMonitor
 #include "custom.h"
 #include "xwin.h" // xcolnr
 #include "drawing.h" // color_entry
@@ -38,6 +39,8 @@
 
 extern BITMAPINFO* screenshot_get_bi();
 extern void* screenshot_get_bits();
+extern int screenshot_prepare(int monid, struct vidbuffer* vb);
+extern void vsync_display_render();
 
 // from main.cpp
 extern struct uae_prefs currprefs;
@@ -47,11 +50,13 @@ extern struct uae_prefs currprefs;
 
 // from custom.cpp
 /*static*/ extern struct color_entry current_colors;
+extern uae_u8 *save_custom(size_t *len, uae_u8 *dstptr, int full);
+extern int debug_safe_addr(uaecptr addr, int size);
 
 // from debug.cpp
 extern uae_u8 *get_real_address_debug(uaecptr addr);
 extern void initialize_memwatch(int mode);
-extern void memwatch_setup(void);
+extern void memwatch_setup();
 /*static*/ extern int trace_mode;
 /*static*/ extern uae_u32 trace_param[3];
 /*static*/ extern uaecptr processptr;
@@ -75,8 +80,9 @@ extern uae_u8* save_custom(int* len, uae_u8* dstptr, int full);
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-// -s input.config=1 -s input.1.keyboard.0.button.41.GRAVE=SPC_SINGLESTEP.0    -s use_gui=no -s quickstart=a500,1 -s debugging_features=gdbserver -s filesystem=rw,dh0:c:\Users\bwodok\Documents\Visual_Studio_Code\amiga-debug\bin\dh0
-// c:\Users\bwodok\Documents\Visual_Studio_Code\amiga-debug\bin\opt\bin> m68k-amiga-elf-gdb.exe -ex "set debug remote 1" -ex "target remote :2345" -ex "monitor profile xxx" ..\..\..\template\a.mingw.elf
+// VS2022: Test or Release/FullRelease config 
+// -s input.config=1 -s input.1.keyboard.0.button.41.GRAVE=SPC_SINGLESTEP.0    -s use_gui=no -s quickstart=a500,1 -s debugging_features=gdbserver -s filesystem=rw,dh0:c:\Users\Chuck\Documents\Visual_Studio_Code\amiga-debug\bin\dh0
+// c:\Users\Chuck\Documents\Visual_Studio_Code\amiga-debug\bin\opt\bin> m68k-amiga-elf-gdb.exe -ex "set debug remote 1" -ex "target remote :2345" -ex "monitor profile xxx" ..\..\..\template\a.mingw.elf
 
 namespace barto_gdbserver {
 	bool is_connected();
@@ -159,6 +165,53 @@ namespace barto_gdbserver {
 		}
 		return ret;
 	}
+
+/*	#pragma comment(lib, "Bcrypt.lib")
+	#ifndef NT_SUCCESS
+		#define NT_SUCCESS(Status) ((NTSTATUS)(Status) >= 0)
+	#endif
+	std::array<uint8_t, 32> sha256(const void* addr, size_t size) {
+		std::array<uint8_t, 32> hash{};
+
+		BCRYPT_ALG_HANDLE AlgHandle = nullptr;
+		BCRYPT_HASH_HANDLE HashHandle = nullptr;
+		if(NT_SUCCESS(BCryptOpenAlgorithmProvider(&AlgHandle, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_HASH_REUSABLE_FLAG))) {
+			DWORD HashLength = 0;
+			DWORD ResultLength = 0;
+			if(NT_SUCCESS(BCryptGetProperty(AlgHandle, BCRYPT_HASH_LENGTH, (PBYTE)&HashLength, sizeof(HashLength), &ResultLength, 0)) && HashLength == hash.size()) {
+				if(NT_SUCCESS(BCryptCreateHash(AlgHandle, &HashHandle, nullptr, 0, nullptr, 0, 0))) {
+					(void)BCryptHashData(HashHandle, kickmem_bank.baseaddr, kickmem_bank.allocated_size, 0);
+					(void)BCryptFinishHash(HashHandle, hash.data(), (ULONG)hash.size(), 0);
+					BCryptDestroyHash(HashHandle);
+				}
+			}
+			BCryptCloseAlgorithmProvider(AlgHandle, 0);
+		}
+
+		return hash;
+	}
+
+	std::array<uint8_t, 16> sha1(const void* addr, size_t size) {
+		std::array<uint8_t, 16> hash{};
+
+		BCRYPT_ALG_HANDLE AlgHandle = nullptr;
+		BCRYPT_HASH_HANDLE HashHandle = nullptr;
+		if(NT_SUCCESS(BCryptOpenAlgorithmProvider(&AlgHandle, BCRYPT_SHA1_ALGORITHM, nullptr, BCRYPT_HASH_REUSABLE_FLAG))) {
+			DWORD HashLength = 0;
+			DWORD ResultLength = 0;
+			if(NT_SUCCESS(BCryptGetProperty(AlgHandle, BCRYPT_HASH_LENGTH, (PBYTE)&HashLength, sizeof(HashLength), &ResultLength, 0)) && HashLength == hash.size()) {
+				if(NT_SUCCESS(BCryptCreateHash(AlgHandle, &HashHandle, nullptr, 0, nullptr, 0, 0))) {
+					(void)BCryptHashData(HashHandle, kickmem_bank.baseaddr, kickmem_bank.allocated_size, 0);
+					(void)BCryptFinishHash(HashHandle, hash.data(), (ULONG)hash.size(), 0);
+					BCryptDestroyHash(HashHandle);
+				}
+			}
+			BCryptCloseAlgorithmProvider(AlgHandle, 0);
+		}
+
+		return hash;
+	}
+*/
 
 	std::thread connect_thread;
 	PADDRINFOW socketinfo;
@@ -278,12 +331,20 @@ namespace barto_gdbserver {
 			return false;
 		}
 
+		barto_log("GDBSERVER: listen() succeeded\n");
 		return true;
 	}
 
 	bool init() {
 		if(currprefs.debugging_features & (1 << 2)) { // "gdbserver"
+			close();
+
 			warpmode(1);
+			//cfgfile_modify(-1, _T("cpu_speed max"), 0, nullptr, 0);
+			//cfgfile_modify(-1, _T("cpu_cycle_exact false"), 0, nullptr, 0);
+			//cfgfile_modify(-1, _T("cpu_memory_cycle_exact false"), 0, nullptr, 0);
+			//cfgfile_modify(-1, _T("blitter_cycle_exact false"), 0, nullptr, 0);
+			//cfgfile_modify(-1, _T("warp true"), 0, nullptr, 0); // last
 
 			// disable console
 			static TCHAR empty[2] = { 0 };
@@ -302,7 +363,7 @@ namespace barto_gdbserver {
 			} else {
 				// savestate debugging
 				baseText = 0;
-				sizeText = 0x7fffffff;
+				sizeText = 0x7fff'ffff;
 			}
 
 			// call as early as possible to avoid delays with GDB having to retry to connect...
@@ -313,6 +374,7 @@ namespace barto_gdbserver {
 	}
 
 	void close() {
+		barto_log(_T("GDBSERVER: close()\n"));
 		if(gdbconn != INVALID_SOCKET)
 			closesocket(gdbconn);
 		gdbconn = INVALID_SOCKET;
@@ -1217,11 +1279,13 @@ namespace barto_gdbserver {
 				buf[result] = '\0';
 				barto_log("GDBSERVER: received %d bytes: >>%s<<\n", result, buf);
 				std::string request{ buf }, ack{}, response;
-				if(request[0] == '+') {
-					request = request.substr(1);
-				} else if(request[0] == '-') {
-					barto_log("GDBSERVER: client non-ack'd our last packet\n");
-					request = request.substr(1);
+				while(!request.empty() && (request[0] == '+' || request[0] == '-')) {
+					if(request[0] == '+') {
+						request = request.substr(1);
+					} else if(request[0] == '-') {
+						barto_log("GDBSERVER: client non-ack'd our last packet\n");
+						request = request.substr(1);
+					}
 				}
 				if(!request.empty() && request[0] == 0x03) {
 					// Ctrl+C
@@ -1350,6 +1414,8 @@ namespace barto_gdbserver {
 								}
 								else if (request[0] == 'M') { // read memory
 									response += handle_write_memory(request);									
+								} else {
+									response += "E01";
 								}
 							} else
 								barto_log("GDBSERVER: packet checksum mismatch: got %c%c, want %c%c\n", tolower(request[end + 1]), tolower(request[end + 2]), hex[cksum >> 4], hex[cksum & 0xf]);
@@ -1392,8 +1458,10 @@ namespace barto_gdbserver {
 			return;
 
 		static uae_u32 profile_start_cycles{};
-		static uae_u16 profile_dmacon{};
-		static uae_u16 profile_custom_regs[256]{}; // at start of profile 
+		static size_t profile_custom_regs_size{};
+		static uae_u8* profile_custom_regs{}; // at start of profile 
+		static size_t profile_custom_agacolors_size{};
+		static uae_u8* profile_custom_agacolors{};
 		static FILE* profile_outfile{};
 
 		if(debugger_state == state::profile) {
@@ -1418,14 +1486,33 @@ start_profile:
 				fwrite(&stackUpper, sizeof(uint32_t), 1, profile_outfile);
 
 				// store chipmem
-				auto profile_chipmem_size = chipmem_bank.allocated_size;
+				auto profile_chipmem_size = chipmem_bank.reserved_size;
 				auto profile_chipmem = std::make_unique<uint8_t[]>(profile_chipmem_size);
 				memcpy(profile_chipmem.get(), chipmem_bank.baseaddr, profile_chipmem_size);
 
 				// store bogomem
-				auto profile_bogomem_size = bogomem_bank.allocated_size;
+				auto profile_bogomem_size = bogomem_bank.reserved_size;
 				auto profile_bogomem = std::make_unique<uint8_t[]>(profile_bogomem_size);
 				memcpy(profile_bogomem.get(), bogomem_bank.baseaddr, profile_bogomem_size);
+
+				// kickstart
+				// from memory.cpp@save_rom()
+				auto kick_start = 0xf80000;
+				auto kick_real_start = kickmem_bank.baseaddr;
+				auto kick_size = kickmem_bank.reserved_size;
+				// 256KB or 512KB ROM?
+				int i;
+				for(i = 0; i < kick_size / 2 - 4; i++) {
+					if(get_long_debug(i + kick_start) != get_long_debug(i + kick_start + kick_size / 2))
+						break;
+				}
+				if(i == kick_size / 2 - 4) {
+					kick_size /= 2;
+					kick_start += ROM_SIZE_256;
+				}
+
+				fwrite(&kick_size, sizeof(kick_size), 1, profile_outfile);
+				fwrite(kick_real_start, 1, kick_size, profile_outfile);
 
 				// memory
 				fwrite(&profile_chipmem_size, sizeof(profile_chipmem_size), 1, profile_outfile);
@@ -1438,16 +1525,9 @@ start_profile:
 				fwrite(&cpucycleunit, sizeof(int), 1, profile_outfile);
 			}
 
-			// store DMACON
-			profile_dmacon = dmacon;
-
 			// store custom registers
-			for(int i = 0; i < _countof(custom_storage); i++)
-				profile_custom_regs[i] = custom_storage[i].value;
-
-			// colors (ECS only)
-			for(int i = 0; i < _countof(current_colors.color_regs_ecs); i++)
-				profile_custom_regs[i + 0x180 / 2] = current_colors.color_regs_ecs[i];
+			profile_custom_regs = save_custom(&profile_custom_regs_size, nullptr, TRUE);
+			profile_custom_agacolors = save_custom_agacolors(&profile_custom_agacolors_size, nullptr);
 
 			// reset idle
 			if(barto_debug_idle_count > 0) {
@@ -1458,7 +1538,7 @@ start_profile:
 			// start profiler
 			start_cpu_profiler(baseText, baseText + sizeText, profile_unwind.get());
 			debug_dma = 1;
-			profile_start_cycles = get_cycles() / cpucycleunit;
+			profile_start_cycles = static_cast<uae_u32>(get_cycles() / cpucycleunit);
 			//barto_log("GDBSERVER: Start CPU Profiler @ %u cycles\n", get_cycles() / cpucycleunit);
 			debugger_state = state::profiling;
 		} else if(debugger_state == state::profiling) {
@@ -1466,7 +1546,7 @@ start_profile:
 			// end profiling
 			stop_cpu_profiler();
 			debug_dma = 0;
-			uae_u32 profile_end_cycles = get_cycles() / cpucycleunit;
+			uae_u32 profile_end_cycles = static_cast<uae_u32>(get_cycles() / cpucycleunit);
 			//barto_log("GDBSERVER: Stop CPU Profiler @ %u cycles => %u cycles\n", profile_end_cycles, profile_end_cycles - profile_start_cycles);
 
 			// process dma records
@@ -1498,8 +1578,21 @@ start_profile:
 				idle_cycles += profile_end_cycles - max(profile_start_cycles, (last_idle & 0x7fffffff));
 			//barto_log("idle_cycles: %d\n", idle_cycles);
 
-			fwrite(&profile_dmacon, sizeof(profile_dmacon), 1, profile_outfile);
-			fwrite(&profile_custom_regs, sizeof(uae_u16), _countof(profile_custom_regs), profile_outfile);
+			// Custom Regs
+			int custom_len = (int)profile_custom_regs_size;
+			fwrite(&custom_len, sizeof(int), 1, profile_outfile);
+			fwrite(profile_custom_regs, 1, custom_len, profile_outfile);
+			free(profile_custom_regs);
+			profile_custom_regs = nullptr;
+
+			// AGA colors
+			int custom_agacolors_len = (int)profile_custom_agacolors_size;
+			fwrite(&custom_agacolors_len, sizeof(int), 1, profile_outfile);
+			if(profile_custom_agacolors) {
+				fwrite(profile_custom_agacolors, 1, custom_agacolors_len, profile_outfile);
+				free(profile_custom_agacolors);
+			}
+			profile_custom_agacolors = nullptr;
 
 			// DMA
 			int dmarec_size = sizeof(dma_rec);
@@ -1522,45 +1615,52 @@ start_profile:
 			int profile_count = get_cpu_profiler_output_count();
 			fwrite(&profile_count, sizeof(int), 1, profile_outfile);
 			fwrite(get_cpu_profiler_output(), sizeof(uae_u32), profile_count, profile_outfile);
-			// write JPEG screenshot
-			if(profile_num_frames > 1) {
-				int monid = getfocusedmonitor();
-				int imagemode = 1;
-				if(screenshot_prepare(monid, imagemode) == 1) {
-					auto bi = screenshot_get_bi();
-					auto bi_bits = (const uint8_t*)screenshot_get_bits();
-					if(bi->bmiHeader.biBitCount == 24) {
-						// need to flip bits and swap rgb channels
-						const auto w = bi->bmiHeader.biWidth;
-						const auto h = bi->bmiHeader.biHeight;
-						const auto pitch = bi->bmiHeader.biSizeImage / bi->bmiHeader.biHeight;
-						auto bits = std::make_unique<uint8_t[]>(w * 3 * h);
-						for(int y = 0; y < bi->bmiHeader.biHeight; y++) {
-							for(int x = 0; x < bi->bmiHeader.biWidth; x++) {
-								bits[y * w * 3 + x * 3 + 0] = bi_bits[(h - 1 - y) * pitch + x * 3 + 2];
-								bits[y * w * 3 + x * 3 + 1] = bi_bits[(h - 1 - y) * pitch + x * 3 + 1];
-								bits[y * w * 3 + x * 3 + 2] = bi_bits[(h - 1 - y) * pitch + x * 3 + 0];
-							}
+			// write screenshot
+			vsync_display_render(); // make sure current frame is rendered, this may be a line or so too early, but don't know how to hook render
+			int monid = getfocusedmonitor();
+			AmigaMonitor* mon = &AMonitors[monid];
+			vidbuf_description* avidinfo = &adisplays[monid].gfxvidinfo;
+			vidbuffer* vb = &avidinfo->drawbuffer; // too old
+			// just write JPEGs if we do multi-frame profile (file too big with PNGs)
+			if(screenshot_prepare(monid, vb) == 1) {
+				auto bi = screenshot_get_bi();
+				auto bi_bits = (const uint8_t*)screenshot_get_bits();
+				if(bi->bmiHeader.biBitCount == 24) {
+					// need to flip bits and swap rgb channels
+					const auto w = bi->bmiHeader.biWidth;
+					const auto h = bi->bmiHeader.biHeight;
+					const auto pitch = bi->bmiHeader.biSizeImage / bi->bmiHeader.biHeight;
+					auto bits = std::make_unique<uint8_t[]>(w * 3 * h);
+					for(int y = 0; y < bi->bmiHeader.biHeight; y++) {
+						for(int x = 0; x < bi->bmiHeader.biWidth; x++) {
+							bits[y * w * 3 + x * 3 + 0] = bi_bits[(h - 1 - y) * pitch + x * 3 + 2];
+							bits[y * w * 3 + x * 3 + 1] = bi_bits[(h - 1 - y) * pitch + x * 3 + 1];
+							bits[y * w * 3 + x * 3 + 2] = bi_bits[(h - 1 - y) * pitch + x * 3 + 0];
 						}
-						struct write_context_t {
-							uint8_t data[1'000'000]{};
-							int size = 0;
-						};
-						auto write_context = std::make_unique<write_context_t>();
-						auto write_func = [](void* _context, void* data, int size) {
-							auto context = (write_context_t*)_context;
-							memcpy(&context->data[context->size], data, size);
-							context->size += size;
-						};
-						stbi_write_jpg_to_func(write_func, write_context.get(), w, h, 3, bits.get(), 50);
-						write_context->size = (write_context->size + 3) & ~3; // pad to 32bit
-						fwrite(&write_context->size, sizeof(int), 1, profile_outfile);
-						fwrite(write_context->data, 1, write_context->size, profile_outfile);
 					}
+					struct write_context_t {
+						uint8_t data[2'000'000]{};
+						int size = 0;
+						int type = 0;
+					};
+					auto write_context = std::make_unique<write_context_t>();
+					auto write_func = [](void* _context, void* data, int size) {
+						auto context = (write_context_t*)_context;
+						memcpy(&context->data[context->size], data, size);
+						context->size += size;
+					};
+					if(profile_num_frames > 1) {
+						stbi_write_jpg_to_func(write_func, write_context.get(), w, h, 3, bits.get(), 50);
+						write_context->type = 0; // JPG
+					} else {
+						stbi_write_png_to_func(write_func, write_context.get(), w, h, 3, bits.get(), w * 3);
+						write_context->type = 1; // PNG
+					}
+					write_context->size = (write_context->size + 3) & ~3; // pad to 32bit
+					fwrite(&write_context->size, sizeof(int), 1, profile_outfile);
+					fwrite(&write_context->type, sizeof(int), 1, profile_outfile);
+					fwrite(write_context->data, 1, write_context->size, profile_outfile);
 				}
-			} else {
-				int screenshot_size = 0;
-				fwrite(&screenshot_size, sizeof(int), 1, profile_outfile);
 			}
 
 			if(profile_frame_count == profile_num_frames) {
@@ -1618,7 +1718,7 @@ start_profile:
 	}
 
 	void barto_log(const char* format, ...) {
-		char buffer[10024];
+		char buffer[16*1024];
 		va_list parms;
 		va_start(parms, format);
 		vsnprintf(buffer, 10020, format, parms);
@@ -1628,7 +1728,7 @@ start_profile:
 	}
 
 	void barto_log(const wchar_t* format, ...) {
-		wchar_t buffer[10024];
+		wchar_t buffer[16*1024];
 		va_list parms;
 		va_start(parms, format);
 		vswprintf(buffer, 10020, format, parms);
@@ -1643,6 +1743,11 @@ start_profile:
 			return false;
 
 		warpmode(0);
+		//cfgfile_modify(-1, _T("warp false"), 0, nullptr, 0);
+		//cfgfile_modify(-1, _T("cpu_speed real"), 0, nullptr, 0);
+		//cfgfile_modify(-1, _T("cpu_cycle_exact true"), 0, nullptr, 0);
+		//cfgfile_modify(-1, _T("cpu_memory_cycle_exact true"), 0, nullptr, 0);
+		//cfgfile_modify(-1, _T("blitter_cycle_exact true"), 0, nullptr, 0);
 
 		// break at start of process
 		if(debugger_state == state::inited) {
@@ -1741,7 +1846,7 @@ start_profile:
 			barto_log("\n");
 			useAck = true;
 			debugger_state = state::debugging;
-			debugmem_enable_stackframe(true);
+			//debugmem_enable_stackframe(true); // crashes WinUAE if stackframe overrun
 			debugmem_trace = true;
 
 			debug_copper = 1 | 4;

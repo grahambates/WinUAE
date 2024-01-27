@@ -19,7 +19,6 @@
 #define IDS_CPU                         12
 #define IDS_CHIPSET                     13
 #define IDS_INPUT                       14
-#define IDS_OPENGL                      15
 #define IDS_FILTER                      15
 #define IDS_MISC2                       16
 #define IDS_PATHS                       17
@@ -132,7 +131,6 @@
 #define IDI_AVIOUTPUT                   158
 #define IDS_ERRORTITLE                  159
 #define IDS_SELECTFILESYSROOT           160
-#define IDD_OPENGL                      160
 #define IDD_FILTER                      160
 #define IDS_DEFAULTMIDIOUT              161
 #define IDS_DEFAULTMIDIIN               162
@@ -416,6 +414,7 @@
 #define IDS_UNMAPPED_ADDRESS            419
 #define IDS_GENLOCK_OPTIONS             420
 #define IDS_READONLYCONFIRMATION        421
+#define IDS_SCREEN_NATIVELACE           422
 #define IDS_QS_MODELS                   1000
 #define IDS_QS_MODEL_A500               1001
 #define IDS_QS_MODEL_A500P              1002
@@ -430,6 +429,7 @@
 #define IDS_QS_MODEL_A4000              1011
 #define IDS_QS_MODEL_A4000T             1012
 #define IDS_QS_MODEL_MACROSYSTEM        1013
+#define IDS_QS_MODEL_ALG                1014
 #define IDC_RESOLUTION                  1021
 #define IDC_SERIAL                      1022
 #define IDC_REFRESHRATE                 1022
@@ -512,6 +512,7 @@
 #define IDC_GRAYSCALE                   1183
 #define IDC_OVERSCANMODE                1184
 #define IDC_FRAMERATE                   1185
+#define IDC_RESYNCBLANK                 1186
 #define IDC_XSIZE                       1187
 #define IDC_YSIZE                       1188
 #define IDC_INPUTAUTOFIRERATE           1188
@@ -972,7 +973,6 @@
 #define IDC_UPBM                        1650
 #define IDC_DISKLISTINSERT              1650
 #define IDC_DF1QENABLE                  1650
-#define IDC_AVIOUTPUT_ORIGINALSIZE2     1650
 #define IDC_SCREENSHOT_ORIGINALSIZE     1650
 #define IDC_SOUNDCARDLIST               1651
 #define IDC_STATE_BUFFERSIZE2           1651
@@ -981,11 +981,12 @@
 #define IDC_SOUNDFREQ                   1652
 #define IDC_STATEREC_AUTOPLAY           1652
 #define IDC_SOUNDFREQTXT                1653
-#define IDC_SCREENSHOT_ORIGINALSIZE2    1653
 #define IDC_SCREENSHOT_CLIP             1653
 #define IDC_SOUNDFILTERTXT              1654
+#define IDC_SCREENSHOT_PALETTED         1654
 #define IDC_SOUNDSTEREO                 1655
 #define IDC_CONFIGTYPE                  1655
+#define IDC_SCREENSHOT_AUTO             1655
 #define IDC_SOUNDDRIVETXT               1656
 #define IDC_PATHS_ROM                   1656
 #define IDC_SOUNDSTEREOSEP              1656
@@ -1037,12 +1038,14 @@
 #define IDC_LOGOPEN                     1681
 #define IDC_CONFIGAUTO                  1682
 #define IDC_CD0Q_TYPE                   1682
+#define IDC_PATHS_NVRAM                 1682
 #define IDC_DF0TEXTQ                    1683
 #define IDC_CONFIGNOLINK                1683
+#define IDC_PATHS_NVRAMS                1683
 #define IDC_DF0WPQ                      1684
-#define IDC_LOGOPEN2                    1684
 #define IDC_LOGSAVE                     1684
 #define IDC_EJECT0Q                     1685
+#define IDC_PATHS_NVRAML                1685
 #define IDC_DF1WPQ                      1686
 #define IDC_EJECT1Q                     1687
 #define IDC_DF1TEXTQ                    1688
@@ -1075,10 +1078,9 @@
 #define IDC_FILTERKEEPASPECT            1709
 #define IDC_CS_RTC                      1710
 #define IDC_FILTERKEEPAUTOSCALEASPECT   1710
-#define IDC_SOUND_CDPAULAMIX            1710
 #define IDC_CS_CIAA_TOD1                1711
-#define IDC_SOUND_CDPAULAMIX2           1711
 #define IDC_SOUND_VOLCNT                1711
+#define IDC_FILTERENABLE                1711
 #define IDC_CS_CIAA_TOD2                1712
 #define IDC_CS_EXT                      1712
 #define IDC_CS_CIAA_TOD3                1713
@@ -1119,7 +1121,6 @@
 #define IDC_CS_DENISEREV                1738
 #define IDC_DBG_OUTPUT1                 1739
 #define IDC_CS_PCMCIA                   1739
-#define IDC_CS_SLOWISFAST               1740
 #define IDC_DBG_HELP                    1740
 #define IDC_DBG_INPUT                   1741
 #define IDC_CS_KSMIRROR_A8              1741
@@ -1156,6 +1157,7 @@
 #define IDC_DBG_MEMUPFAST               1760
 #define IDC_CS_CIA                      1760
 #define IDC_DA_RESET                    1761
+#define IDC_CS_MEMORYPATTERN            1761
 #define IDC_DBG_STATUS                  1762
 #define IDC_DBG_BRKPTS                  1763
 #define IDC_DBG_MCUSTOM                 1764
@@ -1224,7 +1226,6 @@
 #define IDC_INPUTMAPLIST                1797
 #define IDC_RTG_HWSPRITE                1797
 #define IDC_PORT1_REMAP                 1798
-#define IDC_RTG_SCALE_ALLOW2            1798
 #define IDC_RTG_CENTER                  1798
 #define IDC_PORT0_REMAP                 1799
 #define IDC_RTG_Z2Z4                    1799
@@ -1233,6 +1234,7 @@
 #define IDC_RTG_THREAD                  1800
 #define IDC_PORT3_REMAP                 1801
 #define IDC_INPUTMAPOUT                 1801
+#define IDC_RTG_INTEGERSCALE            1801
 #define IDC_INFOBOX_TEXT2               1802
 #define IDC_INPUTMAPOUTM                1802
 #define IDC_INFOBOX_TEXT1               1803
@@ -1250,6 +1252,7 @@
 #define IDC_SAMPLER_STEREO              1812
 #define IDC_FASTMEMFORCE16              1812
 #define IDC_LISTDIALOG_LIST             1813
+#define IDC_FASTMEMSLOW                 1813
 #define IDC_LOGPATH                     1814
 #define IDC_MIDIROUTER                  1815
 #define IDC_CDLIST                      1815
@@ -1305,10 +1308,11 @@
 #define IDC_GENLOCKFILESELECT           1854
 #define IDC_PATH_GEOMETRY               1855
 #define IDC_PATH_GEOMETRY_SELECTOR      1856
-#define IDC_EDIT1                       1857
 #define IDC_EXPANSIONBOARDSTRINGBOX     1857
 #define IDC_CS_UNMAPPED                 1858
 #define IDC_CHS_CYLINDERS               1859
+#define IDC_CS_HVCSYNC                  1859
+#define IDC_CS_CIASYNC                  1859
 #define IDC_CHS_HEADS                   1860
 #define IDC_CONFIGCATEGORY              1860
 #define IDC_CHS_SECTORS                 1861

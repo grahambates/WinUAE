@@ -12,6 +12,22 @@
 #include "uae/types.h"
 #include "machdep/rpt.h"
 
+#define BEAMCON0_HARDDIS	0x4000
+#define BEAMCON0_LPENDIS	0x2000
+#define BEAMCON0_VARVBEN	0x1000
+#define BEAMCON0_LOLDIS		0x0800
+#define BEAMCON0_CSCBEN		0x0400
+#define BEAMCON0_VARVSYEN	0x0200
+#define BEAMCON0_VARHSYEN	0x0100
+#define BEAMCON0_VARBEAMEN	0x0080
+#define BEAMCON0_DUAL		0x0040
+#define BEAMCON0_PAL		0x0020
+#define BEAMCON0_VARCSYEN	0x0010
+#define BEAMCON0_BLANKEN	0x0008
+#define BEAMCON0_CSYTRUE	0x0004
+#define BEAMCON0_VSYTRUE	0x0002
+#define BEAMCON0_HSYTRUE	0x0001
+
 extern bool aga_mode, ecs_agnus, ecs_denise, direct_rgb;
 
 /* These are the masks that are ORed together in the chipset_mask option.
@@ -51,7 +67,7 @@ extern void set_picasso_hack_rate(int hz);
 /* Set to 1 to leave out the current frame in average frame time calculation.
 * Useful if the debugger was active.  */
 extern int bogusframe;
-extern unsigned long int hsync_counter, vsync_counter;
+extern uae_u32 hsync_counter, vsync_counter;
 
 extern uae_u16 dmacon;
 extern uae_u16 intena, intreq, intreqr;
@@ -65,7 +81,7 @@ STATIC_INLINE int dmaen(unsigned int dmamask)
 	return (dmamask & dmacon) && (dmacon & 0x200);
 }
 
-#define SPCFLAG_STOP 2
+#define SPCFLAG_CPUINRESET 2
 #define SPCFLAG_COPPER 4
 #define SPCFLAG_INT 8
 #define SPCFLAG_BRK 16
@@ -91,7 +107,7 @@ extern int joy0button, joy1button;
 extern void INTREQ(uae_u16);
 extern bool INTREQ_0(uae_u16);
 extern void INTREQ_f(uae_u16);
-extern void send_interrupt(int num, int delay);
+extern void INTREQ_INT(int num, int delay);
 extern void rethink_uae_int(void);
 extern uae_u16 INTREQR(void);
 
@@ -102,7 +118,7 @@ extern uae_u16 INTREQR(void);
 #define MAXVPOS 312
 #else
 #define MAXHPOS 256
-#define MAXVPOS 592
+#define MAXVPOS 800
 #endif
 
 /* PAL/NTSC values */
@@ -156,12 +172,13 @@ extern int display_reset;
 #define CYCLE_COPPER	6
 #define CYCLE_BLITTER	7
 #define CYCLE_CPU		8
-#define CYCLE_COPPER_SPECIAL 0x10
 
 #define CYCLE_MASK 0x0f
 
-extern unsigned long frametime, timeframes;
+extern uae_u32 timeframes;
+extern evt_t frametime;
 extern uae_u16 htotal, vtotal, beamcon0, new_beamcon0;
+extern uae_u16 bemcon0_hsync_mask, bemcon0_vsync_mask;
 
 // 100 words give you 1600 horizontal pixels. Should be more than enough for superhires. 
 // Extreme overscan superhires needs more.
@@ -226,7 +243,7 @@ STATIC_INLINE int GET_PLANES(uae_u16 bplcon0)
 }
 
 extern void fpscounter_reset(void);
-extern unsigned long idletime;
+extern frame_time_t idletime;
 extern int lightpen_x[2], lightpen_y[2];
 extern int lightpen_cx[2], lightpen_cy[2], lightpen_active, lightpen_enabled, lightpen_enabled2;
 
@@ -235,7 +252,8 @@ struct customhack {
 	int vpos, hpos;
 };
 extern void alloc_cycle_ext(int, int);
-extern void alloc_cycle_blitter(int hpos, uaecptr *ptr, int);
+extern bool alloc_cycle_blitter(int hpos, uaecptr *ptr, int, int);
+extern uaecptr alloc_cycle_blitter_conflict_or(int, int, bool*);
 extern bool ispal(int *lines);
 extern bool isvga(void);
 extern int current_maxvpos(void);
@@ -245,6 +263,8 @@ extern void getsyncregisters(uae_u16 *phsstrt, uae_u16 *phsstop, uae_u16 *pvsstr
 bool blitter_cant_access(int hpos);
 void custom_cpuchange(void);
 bool bitplane_dma_access(int hpos, int offset);
+void custom_dumpstate(int);
+bool get_ras_cas(uaecptr, int*, int*);
 
 #define RGA_PIPELINE_ADJUST 4
 #define MAX_CHIPSETSLOTS 256
@@ -252,6 +272,7 @@ extern uae_u8 cycle_line_slot[MAX_CHIPSETSLOTS + RGA_PIPELINE_ADJUST];
 extern uae_u16 cycle_line_pipe[MAX_CHIPSETSLOTS + RGA_PIPELINE_ADJUST];
 
 #define CYCLE_PIPE_CPUSTEAL 0x8000
+#define CYCLE_PIPE_NONE 0x4000
 #define CYCLE_PIPE_BLITTER 0x100
 #define CYCLE_PIPE_COPPER 0x80
 #define CYCLE_PIPE_SPRITE 0x40

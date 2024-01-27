@@ -8,7 +8,7 @@ struct extoverlay
 };
 
 extern void(*D3D_free)(int, bool immediate);
-extern const TCHAR* (*D3D_init)(HWND ahwnd, int, int w_w, int h_h, int depth, int *freq, int mmulth, int mmultv);
+extern const TCHAR* (*D3D_init)(HWND ahwnd, int, int w_w, int h_h, int depth, int *freq, int mmulth, int mmultv, int *errp);
 extern bool(*D3D_alloctexture)(int, int, int);
 extern void(*D3D_refresh)(int);
 extern bool(*D3D_renderframe)(int, int,bool);
@@ -23,7 +23,7 @@ extern int(*D3D_isenabled)(int);
 extern void(*D3D_clear)(int);
 extern int(*D3D_canshaders)(void);
 extern int(*D3D_goodenough)(void);
-extern bool(*D3D_setcursor)(int, int x, int y, int width, int height, bool visible, bool noscale);
+extern bool(*D3D_setcursor)(int, int x, int y, int width, int height, float mx, float my, bool visible, bool noscale);
 extern uae_u8* (*D3D_setcursorsurface)(int, int *pitch);
 extern float(*D3D_getrefreshrate)(int);
 extern void(*D3D_restore)(int, bool);
@@ -35,6 +35,7 @@ extern int(*D3D_debug)(int, int);
 extern void(*D3D_led)(int, int, int);
 extern bool(*D3D_getscanline)(int*, bool*);
 extern bool(*D3D_extoverlay)(struct extoverlay*);
+extern void(*D3D_paint)(void);
 
 extern LPDIRECT3DSURFACE9 D3D_capture(int, int*,int*,int*,bool);
 extern bool D3D11_capture(int, void**,int*, int*,int*,bool);
@@ -43,6 +44,7 @@ void D3D_getpixelformat(int depth, int *rb, int *gb, int *bb, int *rs, int *gs, 
 
 void d3d9_select(void);
 void d3d11_select(void);
+void gdi_select(void);
 void d3d_select(struct uae_prefs *p);
 int can_D3D11(bool checkdevice);
 

@@ -17,6 +17,7 @@ int tablet_log = 0;
 int no_rawinput = 0;
 int no_directinput = 0;
 int no_windowsmouse = 0;
+int winekeyboard = 0;
 
 #define _WIN32_WINNT 0x501 /* enable RAWINPUT support */
 
@@ -48,7 +49,7 @@ int no_windowsmouse = 0;
 #include "catweasel.h"
 #include "keyboard.h"
 #include "custom.h"
-#include "dxwrap.h"
+#include "render.h"
 #include "akiko.h"
 #include "clipboard.h"
 #include "tabletlibrary.h"
@@ -433,7 +434,7 @@ static int doregister_rawinput (bool add)
 			rid[num].dwFlags = RIDEV_INPUTSINK;
 			rid[num].hwndTarget = mon->hMainWnd;
 		}
-		rid[num].dwFlags |= (os_vista ? RIDEV_DEVNOTIFY : 0);
+		rid[num].dwFlags |= RIDEV_DEVNOTIFY;
 	}
 	num++;
 
@@ -448,7 +449,7 @@ static int doregister_rawinput (bool add)
 				rid[num].dwFlags = RIDEV_INPUTSINK;
 				rid[num].hwndTarget = mon->hMainWnd;
 			}
-			rid[num].dwFlags |= RIDEV_NOHOTKEYS | (os_vista ? RIDEV_DEVNOTIFY : 0);
+			rid[num].dwFlags |= RIDEV_NOHOTKEYS | RIDEV_DEVNOTIFY;
 		}
 		num++;
 
@@ -465,7 +466,7 @@ static int doregister_rawinput (bool add)
 				rid[num].dwFlags = RIDEV_INPUTSINK;
 				rid[num].hwndTarget = mon->hMainWnd;
 			}
-			rid[num].dwFlags |= (os_vista ? RIDEV_DEVNOTIFY : 0);
+			rid[num].dwFlags |= RIDEV_DEVNOTIFY;
 		}
 		num++;
 
@@ -479,7 +480,7 @@ static int doregister_rawinput (bool add)
 				rid[num].dwFlags = RIDEV_INPUTSINK;
 				rid[num].hwndTarget = mon->hMainWnd;
 			}
-			rid[num].dwFlags |= (os_vista ? RIDEV_DEVNOTIFY : 0);
+			rid[num].dwFlags |= RIDEV_DEVNOTIFY;
 		}
 		num++;
 	}
@@ -1803,39 +1804,41 @@ static bool initialize_rawinput (void)
 				PRID_DEVICE_INFO_MOUSE rdim = &rdi->mouse;
 				write_log (_T("id=%d buttons=%d hw=%d rate=%d\n"),
 					rdim->dwId, rdim->dwNumberOfButtons, rdim->fHasHorizontalWheel, rdim->dwSampleRate);
-				if (rdim->dwNumberOfButtons >= ID_BUTTON_TOTAL) {
-					write_log (_T("bogus number of buttons, ignored\n"));
-				} else {
-					did->buttons_real = did->buttons = rdim->dwNumberOfButtons;
-					for (j = 0; j < did->buttons; j++) {
-						did->buttonsort[j] = j;
-						did->buttonmappings[j] = j;
-						_stprintf (tmp, _T("Button %d"), j + 1);
-						did->buttonname[j] = my_strdup (tmp);
-					}
-					did->axles = 3;
-					did->axissort[0] = 0;
-					did->axismappings[0] = 0;
-					did->axisname[0] = my_strdup (_T("X Axis"));
-					did->axissort[1] = 1;
-					did->axismappings[1] = 1;
-					did->axisname[1] = my_strdup (_T("Y Axis"));
-					did->axissort[2] = 2;
-					did->axismappings[2] = 2;
-					did->axisname[2] = my_strdup (_T("Wheel"));
-					addplusminus (did, 2);
-					if (1 || rdim->fHasHorizontalWheel) { // why is this always false?
-						did->axissort[3] = 3;
-						did->axisname[3] = my_strdup (_T("HWheel"));
-						did->axismappings[3] = 3;
-						did->axles++;
-						addplusminus (did, 3);
-					}
-					if (num_mouse == 1)
-						did->priority = -1;
-					else
-						did->priority = -2;
+				int buttons = rdim->dwNumberOfButtons;
+				// limit to 20, can only have 32 buttons and it also includes [-][+] axis events.
+				if (buttons > 20) {
+					write_log(_T("too many buttons (%d > 20)\n"), buttons);
+					buttons = 20;
 				}
+				did->buttons_real = did->buttons = (uae_s16)buttons;
+				for (j = 0; j < did->buttons; j++) {
+					did->buttonsort[j] = j;
+					did->buttonmappings[j] = j;
+					_stprintf (tmp, _T("Button %d"), j + 1);
+					did->buttonname[j] = my_strdup (tmp);
+				}
+				did->axles = 3;
+				did->axissort[0] = 0;
+				did->axismappings[0] = 0;
+				did->axisname[0] = my_strdup (_T("X Axis"));
+				did->axissort[1] = 1;
+				did->axismappings[1] = 1;
+				did->axisname[1] = my_strdup (_T("Y Axis"));
+				did->axissort[2] = 2;
+				did->axismappings[2] = 2;
+				did->axisname[2] = my_strdup (_T("Wheel"));
+				addplusminus (did, 2);
+				if (1 || rdim->fHasHorizontalWheel) { // why is this always false?
+					did->axissort[3] = 3;
+					did->axisname[3] = my_strdup (_T("HWheel"));
+					did->axismappings[3] = 3;
+					did->axles++;
+					addplusminus (did, 3);
+				}
+				if (num_mouse == 1)
+					did->priority = -1;
+				else
+					did->priority = -2;
 			} else if (type == RIM_TYPEKEYBOARD) {
 				PRID_DEVICE_INFO_KEYBOARD rdik = &rdi->keyboard;
 				write_log (_T("type=%d sub=%d mode=%d fkeys=%d indicators=%d tkeys=%d\n"),
@@ -2078,7 +2081,7 @@ static void initialize_windowsmouse (void)
 		}
 		winmousewheelbuttonstart = did->buttons;
 		if (i == 0) {
-			did->axles = os_vista ? 4 : 3;
+			did->axles = 4;
 			did->axissort[0] = 0;
 			did->axisname[0] = my_strdup (_T("X Axis"));
 			did->axissort[1] = 1;
@@ -2468,7 +2471,9 @@ static void handle_rawinput_2 (RAWINPUT *raw, LPARAM lParam)
 				write_log (_T("VK->CODE: %x\n"), scancode);
 
 		}
-		if (rk->VKey == 0xff || (rk->Flags & RI_KEY_E0))
+		if (rk->VKey == 0xff || ((rk->Flags & RI_KEY_E0) && !(winekeyboard && rk->VKey == VK_NUMLOCK)))
+			scancode |= 0x80;
+		if (winekeyboard && rk->VKey == VK_PAUSE)
 			scancode |= 0x80;
 		if (rk->MakeCode == KEYBOARD_OVERRUN_MAKE_CODE)
 			return;
@@ -2612,8 +2617,6 @@ bool is_hid_rawinput(void)
 	if (no_rawinput & 4)
 		return false;
 	if (!rawinput_enabled_hid && !rawinput_enabled_hid_reset)
-		return false;
-	if (!os_vista)
 		return false;
 	return true;
 }
@@ -2922,7 +2925,7 @@ static BOOL CALLBACK EnumObjectsCallback (const DIDEVICEOBJECTINSTANCE* pdidoi, 
 		else if (did->type == DID_MOUSE)
 			did->axissort[did->axles] = makesort_mouse (&pdidoi->guidType, &did->axismappings[did->axles]);
 		for (i = 0; i < 2; i++) {
-			did->axismappings[did->axles + i] = DIJOFS_POV(numpov);
+			did->axismappings[did->axles + i] = (uae_s16)DIJOFS_POV(numpov);
 			_stprintf (tmp, _T("%s (%c)"), pdidoi->tszName, i ? 'Y' : 'X');
 			did->axisname[did->axles + i] = my_strdup (tmp);
 			did->axissort[did->axles + i] = did->axissort[did->axles];
@@ -2956,8 +2959,8 @@ static BOOL CALLBACK EnumObjectsCallback (const DIDEVICEOBJECTINSTANCE* pdidoi, 
 static void trimws (TCHAR *s)
 {
 	/* Delete trailing whitespace.  */
-	int len = _tcslen (s);
-	while (len > 0 && _tcscspn (s + len - 1, _T("\t \r\n")) == 0)
+	int len = uaetcslen(s);
+	while (len > 0 && _tcscspn(s + len - 1, _T("\t \r\n")) == 0)
 		s[--len] = '\0';
 }
 
@@ -3014,7 +3017,7 @@ static BOOL di_enumcallback2 (LPCDIDEVICEINSTANCE lpddi, int joy)
 
 	cleardid (did);
 	if (lpddi->tszInstanceName) {
-		len = _tcslen (lpddi->tszInstanceName) + 5 + 1;
+		len = uaetcslen(lpddi->tszInstanceName) + 5 + 1;
 		did->name = xmalloc (TCHAR, len);
 		_tcscpy (did->name, lpddi->tszInstanceName);
 	} else {
@@ -3201,9 +3204,6 @@ static int di_do_init (void)
 		rawinput_enabled_hid = rawinput_enabled_hid_reset;
 		rawinput_enabled_hid_reset = 0;
 	}
-
-	if (!os_vista && rawinput_enabled_hid < 0)
-		rawinput_enabled_hid = 0;
 
 #if 0
 	IsXInputDevice(NULL);

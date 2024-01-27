@@ -403,6 +403,7 @@ static addrbank *expamem_init_last (void)
 	expamem_init_clear2 ();
 	write_log (_T("Memory map after autoconfig:\n"));
 	memory_map_dump ();
+	mman_set_barriers(false);
 	return NULL;
 }
 
@@ -2893,7 +2894,7 @@ static int get_order(struct uae_prefs *p, struct card_data *cd)
 		return -1;
 	if (cd->zorro >= 4)
 		return -2;
-	if (cd->rc)
+	if (cd->rc && cd->rc->back)
 		return cd->rc->back->device_order;
 	int devnum = (cd->flags >> 16) & 255;
 	if (!_tcsicmp(cd->name, _T("Z2Fast")))
@@ -2971,7 +2972,7 @@ static void expansion_parse_cards(struct uae_prefs *p, bool log)
 #endif
 				_tcscpy(label, aci->cst->name);
 			}
-			if (cd->rc && !label[0]) {
+			if (cd->rc && !label[0] && cd->rc->back) {
 				const struct expansionromtype *ert = get_device_expansion_rom(cd->rc->back->device_type);
 				if (ert) {
 					_tcscpy(label, ert->friendlyname);
@@ -3671,6 +3672,7 @@ void expamem_reset (int hardreset)
 
 	chipdone = false;
 
+	expamem_init_clear();
 	allocate_expamem ();
 	expamem_bank.name = _T("Autoconfig [reset]");
 
@@ -3848,13 +3850,13 @@ void expansion_clear (void)
 
 /* State save/restore code.  */
 
-uae_u8 *save_fram (int *len, int num)
+uae_u8 *save_fram(size_t *len, int num)
 {
 	*len = fastmem_bank[num].allocated_size;
 	return fastmem_bank[num].baseaddr;
 }
 
-uae_u8 *save_zram (int *len, int num)
+uae_u8 *save_zram(size_t *len, int num)
 {
 	if (num < 0) {
 		*len = z3chipmem_bank.allocated_size;
@@ -3864,19 +3866,19 @@ uae_u8 *save_zram (int *len, int num)
 	return z3fastmem_bank[num].baseaddr;
 }
 
-uae_u8 *save_pram (int *len)
+uae_u8 *save_pram(size_t *len)
 {
 	*len = gfxmem_banks[0]->allocated_size;
 	return gfxmem_banks[0]->baseaddr;
 }
 
-void restore_fram (int len, size_t filepos, int num)
+void restore_fram(int len, size_t filepos, int num)
 {
 	fast_filepos[num] = filepos;
 	changed_prefs.fastmem[num].size = len;
 }
 
-void restore_zram (int len, size_t filepos, int num)
+void restore_zram(int len, size_t filepos, int num)
 {
 	if (num == -1) {
 		z3_fileposchip = filepos;
@@ -3887,13 +3889,13 @@ void restore_zram (int len, size_t filepos, int num)
 	}
 }
 
-void restore_pram (int len, size_t filepos)
+void restore_pram(int len, size_t filepos)
 {
 	p96_filepos = filepos;
 	changed_prefs.rtgboards[0].rtgmem_size = len;
 }
 
-uae_u8 *save_expansion (int *len, uae_u8 *dstptr)
+uae_u8 *save_expansion(size_t *len, uae_u8 *dstptr)
 {
 	uae_u8 *dst, *dstbak;
 	if (dstptr)
@@ -3909,7 +3911,7 @@ uae_u8 *save_expansion (int *len, uae_u8 *dstptr)
 	return dstbak;
 }
 
-uae_u8 *restore_expansion (uae_u8 *src)
+uae_u8 *restore_expansion(uae_u8 *src)
 {
 	fastmem_bank[0].start = restore_u32 ();
 	z3fastmem_bank[0].start = restore_u32 ();
@@ -3921,7 +3923,7 @@ uae_u8 *restore_expansion (uae_u8 *src)
 	return src;
 }
 
-uae_u8 *save_expansion_boards(int *len, uae_u8 *dstptr, int cardnum)
+uae_u8 *save_expansion_boards(size_t *len, uae_u8 *dstptr, int cardnum)
 {
 	uae_u8 *dst, *dstbak;
 	if (cardnum >= cardno)
@@ -4294,7 +4296,7 @@ static const struct expansionsubromtype supra_sub[] = {
 		{ 0xc1, 1, 0x00, 0x00, 0x04, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
 	},
 	{
-		_T("A2000 DMA"), _T("dma"), ROMTYPE_NONE | ROMTYPE_SUPRADMA,
+		_T("2000 DMA"), _T("dma"), ROMTYPE_NONE | ROMTYPE_SUPRA,
 		1056, 2, 0, false, EXPANSIONTYPE_DMA24,
 		{ 0xd1, 3, 0x00, 0x00, 0x04, 0x20, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00 },
 	},
@@ -5252,6 +5254,12 @@ const struct expansionromtype expansionroms[] = {
 		false, EXPANSIONTYPE_SCSI
 	},
 	{
+		_T("csmk1cyberscsi"), _T("CyberSCSI module"), _T("Phase 5"),
+		NULL, NULL, NULL, cpuboard_ncr9x_add_scsi_unit, ROMTYPE_CSMK1SCSI, 0, 0, 0, true,
+		NULL, 0,
+		false, EXPANSIONTYPE_SCSI
+	},
+	{
 		_T("accessx"), _T("AccessX"), _T("Breitfeld Computersysteme"),
 		NULL, accessx_init, NULL, accessx_add_ide_unit, ROMTYPE_ACCESSX, 0, 0, BOARD_AUTOCONFIG_Z2, false,
 		accessx_sub, 0,
@@ -5412,6 +5420,13 @@ const struct expansionromtype expansionroms[] = {
 		NULL, 0,
 		true, EXPANSIONTYPE_SCSI | EXPANSIONTYPE_DMA24,
 		2017, 10, 0
+	},
+	{
+		_T("gvpa1208"), _T("GVP A1208"), _T("Great Valley Products"),
+		NULL, gvp_init_a1208, NULL, gvp_a1208_add_scsi_unit, ROMTYPE_GVPA1208 | ROMTYPE_NONE, ROMTYPE_GVPS2, 0, BOARD_AUTOCONFIG_Z2, false,
+		NULL, 0,
+		true, EXPANSIONTYPE_SCSI | EXPANSIONTYPE_DMA24,
+		2017, 9, 0
 	},
 	{
 		_T("dotto"), _T("Dotto"), _T("Hardital"),
@@ -6350,10 +6365,13 @@ static const struct cpuboardsubtype cyberstormboard_sub[] = {
 	{
 		_T("CyberStorm MK I"),
 		_T("CyberStormMK1"),
-		ROMTYPE_CB_CSMK1, 0, 4,
-		cpuboard_ncr9x_add_scsi_unit, EXPANSIONTYPE_SCSI,
+		ROMTYPE_CB_CSMK1 | ROMTYPE_NONE, 0, 4,
+		NULL, 0,
 		BOARD_MEMORY_HIGHMEM,
-		128 * 1024 * 1024
+		128 * 1024 * 1024,
+		0,
+		NULL, NULL, 0, 0,
+		NULL
 	},
 	{
 		_T("CyberStorm MK II"),

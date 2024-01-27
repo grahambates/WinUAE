@@ -24,13 +24,6 @@ static HPALETTE statusline_palette;
 static bool statusline_was_updated;
 static char *td_new_numbers;
 
-bool softstatusline(void)
-{
-	if (currprefs.gfx_api > 0)
-		return false;
-	return (currprefs.leds_on_screen & STATUSLINE_TARGET) == 0;
-}
-
 void deletestatusline(int monid)
 {
 	if (monid)
@@ -279,8 +272,6 @@ void statusline_render(int monid, uae_u8 *buf, int bpp, int pitch, int width, in
 	if (monid)
 		return;
 
-	if (currprefs.gf[WIN32GFX_IsPicassoScreen(mon)].gfx_filter == 0 && !currprefs.gfx_api)
-		return;
 	text = statusline_fetch();
 	//text = _T("Testing string 123!");
 	if (!text)
@@ -288,7 +279,7 @@ void statusline_render(int monid, uae_u8 *buf, int bpp, int pitch, int width, in
 	BitBlt(statusline_hdc, 0, 0, statusline_width, statusline_height, NULL, 0, 0, BLACKNESS);
 
 	SIZE size;
-	if (GetTextExtentPoint32(statusline_hdc, text, _tcslen(text), &size)) {
+	if (GetTextExtentPoint32(statusline_hdc, text, uaetcslen(text), &size)) {
 		textwidth = size.cx;
 		if (isfullscreen()) {
 			if (td_numbers_pos & TD_RIGHT) {
@@ -302,7 +293,7 @@ void statusline_render(int monid, uae_u8 *buf, int bpp, int pitch, int width, in
 	}
 	if (x < 0)
 		x = 0;
-	TextOut(statusline_hdc, x, y, text, _tcslen(text));
+	TextOut(statusline_hdc, x, y, text, uaetcslen(text));
 
 	for (int y = 0; y < height && y < statusline_height; y++) {
 		uae_u8 *src = (uae_u8*)statusline_bm + y * statusline_width;

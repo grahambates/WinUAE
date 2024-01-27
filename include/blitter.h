@@ -50,9 +50,9 @@ extern void blitter_slowdown(int, int, int, int);
 extern void blitter_check_start(void);
 extern void blitter_reset(void);
 extern void blitter_debugdump(void);
-extern bool blit_steal_cycle(int hpos);
+extern void restore_blitter_start(void);
 
-extern uae_u16 blitter_pipe[256];
+extern uae_u16 blitter_pipe[256+1];
 
 typedef void blitter_func(uaecptr, uaecptr, uaecptr, uaecptr, struct bltinfo *);
 

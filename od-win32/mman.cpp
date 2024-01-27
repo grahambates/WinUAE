@@ -25,6 +25,7 @@
 #define WIN32_NATMEM_TEST 0
 
 uae_u32 max_z3fastmem;
+uae_u32 max_physmem;
 
 /* BARRIER is used in case Amiga memory is access across memory banks,
  * for example move.l $1fffffff,d0 when $10000000-$1fffffff is mapped and
@@ -148,15 +149,10 @@ bool preinit_shm (void)
 #endif
 	GetSystemInfo (&si);
 	max_allowed_mman = 512 + 256;
-#if 1
 	if (os_64bit) {
-//#ifdef WIN64
-//		max_allowed_mman = 3072;
-//#else
-		max_allowed_mman = 2048;
-//#endif
+		// Higher than 2G to support G-REX PCI VRAM
+		max_allowed_mman = 2560;
 	}
-#endif
 	if (maxmem > max_allowed_mman)
 		max_allowed_mman = maxmem;
 
@@ -197,7 +193,7 @@ bool preinit_shm (void)
 	if (size64 < 8 * 1024 * 1024)
 		size64 = 8 * 1024 * 1024;
 	if ((uae_u64)max_allowed_mman * 1024 * 1024 > size64)
-		max_allowed_mman = size64 / (1024 * 1024);
+		max_allowed_mman = (uae_u32)(size64 / (1024 * 1024));
 
 	uae_u32 natmem_size = (max_allowed_mman + 1) * 1024 * 1024;
 	if (natmem_size < 17 * 1024 * 1024)
@@ -207,8 +203,8 @@ bool preinit_shm (void)
 	natmem_size = WIN32_NATMEM_TEST * 1024 * 1024;
 #endif
 
-	if (natmem_size > 0x80000000) {
-		natmem_size = 0x80000000;
+	if (natmem_size > 0xc0000000) {
+		natmem_size = 0xc0000000;
 	}
 
 	write_log (_T("MMAN: Total physical RAM %llu MB, all RAM %llu MB\n"),
@@ -238,12 +234,6 @@ bool preinit_shm (void)
 	}
 	if (!natmem_reserved) {
 		DWORD vaflags = MEM_RESERVE | MEM_WRITE_WATCH;
-#ifdef _WIN32
-#ifndef _WIN64
-		if (!os_vista)
-			vaflags |= MEM_TOP_DOWN;
-#endif
-#endif
 		for (;;) {
 			natmem_reserved = (uae_u8*)VirtualAlloc (NULL, natmem_size, vaflags, PAGE_READWRITE);
 			if (natmem_reserved)
@@ -269,6 +259,7 @@ bool preinit_shm (void)
 	} else {
 		max_z3fastmem = natmem_size;
 	}
+	max_physmem = natmem_size;
 	write_log (_T("MMAN: Reserved %p-%p (0x%08x %dM)\n"),
 			   natmem_reserved, (uae_u8 *) natmem_reserved + natmem_reserved_size,
 			   natmem_reserved_size, natmem_reserved_size / (1024 * 1024));
@@ -623,7 +614,7 @@ void free_shm (void)
 {
 	resetmem (true);
 	clear_shm ();
-	for (int i = 0; i < MAX_RAM_BOARDS; i++) {
+	for (int i = 0; i < MAX_RTG_BOARDS; i++) {
 		ortgmem_type[i] = -1;
 	}
 }
@@ -968,7 +959,15 @@ void *uae_shmat (addrbank *ab, int shmid, void *shmaddr, int shmflg, struct uae_
 	return result;
 }
 
-void unprotect_maprom (void)
+// remove possible barrier at the start of this memory region
+void uae_mman_unmap(addrbank *ab, struct uae_mman_data *md)
+{
+	if (canbang && (ab->flags & ABFLAG_ALLOCINDIRECT)) {
+		virtualfreewithlock(ab->start + natmem_offset, ab->reserved_size, MEM_DECOMMIT);
+	}
+}
+
+void unprotect_maprom(void)
 {
 	bool protect = false;
 	for (int i = 0; i < MAX_SHMID; i++) {
@@ -989,7 +988,7 @@ void unprotect_maprom (void)
 	}
 }
 
-void protect_roms (bool protect)
+void protect_roms(bool protect)
 {
 	if (protect) {
 		// protect only if JIT enabled, always allow unprotect
@@ -1013,6 +1012,55 @@ void protect_roms (bool protect)
 			write_log(_T("ROM VP %08lX - %08lX %x (%dk) %s\n"),
 				(uae_u8*)shm->attached - natmem_offset, (uae_u8*)shm->attached - natmem_offset + shm->rosize,
 				shm->rosize, shm->rosize >> 10, protect ? _T("WPROT") : _T("UNPROT"));
+		}
+	}
+}
+
+// Mark indirect regions (indirect VRAM) as non-accessible when JIT direct is active.
+// Beginning of region might have barrier region which is not marked as non-accessible,
+// allowing JIT direct to think it is directly accessible VRAM.
+void mman_set_barriers(bool disable)
+{
+	addrbank *abprev = NULL;
+	for (int i = 0; i < MEMORY_BANKS; i++) {
+		uaecptr addr = i * 0x10000;
+		addrbank *ab = &get_mem_bank(addr);
+		if (ab == abprev) {
+			continue;
+		}
+		int size = 0x10000;
+		for (int j = i + 1; j < MEMORY_BANKS; j++) {
+			uaecptr addr2 = j * 0x10000;
+			addrbank *ab2 = &get_mem_bank(addr2);
+			if (ab2 != ab) {
+				break;
+			}
+			size += 0x10000;
+		}
+		abprev = ab;
+		if (ab && ab->baseaddr == NULL && (ab->flags & ABFLAG_ALLOCINDIRECT)) {
+			DWORD old;
+			if (disable || !currprefs.cachesize || currprefs.comptrustbyte || currprefs.comptrustword || currprefs.comptrustlong) {
+				if (!ab->protectmode) {
+					ab->protectmode = PAGE_READWRITE;
+				}
+				if (!VirtualProtect(addr + natmem_offset, size, ab->protectmode, &old)) {
+					size = 0x1000;
+					VirtualProtect(addr + natmem_offset, size, ab->protectmode, &old);
+				}
+				write_log("%08x-%08x = access restored (%08x)\n", addr, size, ab->protectmode);
+			} else {
+				if (VirtualProtect(addr + natmem_offset, size, PAGE_NOACCESS, &old)) {
+					ab->protectmode = old;
+					write_log("%08x-%08x = set to no access\n", addr, addr + size);
+				} else {
+					size = 0x1000;
+					if (VirtualProtect(addr + natmem_offset, size, PAGE_NOACCESS, &old)) {
+						ab->protectmode = old;
+						write_log("%08x-%08x = set to no access\n", addr, addr + size);
+					}
+				}
+			}
 		}
 	}
 }

@@ -6,16 +6,19 @@
 * Native FPU, MSVC 80-bit hack
 */
 
+#include "sysconfig.h"
+#include "sysdeps.h"
+
+#include "options.h"
+
+#if CPU_x86_64 || CPU_i386
+
 #include <math.h>
 #include <float.h>
 #include <fenv.h>
 
-#include "sysconfig.h"
-#include "sysdeps.h"
-
 #define USE_HOST_ROUNDING 1
 
-#include "options.h"
 #include "memory.h"
 #include "newcpu.h"
 #include "fpp.h"
@@ -918,7 +921,7 @@ static void fp_from_pack (fpdata *src, uae_u32 *wrd, int kfactor)
 	strp[1] = strp[0];
 	strp++;
 	// add trailing zeros
-	i = strlen (strp);
+	i = uaestrlen(strp);
 	cp = strp + i;
 	while (i < ndigits) {
 		*cp++ = '0';
@@ -1041,7 +1044,7 @@ static void fp_to_pack (fpdata *fpd, uae_u32 *wrd, int dummy)
 }
 
 
-void fp_init_native_80(void)
+bool fp_init_native_80(void)
 {
 	set_floatx80_rounding_precision(80, &fs);
 	set_float_rounding_mode(float_round_to_zero, &fs);
@@ -1132,4 +1135,16 @@ void fp_init_native_80(void)
 	fpp_cmp = fp_cmp;
 	fpp_tst = fp_tst;
 	fpp_move = fp_move;
+
+	return true;
 }
+
+#else
+
+bool fp_init_native_80(void)
+{
+	write_log("Native long double not supported.\n");
+	return false;
+}
+
+#endif

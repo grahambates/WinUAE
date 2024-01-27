@@ -25,7 +25,7 @@ extern int graphics_init (bool);
 extern void graphics_leave(void);
 extern void graphics_reset(bool);
 extern bool handle_events (void);
-extern int handle_msgpump (void);
+extern int handle_msgpump (bool);
 extern void setup_brkhandler (void);
 extern int isfullscreen (void);
 extern void toggle_fullscreen(int monid, int);
@@ -164,6 +164,8 @@ struct amigadisplay
 	volatile bool picasso_requested_on;
 	bool picasso_requested_forced_on;
 	bool picasso_on;
+	bool interlace_on;
+	int gf_index;
 	int picasso_redraw_necessary;
 	int custom_frame_redraw_necessary;
 	int frame_redraw_necessary;

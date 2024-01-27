@@ -21,7 +21,7 @@
 #include "rommgr.h"
 
 #define hfd_log write_log
-#define hdf_log2
+#define hfd_log2
 //#define hdf_log2 write_log
 
 #ifdef WINDDK
@@ -177,7 +177,7 @@ static int getsignfromhandle (HANDLE h, DWORD *sign, DWORD *pstyle)
 		*pstyle = dli->PartitionStyle;
 		ok = 1;
 	} else {
-		hdf_log2 (_T("IOCTL_DISK_GET_DRIVE_LAYOUT_EX() returned %08x\n"), GetLastError ());
+		hfd_log(_T("IOCTL_DISK_GET_DRIVE_LAYOUT_EX() returned %08x\n"), GetLastError());
 	}
 	if (!ok) {
 		if (DeviceIoControl (h, IOCTL_DISK_GET_DRIVE_LAYOUT, NULL, 0, dli, outsize, &written, NULL)) {
@@ -186,10 +186,10 @@ static int getsignfromhandle (HANDLE h, DWORD *sign, DWORD *pstyle)
 			*pstyle = PARTITION_STYLE_MBR;
 			ok = 1;
 		} else {
-			hdf_log2 (_T("IOCTL_DISK_GET_DRIVE_LAYOUT() returned %08x\n"), GetLastError ());
+			hfd_log(_T("IOCTL_DISK_GET_DRIVE_LAYOUT() returned %08x\n"), GetLastError());
 		}
 	}
-	hdf_log2 (_T("getsignfromhandle(signature=%08X,pstyle=%d)\n"), *sign, *pstyle);
+	hfd_log2(_T("getsignfromhandle(signature=%08X,pstyle=%d)\n"), *sign, *pstyle);
 	xfree (dli);
 	return ok;
 }
@@ -201,8 +201,8 @@ static int ismounted (const TCHAR *name, HANDLE hd)
 	int mounted;
 	DWORD sign, pstyle;
 
-	hdf_log2 (_T("\n"));
-	hdf_log2 (_T("Name='%s'\n"), name);
+	hfd_log2(_T("\n"));
+	hfd_log2(_T("Name='%s'\n"), name);
 	if (!getsignfromhandle (hd, &sign, &pstyle))
 		return 0;
 	if (pstyle == PARTITION_STYLE_GPT)
@@ -217,30 +217,30 @@ static int ismounted (const TCHAR *name, HANDLE hd)
 			volname[_tcslen (volname) - 1] = 0;
 		d = CreateFile (volname, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
 			NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-		hdf_log2 (_T("volname='%s' %08x\n"), volname, d);
+		hfd_log2(_T("volname='%s' %08x\n"), volname, d);
 		if (d != INVALID_HANDLE_VALUE) {
 			DWORD isntfs, outsize, written;
 			isntfs = 0;
 			if (DeviceIoControl (d, FSCTL_IS_VOLUME_MOUNTED, NULL, 0, NULL, 0, &written, NULL)) {
 				VOLUME_DISK_EXTENTS *vde;
 				NTFS_VOLUME_DATA_BUFFER ntfs;
-				hdf_log2 (_T("FSCTL_IS_VOLUME_MOUNTED returned is mounted\n"));
+				hfd_log(_T("FSCTL_IS_VOLUME_MOUNTED returned is mounted\n"));
 				if (DeviceIoControl (d, FSCTL_GET_NTFS_VOLUME_DATA, NULL, 0, &ntfs, sizeof ntfs, &written, NULL)) {
 					isntfs = 1;
 				}
-				hdf_log2 (_T("FSCTL_GET_NTFS_VOLUME_DATA returned %d\n"), isntfs);
-				outsize = sizeof (VOLUME_DISK_EXTENTS) + sizeof (DISK_EXTENT) * 32;
-				vde = (VOLUME_DISK_EXTENTS*)xmalloc (uae_u8, outsize);
-				if (DeviceIoControl (d, IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, NULL, 0, vde, outsize, &written, NULL)) {
-					int i;
-					hdf_log2 (_T("IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS returned %d extents\n"), vde->NumberOfDiskExtents);
-					for (i = 0; i < vde->NumberOfDiskExtents; i++) {
+				hfd_log(_T("FSCTL_GET_NTFS_VOLUME_DATA returned %d\n"), isntfs);
+				const int maxextends = 30;
+				outsize = sizeof (VOLUME_DISK_EXTENTS) + sizeof (DISK_EXTENT) * (maxextends + 1);
+				vde = (VOLUME_DISK_EXTENTS*)xcalloc(uae_u8, outsize);
+				if (vde && DeviceIoControl(d, IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, NULL, 0, vde, outsize, &written, NULL)) {
+					hfd_log(_T("IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS returned %d extents\n"), vde->NumberOfDiskExtents);
+					for (int i = 0; i < vde->NumberOfDiskExtents && i < maxextends; i++) {
 						TCHAR pdrv[MAX_DPATH];
 						HANDLE ph;
 						_stprintf (pdrv, _T("\\\\.\\PhysicalDrive%d"), vde->Extents[i].DiskNumber);
 						ph = CreateFile (pdrv, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
 							NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-						hdf_log2 (_T("PhysicalDrive%d: Extent %d Start=%I64X Len=%I64X\n"), i,
+						hfd_log(_T("PhysicalDrive%d: Extent %d Start=%I64X Len=%I64X\n"), i,
 							vde->Extents[i].DiskNumber, vde->Extents[i].StartingOffset.QuadPart, vde->Extents[i].ExtentLength.QuadPart);
 						if (ph != INVALID_HANDLE_VALUE) {
 							DWORD sign2;
@@ -252,20 +252,20 @@ static int ismounted (const TCHAR *name, HANDLE hd)
 						}
 					}
 				} else {
-					hdf_log2 (_T("IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS returned %08x\n"), GetLastError ());
+					hfd_log(_T("IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS returned %08x\n"), GetLastError());
 				}
 			} else {
-				hdf_log2 (_T("FSCTL_IS_VOLUME_MOUNTED returned not mounted\n"));
+				hfd_log(_T("FSCTL_IS_VOLUME_MOUNTED returned not mounted\n"));
 			}
 			CloseHandle (d);
 		} else {
-			hdf_log2 (_T("'%s': %d\n"), volname, GetLastError ());
+			hfd_log(_T("'%s': %08x\n"), volname, GetLastError());
 		}
 		if (!FindNextVolume (h, volname, sizeof volname / sizeof (TCHAR)))
 			break;
 	}
 	FindVolumeClose (h);
-	hdf_log2 (_T("\n"));
+	hfd_log2(_T("\n"));
 	return mounted;
 }
 
@@ -277,11 +277,11 @@ static void tochs(uae_u8 *data, uae_s64 offset, int *cp, int *hp, int *sp)
 	s = (data[6 * 2 + 0] << 8) | (data[6 * 2 + 1] << 0);
 	if (offset >= 0) {
 		offset /= 512;
-		c = offset / (h * s);
+		c = (int)(offset / (h * s));
 		offset -= c * h * s;
-		h = offset / s;
+		h = (int)(offset / s);
 		offset -= h * s;
-		s = offset + 1;
+		s = (int)offset + 1;
 	}
 	*cp = c;
 	*hp = h;
@@ -424,7 +424,7 @@ static int safetycheck (HANDLE h, const TCHAR *name, uae_u64 offset, uae_u8 *buf
 
 static void trim (TCHAR *s)
 {
-	while(_tcslen(s) > 0 && s[_tcslen(s) - 1] == ' ')
+	while(s[0] != '\0' && s[_tcslen(s) - 1] == ' ')
 		s[_tcslen(s) - 1] = 0;
 }
 
@@ -2145,7 +2145,7 @@ emptyreal:
 		}
 		
 		hfd->handle->h = h;
-		i = _tcslen (name) - 1;
+		i = uaetcslen(name) - 1;
 		while (i >= 0) {
 			if ((i > 0 && (name[i - 1] == '/' || name[i - 1] == '\\')) || i == 0) {
 				_tcsncpy (hfd->product_id, name + i, 15);
@@ -2483,7 +2483,7 @@ static int hdf_read_2 (struct hardfiledata *hfd, void *buffer, uae_u64 offset, i
 	if (hfd->handle_valid == HDF_HANDLE_WIN32_NORMAL) {
 		ReadFile(hfd->handle->h, hfd->cache, CACHE_SIZE, &outlen, NULL);
 	} else if (hfd->handle_valid == HDF_HANDLE_ZFILE) {
-		outlen = zfile_fread(hfd->cache, 1, CACHE_SIZE, hfd->handle->zf);
+		outlen = (DWORD)zfile_fread(hfd->cache, 1, CACHE_SIZE, hfd->handle->zf);
 	}
 	hfd->cache_valid = 0;
 	if (outlen != CACHE_SIZE)
@@ -2531,7 +2531,7 @@ int hdf_read_target (struct hardfiledata *hfd, void *buffer, uae_u64 offset, int
 				ReadFile (hfd->handle->h, hfd->cache, len, &ret, NULL);
 				memcpy (buffer, hfd->cache, ret);
 			} else if (hfd->handle_valid == HDF_HANDLE_ZFILE) {
-				ret = zfile_fread (buffer, 1, len, hfd->handle->zf);
+				ret = (DWORD)zfile_fread (buffer, 1, len, hfd->handle->zf);
 			}
 			maxlen = len;
 		} else {
@@ -2593,7 +2593,7 @@ static int hdf_write_2 (struct hardfiledata *hfd, void *buffer, uae_u64 offset, 
 			}
 		}
 	} else if (hfd->handle_valid == HDF_HANDLE_ZFILE) {
-		outlen = zfile_fwrite (hfd->cache, 1, len, hfd->handle->zf);
+		outlen = (DWORD)zfile_fwrite (hfd->cache, 1, len, hfd->handle->zf);
 	}
 	return outlen;
 }
@@ -2734,7 +2734,7 @@ static int getstorageproperty (PUCHAR outBuf, int returnedLength, struct uae_dri
 		_tcscpy (udi->device_name, udi->device_path);
 	}
 	udi->removablemedia = devDesc->RemovableMedia;
-	while (_tcslen(udi->device_name) > 0 && udi->device_name[_tcslen(udi->device_name) - 1] == ':')
+	while (udi->device_name[0] != '\0' && udi->device_name[_tcslen(udi->device_name) - 1] == ':')
 		udi->device_name[_tcslen(udi->device_name) - 1] = 0;
 	for (int i = 0; i < _tcslen(udi->device_name); i++) {
 		if (udi->device_name[i] == ':')
@@ -2844,15 +2844,15 @@ static bool getstorageinfo(uae_driveinfo *udi, STORAGE_DEVICE_NUMBER sdnp)
 	SetupDiDestroyDeviceInfoList(hIntDevInfo);
 	if (vpm[0] == 0xffffffff || vpm[1] == 0xffffffff)
 		return false;
-	udi->usb_vid = vpm[0];
-	udi->usb_pid = vpm[1];
+	udi->usb_vid = (uae_u16)vpm[0];
+	udi->usb_pid = (uae_u16)vpm[1];
 	return true;
 }
 
 static void checkhdname(struct uae_driveinfo *udi)
 {
 	int cnt = 1;
-	int off = _tcslen(udi->device_name);
+	size_t off = _tcslen(udi->device_name);
 	TCHAR tmp[MAX_DPATH];
 	_tcscpy(tmp, udi->device_name);
 	udi->device_name[0] = 0;
@@ -3720,7 +3720,7 @@ int harddrive_to_hdf (HWND hDlg, struct uae_prefs *p, int idx)
 		} else {
 			get = COPY_CACHE_SIZE;
 			if (sizecnt + get > size)
-				get = size - sizecnt;
+				get = (DWORD)(size - sizecnt);
 			if (!ReadFile(h, cache, get, &got, NULL)) {
 				progressdialogreturn = 4;
 				break;
@@ -3732,7 +3732,7 @@ int harddrive_to_hdf (HWND hDlg, struct uae_prefs *p, int idx)
 		}
 		if (got > 0) {
 			if (written + got > size)
-				got = size - written;
+				got = (DWORD)(size - written);
 			if (!WriteFile (hdst, cache, got, &gotdst, NULL))  {
 				progressdialogreturn = 5;
 				break;

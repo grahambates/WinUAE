@@ -42,6 +42,7 @@
 #include "uae/ppc.h"
 #include "devices.h"
 #include "jit/compemu.h"
+#include "disasm.h"
 #ifdef RETROPLATFORM
 #include "rp.h"
 #endif
@@ -68,36 +69,44 @@ TCHAR optionsfile[256];
 static uae_u32 randseed;
 static int oldhcounter;
 
-uae_u32 uaesrand (uae_u32 seed)
+static uae_u32 xorshiftstate = 1;
+static uae_u32 xorshift32(void)
+{
+	uae_u32 x = xorshiftstate;
+	x ^= x << 13;
+	x ^= x >> 17;
+	x ^= x << 5;
+	xorshiftstate = x;
+	return xorshiftstate;
+}
+
+uae_u32 uaesrand(uae_u32 seed)
 {
 	oldhcounter = -1;
 	randseed = seed;
-	//randseed = 0x12345678;
-	//write_log (_T("seed=%08x\n"), randseed);
 	return randseed;
 }
-uae_u32 uaerand (void)
+uae_u32 uaerand(void)
 {
 	if (oldhcounter != hsync_counter) {
-		srand (hsync_counter ^ randseed);
+		xorshiftstate = (hsync_counter ^ randseed) | 1;
 		oldhcounter = hsync_counter;
 	}
-	uae_u32 r = rand ();
-	//write_log (_T("rand=%08x\n"), r);
+	uae_u32 r = xorshift32();
 	return r;
 }
-uae_u32 uaerandgetseed (void)
+uae_u32 uaerandgetseed(void)
 {
 	return randseed;
 }
 
-void my_trim (TCHAR *s)
+void my_trim(TCHAR *s)
 {
 	int len;
-	while (_tcslen (s) > 0 && _tcscspn (s, _T("\t \r\n")) == 0)
-		memmove (s, s + 1, (_tcslen (s + 1) + 1) * sizeof (TCHAR));
-	len = _tcslen (s);
-	while (len > 0 && _tcscspn (s + len - 1, _T("\t \r\n")) == 0)
+	while (uaetcslen(s) > 0 && _tcscspn(s, _T("\t \r\n")) == 0)
+		memmove (s, s + 1, (uaetcslen(s + 1) + 1) * sizeof (TCHAR));
+	len = uaetcslen(s);
+	while (len > 0 && _tcscspn(s + len - 1, _T("\t \r\n")) == 0)
 		s[--len] = '\0';
 }
 
@@ -108,32 +117,15 @@ TCHAR *my_strdup_trim (const TCHAR *s)
 
 	if (s[0] == 0)
 		return my_strdup(s);
-	while (_tcscspn (s, _T("\t \r\n")) == 0)
+	while (_tcscspn(s, _T("\t \r\n")) == 0)
 		s++;
-	len = _tcslen (s);
-	while (len > 0 && _tcscspn (s + len - 1, _T("\t \r\n")) == 0)
+	len = uaetcslen(s);
+	while (len > 0 && _tcscspn(s + len - 1, _T("\t \r\n")) == 0)
 		len--;
-	out = xmalloc (TCHAR, len + 1);
-	memcpy (out, s, len * sizeof (TCHAR));
+	out = xmalloc(TCHAR, len + 1);
+	memcpy(out, s, len * sizeof (TCHAR));
 	out[len] = 0;
 	return out;
-}
-
-void discard_prefs(struct uae_prefs *p, int type)
-{
-	struct strlist **ps = &p->all_lines;
-	while (*ps) {
-		struct strlist *s = *ps;
-		*ps = s->next;
-		xfree (s->value);
-		xfree (s->option);
-		xfree (s);
-	}
-	p->all_lines = NULL;
-	currprefs.all_lines = changed_prefs.all_lines = NULL;
-#ifdef FILESYS
-	filesys_cleanup ();
-#endif
 }
 
 static void fixup_prefs_dim2(int monid, struct wh *wh)
@@ -199,7 +191,7 @@ void fixup_prefs_dimensions (struct uae_prefs *prefs)
 			if (ap->gfx_backbuffers >= 2)
 				ap->gfx_vflip = -1;
 		}
-		if (prefs->gf[i].gfx_filter == 0 && ((prefs->gf[i].gfx_filter_autoscale && !prefs->gfx_api) || (prefs->gfx_apmode[APMODE_NATIVE].gfx_vsyncmode))) {
+		if (prefs->gf[i].gfx_filter == 0) {
 			prefs->gf[i].gfx_filter = 1;
 		}
 		if (i == 0) {
@@ -280,6 +272,9 @@ void fixup_cpu (struct uae_prefs *p)
 		p->cachesize = 0;
 		error_log (_T("JIT requires 68020 or better CPU."));
 	}
+	if (p->fpu_model == 0 && p->compfpu) {
+		p->compfpu = false;
+	}
 
 	if (!p->cpu_memory_cycle_exact && p->cpu_cycle_exact)
 		p->cpu_memory_cycle_exact = true;
@@ -305,6 +300,7 @@ void fixup_cpu (struct uae_prefs *p)
 		p->fpu_mode = 0;
 	}
 
+#ifdef JIT
 	if (p->comptrustbyte < 0 || p->comptrustbyte > 3) {
 		error_log(_T("Bad value for comptrustbyte parameter: value must be within 0..2."));
 		p->comptrustbyte = 1;
@@ -325,6 +321,7 @@ void fixup_cpu (struct uae_prefs *p)
 		error_log(_T("JIT Bad value for cachesize parameter: value must zero or within %d..%d."), MIN_JIT_CACHE, MAX_JIT_CACHE);
 		p->cachesize = 0;
 	}
+#endif
 
 
 #if 0
@@ -342,12 +339,15 @@ void fixup_cpu (struct uae_prefs *p)
 		error_log (_T("Immediate blitter and waiting blits can't be enabled simultaneously.\n"));
 		p->waiting_blits = 0;
 	}
+	if (p->cpu_memory_cycle_exact && p->cpu_model <= 68010 && p->waiting_blits) {
+		error_log(_T("Wait for blitter is not available in 68000/68010 cycle exact modes.\n"));
+		p->waiting_blits = 0;
+	}
 
 	if (p->blitter_cycle_exact && !p->cpu_memory_cycle_exact) {
 		error_log(_T("Blitter cycle-exact requires at least CPU memory cycle-exact.\n"));
 		p->blitter_cycle_exact = 0;
 	}
-
 	if (p->cpu_memory_cycle_exact)
 		p->cpu_compatible = true;
 
@@ -422,10 +422,6 @@ void fixup_prefs (struct uae_prefs *p, bool userconfig)
 
 #ifdef _WIN32
 	if (p->monitoremu && p->monitoremu_mon > 0) {
-		if (!p->gfx_api) {
-			p->monitoremu_mon = 0;
-			error_log(_T("Multi virtual monitor support requires Direct3D mode."));
-		}
 		if (isfullscreen() != 0) {
 			p->monitoremu_mon = 0;
 			error_log(_T("Multi virtual monitor support requires windowed mode."));
@@ -767,8 +763,8 @@ static int default_config;
 void uae_reset (int hardreset, int keyboardreset)
 {
 	if (debug_dma) {
-		record_dma_reset ();
-		record_dma_reset ();
+		record_dma_reset(0);
+		record_dma_reset(0);
 	}
 	currprefs.quitstatefile[0] = changed_prefs.quitstatefile[0] = 0;
 
@@ -1088,9 +1084,7 @@ static int real_main2 (int argc, TCHAR **argv)
 		exit (1);
 	}
 
-#ifdef NATMEM_OFFSET
-	//preinit_shm ();
-#endif
+	event_init();
 
 	if (restart_config[0])
 		parse_cmdline_and_init_file (argc, argv);
@@ -1141,7 +1135,9 @@ static int real_main2 (int argc, TCHAR **argv)
 	logging_init (); /* Yes, we call this twice - the first case handles when the user has loaded
 						 a config using the cmd-line.  This case handles loads through the GUI. */
 
+#ifdef JIT
 	compiler_init();
+#endif
 #ifdef NATMEM_OFFSET
 	if (!init_shm ()) {
 		if (currprefs.start_gui)
@@ -1172,6 +1168,9 @@ static int real_main2 (int argc, TCHAR **argv)
 	savestate_init ();
 	keybuf_init (); /* Must come after init_joystick */
 
+#ifdef DEBUGGER
+	disasm_init();
+#endif
 	memory_hardreset (2);
 	memory_reset ();
 
@@ -1194,8 +1193,10 @@ static int real_main2 (int argc, TCHAR **argv)
 
 	if (graphics_init (true)) {
 		setup_brkhandler ();
+#ifdef DEBUGGER
 		if (currprefs.start_debugger && debuggable ())
 			activate_debugger ();
+#endif
 
 		if (!init_audio ()) {
 			if (sound_available && currprefs.produce_sound > 1) {

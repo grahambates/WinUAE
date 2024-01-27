@@ -46,6 +46,8 @@ typedef uae_u32 uintptr;
 #define USE_JIT
 #endif
 
+#define JITPTR (uae_u32)(uintptr)
+
 #ifdef USE_JIT
 
 #ifdef JIT_DEBUG
@@ -74,7 +76,7 @@ struct cpu_history {
 };
 
 union cacheline {
-	cpuop_func* handler;
+	cpuop_func *handler;
 	blockinfo_t * bi;
 };
 
@@ -523,9 +525,6 @@ extern void compile_block(cpu_history* pc_hist, int blocklen, int totcyles);
 
 #define MAXCYCLES (1000 * CYCLE_UNIT)
 #define scaled_cycles(x) (currprefs.m68k_speed<0?(((x)/SCALE)?(((x)/SCALE<MAXCYCLES?((x)/SCALE):MAXCYCLES)):1):(x))
-
-/* Flags for Bernie during development/debugging. Should go away eventually */
-#define DISTRUST_CONSISTENT_MEM 0
 
 struct op_properties {
 	uae_u8 use_flags;

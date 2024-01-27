@@ -237,6 +237,7 @@ extern void mousehack_wakeup(void);
 extern void mousehack_write(int reg, uae_u16 val);
 extern void setmouseactive(int monid, int);
 extern bool ismouseactive(void);
+extern void inputdevice_read_msg(bool);
 
 extern void setmousebuttonstateall (int mouse, uae_u32 buttonbits, uae_u32 buttonmask);
 extern void setjoybuttonstateall (int joy, uae_u32 buttonbits, uae_u32 buttonmask);
@@ -297,6 +298,7 @@ extern void inputdevice_joyport_config_store(struct uae_prefs *p, const TCHAR *v
 extern int inputdevice_getjoyportdevice (int port, int val);
 extern void inputdevice_validate_jports (struct uae_prefs *p, int changedport, bool *fixedports);
 extern void inputdevice_fix_prefs(struct uae_prefs *p, bool userconfig);
+extern void inputdevice_jportcustom_fixup(TCHAR*);
 
 extern void inputdevice_init (void);
 extern void inputdevice_close (void);

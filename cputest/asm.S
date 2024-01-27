@@ -25,6 +25,7 @@
 	.globl _cyclereg_address5
 	.globl _cyclereg_address6
 	.globl _berrcopy
+	.globl _fpucomp
 
 | must match main.c
 S_DREG = 0
@@ -49,6 +50,22 @@ S_FPSR = S_FPCR+4
 S_FSAVE = S_FPSR+4
 S_NEXT = S_FSAVE+216
 
+asm_start:
+
+	| v1, v2, limit
+	| abs((v2 - v1) / v1) > limit
+_fpucomp:
+	move.l 4(sp),a0
+	fmovem.x (a0),fp0-fp2
+	fsub.x fp0,fp1
+	fdiv.x fp0,fp1
+	fabs.x fp1
+	moveq #1,d0
+	fcmp.x fp1,fp2
+	fbgt .larger
+	moveq #0,d0
+.larger:
+	rts
 
 	| src, dst, size, >68000
 _berrcopy:
@@ -214,7 +231,7 @@ _execute_test010:
 _cyclereg_address2:
 	move.w CYCLEREG,cycles
 	| pre set data output buffer.
-	| we don't want random DOB contents in bus/address error frame
+	| we dont want random DOB contents in bus/address error frame
 	move.w #0xf00d,dummy
 	rte
 
@@ -340,7 +357,27 @@ exception:
 	move.w sr,-(sp)
 _cyclereg_address4:
 	move.w CYCLEREG,cycles+2
+	move.w #0x2700,sr
 	move.w #0,ACTIVITYREG
+	| exception start inside this assembly code?
+	cmp.l #asm_start,2+4+2(sp)
+	bcs.s .okpc
+	cmp.l #asm_end,2+4+2(sp)
+	bhi.s .okpc
+	| interrupt?
+	cmp.l #_exceptiontable000+24*2,2(sp)
+	bcs.s .okpc
+	cmp.l #_exceptiontable000+(24+8)*2,2(sp)
+	bcc.s .okpc
+	| possibly IPL tester spurious interrupt
+	| ignore it. Mark cycle count as invalid.
+#ifdef AMIGA
+	move.w #0x0800,0xdff09c
+#endif
+	move.l #0xffffffff,cycles
+	addq.l #2+4,sp
+	rte
+.okpc:
 	move.l a0,-(sp)
 	move.l datapointer(pc),a0
 	movem.l d0-d7/a0-a6,(a0)
@@ -362,6 +399,15 @@ _cyclereg_address4:
 	move.w (sp),S_EXC+0(a0)
 	addq.w #8,sp
 .noaddresserror:
+	cmp.w #24,d0
+	bcs.s .nointerrupt
+	cmp.w #24+8,d0
+	bcc.s .nointerrupt
+#ifdef AMIGA
+	move.w #0x0800,0xdff09c
+#endif
+.nointerrupt:
+
 	move.w (sp)+,S_SR+2(a0)
 	move.l (sp)+,S_PC(a0)
 
@@ -738,3 +784,4 @@ temp:
 	dc.l 0
 nullframe:
 	dc.l 0,0,0
+asm_end:

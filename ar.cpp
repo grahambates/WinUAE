@@ -1415,7 +1415,7 @@ static void disable_rom_test (void)
 	*/
 
 	if (armodel == 1) {
-		uae_u16 search_value_rel = end_addr - start_addr;
+		uae_u16 search_value_rel = addrdiff(end_addr, start_addr);
 		addr = find_relative_word(start_addr, end_addr, search_value_rel);
 
 		if (addr) {
@@ -1427,7 +1427,7 @@ static void disable_rom_test (void)
 			}
 		}
 	} else {
-		uae_u32 search_value_abs = arrom_start + end_addr - start_addr;
+		uae_u32 search_value_abs = arrom_start + addrdiff(end_addr, start_addr);
 		addr = find_absolute_long (start_addr, end_addr, search_value_abs);
 
 		if (addr) {
@@ -1645,7 +1645,7 @@ int action_replay_load (void)
 		write_log (_T("action_replay_load () ROM already loaded.\n"));
 		return 0;
 	}
-	if (_tcslen (currprefs.cartfile) == 0 || currprefs.cartfile[0] == ':')
+	if (currprefs.cartfile[0] == '\0' || currprefs.cartfile[0] == ':')
 		return 0;
 	if (currprefs.cs_cd32fmv)
 		return 0;
@@ -1674,7 +1674,7 @@ int action_replay_load (void)
 		}
 	}
 	zfile_fseek(f, 0, SEEK_END);
-	ar_rom_file_size = zfile_ftell(f);
+	ar_rom_file_size = zfile_ftell32(f);
 	zfile_fseek(f, 0, SEEK_SET);
 	zfile_fread (header, 1, sizeof header, f);
 	zfile_fseek (f, 0, SEEK_SET);
@@ -1810,7 +1810,7 @@ int hrtmon_load (void)
 	}
 
 	if (!isinternal) {
-		if (_tcslen (currprefs.cartfile) == 0)
+		if (currprefs.cartfile[0] == '\0')
 			return 0;
 		f = read_rom_name (currprefs.cartfile);
 		if(!f) {
@@ -2009,7 +2009,7 @@ void action_replay_memory_reset (void)
 		action_replay_flag = ACTION_REPLAY_ACTIVE;
 }
 
-uae_u8 *save_hrtmon (int *len, uae_u8 *dstptr)
+uae_u8 *save_hrtmon(size_t *len, uae_u8 *dstptr)
 {
 	uae_u8 *dstbak, *dst;
 
@@ -2088,7 +2088,7 @@ uae_u8 *restore_hrtmon (uae_u8 *src)
 	return src;
 }
 
-uae_u8 *save_action_replay (int *len, uae_u8 *dstptr)
+uae_u8 *save_action_replay(size_t *len, uae_u8 *dstptr)
 {
 	uae_u8 *dstbak, *dst;
 

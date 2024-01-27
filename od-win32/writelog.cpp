@@ -144,6 +144,7 @@ static void getconsole (void)
 		}
 	}
 	SetConsoleCtrlHandler(ctrlchandler, TRUE);
+	SetConsoleCtrlHandler(NULL, TRUE);
 }
 
 static void flushmsgpump(void)
@@ -316,20 +317,20 @@ int read_log(void)
 #endif
 }
 
-static void writeconsole_2 (const TCHAR *buffer)
+static void writeconsole_2(const TCHAR *buffer)
 {
 	DWORD temp;
 
 	if (!consoleopen)
-		openconsole ();
+		openconsole();
 
 	if (consoleopen > 0) {
-		WriteOutput (buffer, _tcslen (buffer));
+		WriteOutput(buffer, uaetcslen(buffer));
 	} else if (realconsole) {
-		fputws (buffer, stdout);
-		fflush (stdout);
+		fputws(buffer, stdout);
+		fflush(stdout);
 	} else if (consoleopen < 0) {
-		WriteConsole (stdoutput, buffer, _tcslen (buffer), &temp, 0);
+		WriteConsole(stdoutput, buffer, uaetcslen(buffer), &temp, 0);
 	}
 }
 
@@ -600,7 +601,7 @@ void write_dlog (const TCHAR *format, ...)
 		_ftprintf (debugfile, _T("%s"), bufp);
 	}
 	lfdetected = 0;
-	if (_tcslen (bufp) > 0 && bufp[_tcslen (bufp) - 1] == '\n')
+	if (bufp[0] != '\0' && bufp[_tcslen(bufp) - 1] == '\n')
 		lfdetected = 1;
 	va_end (parms);
 	if (bufp != buffer)
@@ -657,7 +658,7 @@ void write_logx(const TCHAR *format, ...)
 		_ftprintf (debugfile, _T("%s"), bufp);
 	}
 	lfdetected = 0;
-	if (_tcslen (bufp) > 0 && bufp[_tcslen (bufp) - 1] == '\n')
+	if (bufp[0] != '\0' && bufp[_tcslen (bufp) - 1] == '\n')
 		lfdetected = 1;
 	va_end (parms);
 	if (bufp != buffer)
@@ -728,7 +729,7 @@ void write_log (const TCHAR *format, ...)
 		barto_gdbserver::log_output(bufp);
 
 	lfdetected = 0;
-	if (_tcslen (bufp) > 0 && bufp[_tcslen (bufp) - 1] == '\n')
+	if (bufp[0] != '\0' && bufp[_tcslen (bufp) - 1] == '\n')
 		lfdetected = 1;
 	va_end (parms);
 	if (bufp != buffer)
@@ -760,7 +761,7 @@ void f_out (void *f, const TCHAR *format, ...)
 	va_end (parms);
 }
 
-TCHAR* buf_out (TCHAR *buffer, int *bufsize, const TCHAR *format, ...)
+TCHAR *buf_out(TCHAR *buffer, int *bufsize, const TCHAR *format, ...)
 {
 	int count;
 	va_list parms;
@@ -768,10 +769,10 @@ TCHAR* buf_out (TCHAR *buffer, int *bufsize, const TCHAR *format, ...)
 
 	if (buffer == NULL)
 		return 0;
-	count = _vsntprintf (buffer, (*bufsize) - 1, format, parms);
+	count = _vsntprintf(buffer, (*bufsize) - 1, format, parms);
 	va_end (parms);
-	*bufsize -= _tcslen (buffer);
-	return buffer + _tcslen (buffer);
+	*bufsize -= uaetcslen(buffer);
+	return buffer + uaetcslen(buffer);
 }
 
 FILE *log_open (const TCHAR *name, int append, int bootlog, TCHAR *outpath)
