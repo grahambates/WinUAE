@@ -72,7 +72,7 @@ extern void capture_start();
 extern TCHAR *capture_end();
 
 // from custom.cpp
-extern uae_u8* save_custom(int* len, uae_u8* dstptr, int full);
+extern uae_u8* save_custom(size_t* len, uae_u8* dstptr, int full);
 
 
 #include "barto_gdbserver.h"
@@ -1023,7 +1023,7 @@ namespace barto_gdbserver {
 			int len = strtoul(request.data() + comma + 1, nullptr, 16);
 			barto_log("GDBSERVER: want 0x%x bytes at 0x%x\n", len, adr);
 			if ((adr >= 0xdff000) && (adr < 0xdff1fe)) {
-				int custom_save_length = 0;
+				size_t custom_save_length = 0;
 				uae_u8* p1 = NULL;
 				p1 = save_custom(&custom_save_length, 0, 1);
 				if (p1 != NULL) {
