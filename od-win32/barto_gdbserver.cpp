@@ -890,6 +890,8 @@ namespace barto_gdbserver {
 					bpn.type = BREAKPOINT_REG_PC;
 					bpn.oper = BREAKPOINT_CMP_EQUAL;
 					bpn.enabled = 1;
+					bpn.cnt = 0;
+					bpn.chain = -1;
 					trace_mode = TRACE_CHECKONLY;
 					//print_breakpoints();
 					response = GDB_OK;
@@ -1766,6 +1768,8 @@ start_profile:
 					bpn.type = BREAKPOINT_REG_PC;
 					bpn.oper = BREAKPOINT_CMP_EQUAL;
 					bpn.enabled = 1;
+					bpn.cnt = 0;
+					bpn.chain = -1;
 					barto_log("GDBSERVER: Breakpoint for KPutCharX at 0x%x installed\n", bpn.value1);
 					break;
 				}
@@ -1779,6 +1783,8 @@ start_profile:
 					bpn.type = BREAKPOINT_REG_PC;
 					bpn.oper = BREAKPOINT_CMP_EQUAL;
 					bpn.enabled = 1;
+					bpn.cnt = 0;
+					bpn.chain = -1;
 					barto_log("GDBSERVER: Breakpoint for TRAP#7 at 0x%x installed\n", bpn.value1);
 					break;
 				}
@@ -1791,6 +1797,8 @@ start_profile:
 					bpn.type = BREAKPOINT_REG_PC;
 					bpn.oper = BREAKPOINT_CMP_EQUAL;
 					bpn.enabled = 1;
+					bpn.cnt = 0;
+					bpn.chain = -1;
 					barto_log("GDBSERVER: Breakpoint for AddressError at 0x%x installed\n", bpn.value1);
 					break;
 				}
@@ -1803,6 +1811,8 @@ start_profile:
 					bpn.type = BREAKPOINT_REG_PC;
 					bpn.oper = BREAKPOINT_CMP_EQUAL;
 					bpn.enabled = 1;
+					bpn.cnt = 0;
+					bpn.chain = -1;
 					barto_log("GDBSERVER: Breakpoint for IllegalError at 0x%x installed\n", bpn.value1);
 					break;
 				}
