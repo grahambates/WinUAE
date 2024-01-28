@@ -14,9 +14,9 @@
 #include "uae.h"
 
 // Store output written to console so we can return it from remote debugger
-char capture_buffer[1024 * 32];
+TCHAR capture_buffer[1024 * 32];
 bool capturing = false;
-char *capture_p;
+TCHAR *capture_p;
 
 void capture_start() {
 	memset(capture_buffer, 0, 1);
@@ -26,8 +26,8 @@ void capture_start() {
 
 void capture_write(const TCHAR *txt) {
 	if (capturing) {
-		int len = strlen(txt);
-		strncpy(capture_p, txt, len);
+		int len = lstrlen(txt);
+		_tcsncpy(capture_p, txt, len);
 		capture_p += len;
 	}
 }
@@ -406,8 +406,8 @@ void console_out_f (const TCHAR *format,...)
 	va_start (parms, format);
 	if (capturing) {
 		va_list arg_ptr1;
-		va_copy(arg_ptr1, params);
-		capture_p += vsprintf(capture_p, format, arg_ptr1);
+		va_copy(arg_ptr1, parms);
+		capture_p += _vstprintf(capture_p, format, arg_ptr1);
 	}
 	len = _vsntprintf (pbuf, WRITE_LOG_BUF_SIZE - 1, format, parms);
 	if (!len)

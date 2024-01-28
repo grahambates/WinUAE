@@ -704,12 +704,16 @@ namespace barto_gdbserver {
 			}
 		} else if(cmd.substr(0, strlen("console ")) == "console ") {
 			std::string cmd_args = cmd.substr(strlen("console "));
-			TCHAR *input = const_cast<char*>(cmd_args.c_str());
+			auto *input = const_cast<char*>(cmd_args.c_str());
 			barto_log("GDBSERVER: console %s\n", input);
 			capture_start();
-			debug_line(input);
-			TCHAR *output = capture_end();
-			return std::string(output, strlen(output));
+			TCHAR* inputT = new TCHAR[512];
+			MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, input, strlen(input), inputT, 512);
+			debug_line(inputT);
+			TCHAR *outputT = capture_end();
+			char  output[1024 * 32];
+			WideCharToMultiByte(CP_ACP, 0, outputT, lstrlen(outputT), output, 512, NULL, NULL);
+			return output;
 		} else if(cmd == "reset" && currprefs.debugging_trigger[0]) {
 			savestate_quick(0, 0); // restore state saved at process entry
 			barto_debug_resources_count = 0;
