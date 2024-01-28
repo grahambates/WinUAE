@@ -88,6 +88,7 @@ namespace barto_gdbserver {
 	bool is_connected();
 	bool data_available();
 	void disconnect();
+	void set_exception(int n);
 
 	static bool in_handle_packet = false;
 	struct tracker {
@@ -233,6 +234,7 @@ namespace barto_gdbserver {
 	#define THREAD_ID_CPU    1		// Id for the cpu thread
 	#define THREAD_ID_COPPER 2		// Id for the copper thread
 	std::string stop_signal = "S05";
+	int exception_no{};
 
 	enum class state {
 		inited,
@@ -393,6 +395,10 @@ namespace barto_gdbserver {
 		closesocket(gdbconn);
 		gdbconn = INVALID_SOCKET;
 		barto_log(_T("GDBSERVER: disconnect\n"));
+	}
+
+	void set_exception(int n) {
+		exception_no = n;
 	}
 
 	// from binutils-gdb/gdb/m68k-tdep.c
@@ -1892,6 +1898,30 @@ start_profile:
 				debug_copper &= ~8;
 				response = "T05swbreak:;thread:" + hex8(THREAD_ID_COPPER);
 				goto send_response;
+			}
+
+			// Check storaged exception code
+			if (exception_no > 0) {
+				regs.pc = regs.instruction_pc_user_exception;
+				m68k_areg(regs, A7 - A0) = regs.usp;
+
+				switch (exception_no) {
+					case 2: // Bus error
+					case 3: // Address error
+						response = "S0A"; // SIGBUS
+						break;
+					case 4: // Illegal instruction
+					case 10: // Unimplemented instruction (line A)
+					case 11: // Unimplemented instruction (line F)
+						response = "S04"; // SIGILL
+						break;
+					case 5: // Division by zero
+						response = "S08"; // SIGFPE
+						break;
+					default:
+						response = "S02"; // SIGINT
+				}
+				exception_no = 0;
 			}
 
 			//if(memwatch_triggered) // can't use, debug() will reset it, so just check mwhit
