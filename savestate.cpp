@@ -133,7 +133,7 @@ bool is_savestate_incompatible(void)
 	}
 #endif
 #ifdef WITH_PPC
-	if (currprefs.ppc_model) {
+	if (currprefs.ppc_model[0]) {
 		dowarn = 1;
 	}
 #endif
@@ -620,6 +620,7 @@ void restore_state (const TCHAR *filename)
 	restore_header (chunk);
 	xfree (chunk);
 	devices_restore_start();
+	clear_events();
 	z2num = z3num = 0;
 	for (;;) {
 		name[0] = 0;
@@ -708,6 +709,8 @@ void restore_state (const TCHAR *filename)
 			end = restore_custom_extra (chunk);
 		else if (!_tcscmp (name, _T("CHPD")))
 			end = restore_custom_event_delay (chunk);
+		else if (!_tcscmp (name, _T("CHSL")))
+			end = restore_custom_slots (chunk);
 		else if (!_tcscmp (name, _T("AUD0")))
 			end = restore_audio (0, chunk);
 		else if (!_tcscmp (name, _T("AUD1")))
@@ -806,8 +809,10 @@ void restore_state (const TCHAR *filename)
 #endif
 		else if (!_tcsncmp (name, _T("EXPB"), 4))
 			end = restore_expansion_boards(chunk);
+#ifdef DEBUGGER
 		else if (!_tcsncmp (name, _T("DMWP"), 4))
 			end = restore_debug_memwatch (chunk);
+#endif
 		else if (!_tcsncmp(name, _T("PIC0"), 4))
 			end = chunk + len;
 
@@ -874,7 +879,9 @@ bool savestate_restore_finish(void)
 #ifdef ACTION_REPLAY
 	restore_ar_finish();
 #endif
+#ifdef DEBUGGER
 	restore_debug_memwatch_finish();
+#endif
 	savestate_state = 0;
 	init_hz_normal();
 	audio_activate();
@@ -1023,11 +1030,13 @@ static int save_state_internal (struct zfile *f, const TCHAR *description, int c
 	dst = save_blitter_new (&len, 0);
 	save_chunk (f, dst, len, _T("BLTX"), 0);
 	xfree (dst);
-	if (new_blitter == false) {
-		dst = save_blitter (&len, 0);
-		save_chunk (f, dst, len, _T("BLIT"), 0);
-		xfree (dst);
-	}
+	dst = save_blitter (&len, 0, new_blitter);
+	save_chunk (f, dst, len, _T("BLIT"), 0);
+	xfree (dst);
+
+	dst = save_custom_slots(&len, 0);
+	save_chunk(f, dst, len, _T("CHSL"), 0);
+	xfree(dst);
 
 	dst = save_input (&len, 0);
 	save_chunk (f, dst, len, _T("CINP"), 0);
@@ -1186,11 +1195,13 @@ static int save_state_internal (struct zfile *f, const TCHAR *description, int c
 		}
 	}
 
+#ifdef DEBUGGER
 	dst = save_debug_memwatch (&len, NULL);
 	if (dst) {
 		save_chunk (f, dst, len, _T("DMWP"), 0);
 		xfree(dst);
 	}
+#endif
 
 	dst = save_screenshot(0, &len);
 	if (dst) {
@@ -1536,14 +1547,14 @@ void savestate_capture (int force)
 	struct staterecord *st;
 	bool firstcapture = false;
 
-#ifdef FILESYS
-	if (nr_units ())
-		return;
-#endif
 	if (!staterecords)
 		return;
 	if (!input_record)
 		return;
+#ifdef FILESYS
+	if (nr_units())
+		return;
+#endif
 	if (currprefs.statecapturerate && hsync_counter == 0 && input_record == INPREC_RECORD_START && savestate_first_capture > 0) {
 		// first capture
 		force = true;

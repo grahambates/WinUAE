@@ -17,6 +17,8 @@
 #include "sysconfig.h"
 #include "sysdeps.h"
 
+#ifdef CDTV
+
 #include "options.h"
 #include "memory.h"
 #include "custom.h"
@@ -1524,7 +1526,7 @@ static void REGPARAM2 dmac_bput (uaecptr addr, uae_u32 b)
 
 static void open_unit (void)
 {
-	struct device_info di;
+	struct device_info di = { 0 };
 	unitnum = get_standard_cd_unit (CD_STANDARD_UNIT_CDTV);
 	sys_command_info (unitnum, &di, 0);
 	write_log (_T("using drive %s (unit %d, media %d)\n"), di.label, unitnum, di.media_inserted);
@@ -1758,7 +1760,7 @@ bool cdtv_init(struct autoconfig_info *aci)
 
 	device_add_hsync(CDTV_hsync_handler);
 	device_add_rethink(rethink_cdtv);
-	device_add_exit(cdtv_free);
+	device_add_exit(cdtv_free, NULL);
 
 	return true;
 }
@@ -1949,4 +1951,6 @@ void restore_cdtv_final(void)
 	}
 }
 
-#endif
+#endif /* SAVESTATE */
+
+#endif /* CDTV */

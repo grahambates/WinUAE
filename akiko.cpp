@@ -2035,7 +2035,7 @@ static void patchrom(void)
 {
 	if (currprefs.cs_cd32cd && (currprefs.cpu_model > 68020 || currprefs.cachesize || currprefs.m68k_speed != 0)) {
 		uae_u8 *p = extendedkickmem_bank.baseaddr;
-		if (p) {
+		if (p && extendedkickmem_bank.allocated_size >= 524288) {
 			for (int i = 0; i < 524288 - 512; i++) {
 				if (!memcmp(p + i, patchdata2, sizeof(patchdata2)))
 					return;				
@@ -2154,7 +2154,7 @@ int akiko_init(void)
 		device_add_rethink(rethink_akiko);
 	}
 
-	device_add_exit(akiko_free);
+	device_add_exit(akiko_free, NULL);
 
 	return 1;
 }
@@ -2165,6 +2165,10 @@ uae_u8 *save_akiko (size_t *len, uae_u8 *dstptr)
 {
 	uae_u8 *dstbak, *dst;
 	int i;
+
+	if (!currprefs.cs_cd32cd && !currprefs.cs_cd32c2p && !currprefs.cs_cd32nvram) {
+		return NULL;
+	}
 
 	if (dstptr)
 		dstbak = dst = dstptr;

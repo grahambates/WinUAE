@@ -109,6 +109,7 @@ extern bool debug_trainer_event(int evt, int state);
 extern void debug_smc_clear(uaecptr addr, int size);
 
 #define BREAKPOINT_TOTAL 20
+
 #define BREAKPOINT_REG_Dx 0
 #define BREAKPOINT_REG_Ax 8
 #define BREAKPOINT_REG_PC 16
@@ -129,7 +130,10 @@ extern void debug_smc_clear(uaecptr addr, int size);
 #define BREAKPOINT_REG_DTT1 31
 #define BREAKPOINT_REG_BUSC 32
 #define BREAKPOINT_REG_PCR 33
-#define BREAKPOINT_REG_END 34
+#define BREAKPOINT_REG_FPIAR 34
+#define BREAKPOINT_REG_FPCR 35
+#define BREAKPOINT_REG_FPSR 36
+#define BREAKPOINT_REG_END 37
 
 #define BREAKPOINT_CMP_EQUAL 0
 #define BREAKPOINT_CMP_NEQUAL 1
@@ -146,8 +150,10 @@ struct breakpoint_node {
 	uae_u32 mask;
 	int type;
 	int oper;
+	bool opersigned;
 	int enabled;
 	int cnt;
+	int chain;
 };
 extern struct breakpoint_node bpnodes[BREAKPOINT_TOTAL];
 
@@ -247,6 +253,8 @@ extern struct peekdma peekdma_data;
 #pragma pack(1) // BARTO
 struct dma_rec
 {
+	int hpos, vpos;
+	int dhpos;
     uae_u16 reg;
     uae_u64 dat;
 	uae_u16 size;
@@ -330,9 +338,11 @@ extern void record_dma_clear(int hpos, int vpos);
 extern bool record_dma_check(int hpos, int vpos);
 extern void record_dma_hsync(int);
 extern void record_dma_vsync(int);
+extern void record_dma_reoffset(int, int, int);
 extern void record_cia_access(int r, int mask, uae_u16 value, bool rw, int hpos, int vpos, int phase);
 extern void record_dma_ipl(int hpos, int vpos);
 extern void record_dma_ipl_sample(int hpos, int vpos);
+extern void record_dma_denise(int pos, int dhpos);
 extern void debug_mark_refreshed(uaecptr);
 extern struct dma_rec* get_dma_records(); // BARTO
 extern void debug_draw(uae_u8 *buf, int bpp, int line, int width, int height, uae_u32 *xredcolors, uae_u32 *xgreencolors, uae_u32 *xbluescolors);

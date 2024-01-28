@@ -168,6 +168,11 @@ void activate_debugger_new_pc(uaecptr pc, int len)
 	trace_param[1] = pc + len;
 }
 
+static void debug_continue(void)
+{
+	set_special(SPCFLAG_BRK);
+}
+
 bool debug_enforcer(void)
 {
 	if (!break_if_enforcer)
@@ -200,7 +205,7 @@ static const TCHAR help[] = {
 	_T("  tx                    Break when any exception.\n")
 	_T("  z                     Step through one instruction - useful for JSR, DBRA etc.\n")
 	_T("  f                     Step forward until PC in RAM (\"boot block finder\").\n")
-	_T("  f <address>           Add/remove breakpoint.\n")
+	_T("  f <address> [Nx]      Add/remove breakpoint.\n")
 	_T("  fa <address> [<start>] [<end>]\n")
 	_T("                        Find effective address <address>.\n")
 	_T("  fi                    Step forward until PC points to RTS, RTD or RTE.\n")
@@ -210,7 +215,7 @@ static const TCHAR help[] = {
 	_T("  fd                    Remove all breakpoints.\n")
 	_T("  fs <lines to wait> | <vpos> <hpos> Wait n scanlines/position.\n")
 	_T("  fc <CCKs to wait>     Wait n color clocks.\n")
-	_T("  fo <num> <reg> <oper> <val> [<mask> <val2>] Conditional register breakpoint.\n")
+	_T("  fo <num> <reg> <oper> <val> [<mask> <val2>] Conditional register breakpoint [Nx] [Hx].\n")
 	_T("   reg=Dx,Ax,PC,USP,ISP,VBR,SR. oper:!=,==,<,>,>=,<=,-,!- (-=val to val2 range).\n")
 	_T("  f <addr1> <addr2>     Step forward until <addr1> <= PC <= <addr2>.\n")
 	_T("  e[x]                  Dump contents of all custom registers, ea = AGA colors.\n")
@@ -248,7 +253,8 @@ static const TCHAR help[] = {
 	_T("  dj [<level bitmask>]  Enable joystick/mouse input debugging.\n")
 	_T("  smc [<0-1>]           Enable self-modifying code detector. 1 = enable break.\n")
 	_T("  dm                    Dump current address space map.\n")
-	_T("  v <vpos> [<hpos>]     Show DMA data (accurate only in cycle-exact mode).\n")
+	_T("  v <vpos> [<hpos>] [<lines>]\n")
+	_T("                        Show DMA data (accurate only in cycle-exact mode).\n")
 	_T("                        v [-1 to -4] = enable visual DMA debugger.\n")
 	_T("  vh [<ratio> <lines>]  \"Heat map\"\n")
 	_T("  I <custom event>      Send custom event string\n")
@@ -516,8 +522,11 @@ static bool iscancel (int counter)
 
 static bool isoperator(TCHAR **cp)
 {
-	TCHAR c = **cp;
-	return c == '+' || c == '-' || c == '/' || c == '*' || c == '(' || c == ')' || c == '|' || c == '&' || c == '^';
+	TCHAR c = _totupper(**cp);
+	TCHAR c1 = _totupper((*cp)[1]);
+	return c == '+' || c == '-' || c == '/' || c == '*' || c == '(' || c == ')' ||
+		c == '|' || c == '&' || c == '^' || c == '=' || c == '>' || c == '<' ||
+		(c == 'R' && (c1 == 'L' || c1 == 'W' || c1 == 'B'));
 }
 
 static void ignore_ws (TCHAR **c)
@@ -575,7 +584,7 @@ static const TCHAR *debugoper[] = {
 	NULL
 };
 
-static int getoperidx(TCHAR **c)
+static int getoperidx(TCHAR **c, bool *opersigned)
 {
 	int i;
 	TCHAR *p = *c;
@@ -615,6 +624,11 @@ static int getoperidx(TCHAR **c)
 		(*c) += 2;
 		return BREAKPOINT_CMP_NRANGE;
 	}
+	*opersigned = false;
+	if (**c == 's') {
+		(*c)++;
+		*opersigned = true;
+	}
 	return -1;
 }
 
@@ -653,10 +667,13 @@ static const TCHAR *debugregs[] = {
 	_T("DTT1"),
 	_T("BUSC"),
 	_T("PCR"),
+	_T("FPIAR"),
+	_T("FPCR"),
+	_T("FPSR"),
 	NULL
 };
 
-static int getregidx(TCHAR **c)
+int getregidx(TCHAR **c)
 {
 	int i;
 	TCHAR *p = *c;
@@ -680,7 +697,7 @@ static int getregidx(TCHAR **c)
 	return -1;
 }
 
-static uae_u32 returnregx(int regid)
+uae_u32 returnregx(int regid)
 {
 	if (regid < BREAKPOINT_REG_PC)
 		return regs.regs[regid];
@@ -729,85 +746,74 @@ static uae_u32 returnregx(int regid)
 		case BREAKPOINT_REG_BUSC:
 		return regs.buscr;
 		case BREAKPOINT_REG_PCR:
+		return regs.pcr;
+		case BREAKPOINT_REG_FPIAR:
+		return regs.fpiar;
+		case BREAKPOINT_REG_FPCR:
 		return regs.fpcr;
+		case BREAKPOINT_REG_FPSR:
+		return regs.fpsr;
 	}
 	return 0;
 }
 
-static int readregx (TCHAR **c, uae_u32 *valp)
+static int readregx(TCHAR **c, uae_u32 *valp)
 {
-	int i;
+	int idx;
 	uae_u32 addr;
-	TCHAR *p = *c;
-	TCHAR tmp[10], *tp;
-	int extra = 0;
+	TCHAR *old = *c;
 
 	addr = 0;
-	i = 0;
-	while (p[i]) {
-		tmp[i] = _totupper (p[i]);
-		if (i >= sizeof (tmp) / sizeof (TCHAR) - 1)
-			break;
-		i++;
+	if (_totupper(**c) == 'R') {
+		(*c)++;
 	}
-	tmp[i] = 0;
-	tp = tmp;
-	if (_totupper (tmp[0]) == 'R') {
-		tp = tmp + 1;
-		extra = 1;
-	}
-	if (!_tcsncmp (tp, _T("USP"), 3)) {
-		addr = regs.usp;
-		(*c) += 3;
-	} else if (!_tcsncmp (tp, _T("VBR"), 3)) {
-		addr = regs.vbr;
-		(*c) += 3;
-	} else if (!_tcsncmp (tp, _T("MSP"), 3)) {
-		addr = regs.msp;
-		(*c) += 3;
-	} else if (!_tcsncmp (tp, _T("ISP"), 3)) {
-		addr = regs.isp;
-		(*c) += 3;
-	} else if (!_tcsncmp (tp, _T("PC"), 2)) {
-		addr = regs.pc;
-		(*c) += 2;
-	} else if (tp[0] == 'A' || tp[0] == 'D') {
-		int reg = 0;
-		if (tp[0] == 'A')
-			reg += 8;
-		reg += tp[1] - '0';
-		if (reg < 0 || reg > 15)
-			return 0;
-		addr = regs.regs[reg];
-		(*c) += 2;
-	} else {
+	idx = getregidx(c);
+	if (idx < 0) {
+		*c = old;
 		return 0;
 	}
+	addr = returnregx(idx);
 	*valp = addr;
-	(*c) += extra;
 	return 1;
+}
+
+static bool checkisneg(TCHAR **c)
+{
+	TCHAR nc = peekchar(c);
+	if (nc == '-') {
+		(*c)++;
+		return true;
+	} else if (nc == '+') {
+		(*c)++;
+	}
+	return false;
 }
 
 static bool readbinx (TCHAR **c, uae_u32 *valp)
 {
 	uae_u32 val = 0;
 	bool first = true;
+	bool negative = false;
 
 	ignore_ws (c);
+	negative = checkisneg(c);
 	for (;;) {
 		TCHAR nc = **c;
-		if (nc != '1' && nc != '0') {
+		if (nc != '1' && nc != '0' && nc != '`') {
 			if (first)
 				return false;
 			break;
 		}
 		first = false;
 		(*c)++;
-		val <<= 1;
-		if (nc == '1')
-			val |= 1;
+		if (nc != '`') {
+			val <<= 1;
+			if (nc == '1') {
+				val |= 1;
+			}
+		}
 	}
-	*valp = val;
+	*valp = val * (negative ? -1 : 1);
 	return true;
 }
 
@@ -815,9 +821,11 @@ static bool readhexx (TCHAR **c, uae_u32 *valp)
 {
 	uae_u32 val = 0;
 	TCHAR nc;
+	bool negative = false;
 
-	ignore_ws (c);
-	if (!isxdigit (peekchar (c)))
+	ignore_ws(c);
+	negative = checkisneg(c);
+	if (!isxdigit(peekchar(c)))
 		return false;
 	while (isxdigit (nc = **c)) {
 		(*c)++;
@@ -829,7 +837,7 @@ static bool readhexx (TCHAR **c, uae_u32 *valp)
 			val += nc - 'A' + 10;
 		}
 	}
-	*valp = val;
+	*valp = val * (negative ? -1 : 1);
 	return true;
 }
 
@@ -840,8 +848,7 @@ static bool readintx (TCHAR **c, uae_u32 *valp)
 	int negative = 0;
 
 	ignore_ws (c);
-	if (**c == '-')
-		negative = 1, (*c)++;
+	negative = checkisneg(c);
 	if (!isdigit (peekchar (c)))
 		return false;
 	while (isdigit (nc = **c)) {
@@ -865,11 +872,11 @@ static int checkvaltype2 (TCHAR **c, uae_u32 *val, TCHAR def)
 	}
 	if (nc == '$') {
 		(*c)++;
-		return  readhexx (c, val) ? 1 : 0;
+		return readhexx (c, val) ? 1 : 0;
 	}
 	if (nc == '0' && _totupper ((*c)[1]) == 'X') {
 		(*c)+= 2;
-		return  readhexx (c, val) ? 1 : 0;
+		return readhexx (c, val) ? 1 : 0;
 	}
 	if (nc == '%') {
 		(*c)++;
@@ -921,10 +928,11 @@ static int readsize (int val, TCHAR **c)
 	return 0;
 }
 
-static int checkvaltype (TCHAR **cp, uae_u32 *val, int *size, TCHAR def)
+static int checkvaltype(TCHAR **cp, uae_u32 *val, int *size, TCHAR def)
 {
 	TCHAR form[256], *p;
 	bool gotop = false;
+	bool copyrest = false;
 	double out;
 
 	form[0] = 0;
@@ -933,21 +941,31 @@ static int checkvaltype (TCHAR **cp, uae_u32 *val, int *size, TCHAR def)
 	p = form;
 	for (;;) {
 		uae_u32 v;
-		if (!checkvaltype2 (cp, &v, def))
+		if (!checkvaltype2(cp, &v, def)) {
+			if (isoperator(cp) || gotop || **cp == '\"' || **cp == '\'') {
+				goto docalc;
+			}
 			return 0;
+		}
 		*val = v;
 		// stupid but works!
 		_stprintf(p, _T("%u"), v);
 		p += _tcslen (p);
-		if (peekchar (cp) == '.') {
-			readchar (cp);
-			if (size)
-				*size = readsize (v, cp);
+		*p = 0;
+		if (peekchar(cp) == '.') {
+			readchar(cp);
+			if (size) {
+				*size = readsize(v, cp);
+			}
 		}
-		if (!isoperator (cp))
+		TCHAR *cpb = *cp;
+		ignore_ws(cp);
+		if (!isoperator(cp)) {
+			*cp = cpb;
 			break;
+		}
 		gotop = true;
-		*p++= readchar (cp);
+		*p++= readchar(cp);
 		*p = 0;
 	}
 	if (!gotop) {
@@ -963,7 +981,18 @@ static int checkvaltype (TCHAR **cp, uae_u32 *val, int *size, TCHAR def)
 		}
 		return 1;
 	}
-	if (calc (form, &out)) {
+docalc:
+	while (more_params2(cp)) {
+		TCHAR c = readchar(cp);
+		if (c == ' ') {
+			break;
+		}
+		*p++ = c;
+	}
+	*p = 0;
+	TCHAR tmp[MAX_DPATH];
+	int v = calc(form, &out, tmp, sizeof(tmp) / sizeof(TCHAR));
+	if (v > 0) {
 		*val = (uae_u32)out;
 		if (size && *size == 0) {
 			uae_s32 v = (uae_s32)(*val);
@@ -976,6 +1005,8 @@ static int checkvaltype (TCHAR **cp, uae_u32 *val, int *size, TCHAR def)
 			}
 		}
 		return 1;
+	} else if (v < 0) {
+		console_out_f(_T("String returned: '%s'\n"), tmp);
 	}
 	return 0;
 }
@@ -1053,15 +1084,19 @@ static void converter(TCHAR **c)
 	bool err;
 	uae_u32 v = readint(c, &err);
 	TCHAR s[100];
-	int i;
+	int i, j;
 
 	if (err) {
 		return;
 	}
-	for (i = 0; i < 32; i++)
-		s[i] = (v & (1 << (31 - i))) ? '1' : '0';
-	s[i] = 0;
-	console_out_f (_T("0x%08X = %%%s = %u = %d\n"), v, s, v, (uae_s32)v);
+	for (i = 0, j = 0; i < 32; i++) {
+		s[j++] = (v & (1 << (31 - i))) ? '1' : '0';
+		if (i < 31 && (i & 7) == 7) {
+			s[j++] = '`';
+		}
+	}
+	s[j] = 0;
+	console_out_f (_T("$%08X = %%%s = %u = %d\n"), v, s, v, (uae_s32)v);
 }
 
 static bool isrom(uaecptr addr)
@@ -1073,20 +1108,40 @@ static bool isrom(uaecptr addr)
 	return false;
 }
 
-static uae_u32 lastaddr (void)
+static uae_u32 lastaddr(uae_u32 start)
 {
 	int lastbank = currprefs.address_space_24 ? 255 : 65535;
 
+	addrbank *ab2 = get_mem_bank_real(start + 1);
+	uae_u32 flags = ab2->flags & (ABFLAG_RAM | ABFLAG_ROM);
+	if (start == 0xffffffff) {
+		flags = ABFLAG_RAM;
+	}
 	for (int i = lastbank; i >= 0; i--) {
 		addrbank *ab = get_mem_bank_real(i << 16);
-		if (ab->baseaddr && (ab->flags & ABFLAG_RAM)) {
+		if (ab->baseaddr && (ab->flags & (ABFLAG_RAM | ABFLAG_ROM)) == flags) {
 			return (i + 1) << 16;
 		}
 	}
 	return 0;
 }
 
-static uaecptr nextaddr (uaecptr addr, uaecptr last, uaecptr *endp, bool verbose)
+static uae_u32 nextaddr_ab_flags = ABFLAG_RAM;
+static uae_u32 nextaddr_ab_flags_mask = ABFLAG_RAM;
+
+static void nextaddr_init(uaecptr addr)
+{
+	addrbank *ab = get_mem_bank_real(addr + 1);
+	if (addr != 0xffffffff && (ab->flags & ABFLAG_ROM)) {
+		nextaddr_ab_flags = ABFLAG_ROM;
+		nextaddr_ab_flags_mask = ABFLAG_ROM;
+	} else {
+		nextaddr_ab_flags = ABFLAG_RAM;
+		nextaddr_ab_flags_mask = ABFLAG_RAM;
+	}
+}
+
+static uaecptr nextaddr(uaecptr addr, uaecptr last, uaecptr *endp, bool verbose, bool *lfp)
 {
 	addrbank *ab;
 	int lastbank = currprefs.address_space_24 ? 255 : 65535;
@@ -1095,15 +1150,16 @@ static uaecptr nextaddr (uaecptr addr, uaecptr last, uaecptr *endp, bool verbose
 		addrbank *ab2 = get_mem_bank_real(addr);
 		addr++;
 		ab = get_mem_bank_real(addr);
-		if (ab->baseaddr && (ab->flags & ABFLAG_RAM) && ab == ab2)
+		if (ab->baseaddr && (ab->flags & nextaddr_ab_flags_mask) == nextaddr_ab_flags && ab == ab2) {
 			return addr;
+		}
 	} else {
 		addr = 0;
 	}
 
 	while (addr < (lastbank << 16)) {
 		ab = get_mem_bank_real(addr);
-		if (ab->baseaddr && (ab->flags & ABFLAG_RAM))
+		if (ab->baseaddr && ((ab->flags & nextaddr_ab_flags_mask) == nextaddr_ab_flags))
 			break;
 		addr += 65536;
 	}
@@ -1117,7 +1173,7 @@ static uaecptr nextaddr (uaecptr addr, uaecptr last, uaecptr *endp, bool verbose
 
 	while (addr <= (lastbank << 16)) {
 		addrbank *ab2 = get_mem_bank_real(addr);
-		if ((last && last != 0xffffffff && addr >= last) || !ab2->baseaddr || !(ab2->flags & ABFLAG_RAM) || ab != ab2) {
+		if ((last && last != 0xffffffff && addr >= last) || !ab2->baseaddr || ((ab2->flags & nextaddr_ab_flags_mask) != nextaddr_ab_flags) || ab != ab2) {
 			if (endp)
 				*endp = addr;
 			break;
@@ -1126,6 +1182,10 @@ static uaecptr nextaddr (uaecptr addr, uaecptr last, uaecptr *endp, bool verbose
 	}
 
 	if (verbose) {
+		if (lfp && *lfp) {
+			console_out_f(_T("\n"));
+			*lfp = false;
+		}
 		console_out_f(_T("Scanning.. %08x - %08x (%s)\n"), start, addr, get_mem_bank(start).name);
 		}
 
@@ -1167,12 +1227,13 @@ uaecptr dumpmem2 (uaecptr addr, TCHAR *out, int osize)
 	return addr;
 }
 
+static TCHAR dumpmemline[MAX_LINEWIDTH + 1];
+
 static void dumpmem (uaecptr addr, uaecptr *nxmem, int lines)
 {
-	TCHAR line[MAX_LINEWIDTH + 1];
 	for (;lines--;) {
-		addr = dumpmem2 (addr, line, sizeof(line));
-		debug_out (_T("%s"), line);
+		addr = dumpmem2 (addr, dumpmemline, sizeof(dumpmemline) / sizeof(TCHAR));
+		debug_out (_T("%s"), dumpmemline);
 		if (!debug_out (_T("\n")))
 			break;
 	}
@@ -1335,7 +1396,7 @@ struct cop_rec
 static struct cop_rec *cop_record[2];
 static int nr_cop_records[2], curr_cop_set, selected_cop_set;
 
-#define NR_DMA_REC_HPOS 256
+#define NR_DMA_REC_HPOS 288
 #define NR_DMA_REC_VPOS 1000
 static struct dma_rec *dma_record[2];
 static int dma_record_toggle, dma_record_frame[2];
@@ -1351,17 +1412,25 @@ void record_dma_clear(int r)
 			struct dma_rec *dr2 = &dr[v * NR_DMA_REC_HPOS + h];
 			memset(dr2, 0, sizeof(struct dma_rec));
 			dr2->reg = 0xffff;
+			dr2->hpos = -1;
 			dr2->cf_reg = 0xffff;
 			dr2->addr = 0xffffffff;
 		}
 	}
+	dma_record_frame[r] = -1;
 }
 
 static void dma_record_init(void)
 {
 	if (!dma_record[0]) {
-		dma_record[0] = xmalloc(struct dma_rec, NR_DMA_REC_HPOS * NR_DMA_REC_VPOS);
-		dma_record[1] = xmalloc(struct dma_rec, NR_DMA_REC_HPOS * NR_DMA_REC_VPOS);
+		dma_record[0] = xcalloc(struct dma_rec, NR_DMA_REC_HPOS * NR_DMA_REC_VPOS + 2);
+		dma_record[1] = xcalloc(struct dma_rec, NR_DMA_REC_HPOS * NR_DMA_REC_VPOS + 2);
+		dma_record[0]->vpos = -1;
+		dma_record[1]->vpos = -1;
+		dma_record[0]->end = 1;
+		dma_record[1]->end = 1;
+		dma_record[0]++;
+		dma_record[1]++;
 		record_dma_reset(0);
 		dma_record_toggle = 0;
 		dma_record_frame[0] = -1;
@@ -1498,6 +1567,7 @@ static void set_debug_colors(void)
 
 static int cycles_toggle;
 static int record_dma_maxhpos, record_dma_maxvpos;
+static int dma_record_hoffset;
 
 static void debug_draw_cycles(uae_u8 *buf, int bpp, int line, int width, int height, uae_u32 *xredcolors, uae_u32 *xgreencolors, uae_u32 *xbluescolors)
 {
@@ -2215,8 +2285,28 @@ void record_dma_vsync(int vp)
 	dr->end = true;
 
 	record_dma_maxvpos = vp;
-
+	dma_record_hoffset = 0;
 	cycles_toggle = cycles_toggle ? 0 : 1;
+}
+
+void record_dma_reoffset(int vp, int oldhpos, int newhpos)
+{
+	if (!dma_record[0])
+		return;
+
+	int hp = newhpos + dma_record_hoffset;
+	struct dma_rec *dr = &dma_record[dma_record_toggle][vp * NR_DMA_REC_HPOS + hp];
+	dma_record_hoffset -= newhpos - oldhpos;
+#if 0
+	dr->vpos = vp;
+	dr->hpos = oldhpos;
+#endif
+	if (dma_record_hoffset >= NR_DMA_REC_HPOS) {
+		dma_record_hoffset = NR_DMA_REC_HPOS - 1;
+	}
+	if (dma_record_hoffset <= -NR_DMA_REC_HPOS) {
+		dma_record_hoffset = -NR_DMA_REC_HPOS + 1;
+	}
 }
 
 void record_dma_hsync(int lasthpos)
@@ -2225,11 +2315,16 @@ void record_dma_hsync(int lasthpos)
 
 	if (!dma_record[0])
 		return;
-	if (lasthpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
-		return;
 
+	lasthpos += dma_record_hoffset;
+	if (lasthpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS) {
+		dma_record_hoffset = 0;
+		return;
+	}
 	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + lasthpos];
 	dr->end = true;
+	lasthpos -= dma_record_hoffset;
+	dma_record_hoffset = 0;
 
 	if (vpos == 0) {
 		record_dma_maxhpos = lasthpos;
@@ -2254,12 +2349,16 @@ void record_dma_hsync(int lasthpos)
 void record_dma_ipl(int hpos, int vpos)
 {
 	struct dma_rec *dr;
+	int hp = hpos;
 
 	if (!dma_record[0])
 		return;
+	hpos += dma_record_hoffset;
 	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
 		return;
 	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
+	dr->hpos = hp;
+	dr->vpos = vpos;
 	dr->intlev = regs.intmask;
 	dr->ipl = regs.ipl_pin;
 	dr->evt2 |= DMA_EVENT2_IPL;
@@ -2268,12 +2367,16 @@ void record_dma_ipl(int hpos, int vpos)
 void record_dma_ipl_sample(int hpos, int vpos)
 {
 	struct dma_rec *dr;
+	int hp = hpos;
 
 	if (!dma_record[0])
 		return;
+	hpos += dma_record_hoffset;
 	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
 		return;
 	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
+	dr->hpos = hp;
+	dr->vpos = vpos;
 	dr->intlev = regs.intmask;
 	dr->ipl2 = regs.ipl_pin;
 	dr->evt2 |= DMA_EVENT2_IPLSAMPLE;
@@ -2282,12 +2385,16 @@ void record_dma_ipl_sample(int hpos, int vpos)
 void record_dma_event(uae_u32 evt, int hpos, int vpos)
 {
 	struct dma_rec *dr;
+	int hp = hpos;
 
 	if (!dma_record[0])
 		return;
+	hpos += dma_record_hoffset;
 	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
 		return;
 	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
+	dr->hpos = hp;
+	dr->vpos = vpos;
 	dr->evt |= evt;
 	dr->ipl = regs.ipl_pin;
 }
@@ -2295,12 +2402,16 @@ void record_dma_event(uae_u32 evt, int hpos, int vpos)
 void record_dma_event2(uae_u32 evt2, int hpos, int vpos)
 {
 	struct dma_rec *dr;
+	int hp = hpos;
 
 	if (!dma_record[0])
 		return;
+	hpos += dma_record_hoffset;
 	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
 		return;
 	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
+	dr->hpos = hp;
+	dr->vpos = vpos;
 	dr->evt2 |= evt2;
 	dr->ipl = regs.ipl_pin;
 }
@@ -2308,12 +2419,16 @@ void record_dma_event2(uae_u32 evt2, int hpos, int vpos)
 void record_dma_event_data(uae_u32 evt, int hpos, int vpos, uae_u32 data)
 {
 	struct dma_rec *dr;
+	int hp = hpos;
 
 	if (!dma_record[0])
 		return;
+	hpos += dma_record_hoffset;
 	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
 		return;
 	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
+	dr->hpos = hp;
+	dr->vpos = vpos;
 	dr->evt |= evt;
 	dr->evtdata = data;
 	dr->evtdataset = true;
@@ -2325,6 +2440,7 @@ void record_dma_replace(int hpos, int vpos, int type, int extra)
 	struct dma_rec *dr;
 	if (!dma_record[0])
 		return;
+	hpos += dma_record_hoffset;
 	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
 		return;
 	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
@@ -2347,23 +2463,28 @@ static void dma_conflict(int vpos, int hpos, struct dma_rec *dr, int reg, bool w
 void record_dma_write(uae_u16 reg, uae_u32 dat, uae_u32 addr, int hpos, int vpos, int type, int extra)
 {
 	struct dma_rec *dr;
+	int hp = hpos;
 
 	if (!dma_record[0]) {
 		dma_record_init();
 	}
 
+	last_dma_rec = NULL;
+	hpos += dma_record_hoffset;
 	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
 		return;
 
 	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
-	dma_record_frame[dma_record_toggle] = timeframes;
+	dma_record_frame[dma_record_toggle] = vsync_counter;
 	if (dr->reg != 0xffff) {
 		dr->cf_reg = reg;
 		dr->cf_dat = dat;
 		dr->cf_addr = addr;
-		dma_conflict(vpos, hpos, dr, reg, false);
+		dma_conflict(vpos, hp, dr, reg, false);
 		return;
 	}
+	dr->hpos = hp;
+	dr->vpos = vpos;
 	dr->reg = reg;
 	dr->dat = dat;
 	dr->addr = addr;
@@ -2379,6 +2500,9 @@ void record_dma_write(uae_u16 reg, uae_u32 dat, uae_u32 addr, int hpos, int vpos
 struct dma_rec *last_dma_rec;
 void record_dma_read_value_pos(uae_u32 v, int hpos, int vpos)
 {
+	hpos += dma_record_hoffset;
+	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
+		return;	
 	struct dma_rec *dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
 	last_dma_rec = dr;
 	record_dma_read_value(v);
@@ -2395,6 +2519,7 @@ void record_dma_read_value(uae_u32 v)
 		last_dma_rec->size = 2;
 	}
 }
+
 void record_dma_read_value_wide(uae_u64 v, bool quad)
 {
 	if (last_dma_rec) {
@@ -2406,22 +2531,39 @@ void record_dma_read_value_wide(uae_u64 v, bool quad)
 		last_dma_rec->size = quad ? 8 : 4;
 	}
 }
+
 bool record_dma_check(int hpos, int vpos)
 {
 	if (!dma_record[0]) {
 		return false;
 	}
+	hpos += dma_record_hoffset;
 	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS) {
 		return false;
 	}
 	struct dma_rec *dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
 	return dr->reg != 0xffff;
 }
+
+void record_dma_denise(int hpos, int dhpos)
+{
+	if (!dma_record[0]) {
+		return;
+	}
+	hpos += dma_record_hoffset;
+	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS) {
+		return;
+	}
+	struct dma_rec *dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
+	dr->dhpos = dhpos;
+}
+
 void record_dma_clear(int hpos, int vpos)
 {
 	if (!dma_record[0]) {
 		return;
 	}
+	hpos += dma_record_hoffset;
 	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS) {
 		return;
 	}
@@ -2433,18 +2575,22 @@ void record_dma_clear(int hpos, int vpos)
 void record_cia_access(int r, int mask, uae_u16 value, bool rw, int hpos, int vpos, int phase)
 {
 	struct dma_rec *dr;
+	int hp = hpos;
 
 	dma_record_init();
 
+	hpos += dma_record_hoffset;
 	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
 		return;
 
 	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
-	dma_record_frame[dma_record_toggle] = timeframes;
+	dma_record_frame[dma_record_toggle] = vsync_counter;
 
 	if (dr->ciaphase < 0) {
 		return;
 	}
+	dr->hpos = hp;
+	dr->vpos = vpos;
 	dr->ciamask = mask;
 	dr->ciareg = r;
 	dr->ciavalue = value;
@@ -2455,22 +2601,27 @@ void record_cia_access(int r, int mask, uae_u16 value, bool rw, int hpos, int vp
 void record_dma_read(uae_u16 reg, uae_u32 addr, int hpos, int vpos, int type, int extra)
 {
 	struct dma_rec *dr;
+	int hp = hpos;
 
 	dma_record_init();
 
+	last_dma_rec = NULL;
+	hpos += dma_record_hoffset;
 	if (hpos >= NR_DMA_REC_HPOS || vpos >= NR_DMA_REC_VPOS)
 		return;
 
 	dr = &dma_record[dma_record_toggle][vpos * NR_DMA_REC_HPOS + hpos];
-	dma_record_frame[dma_record_toggle] = timeframes;
+	dma_record_frame[dma_record_toggle] = vsync_counter;
 	if (dr->reg != 0xffff) {
 		if (dr->reg != reg) {
-			dma_conflict(vpos, hpos, dr, reg, false);
+			dma_conflict(vpos, hp, dr, reg, false);
 			dr->cf_reg = reg;
 			dr->cf_addr = addr;
 		}
 		return;
 	}
+	dr->hpos = hp;
+	dr->vpos = vpos;
 	dr->reg = reg;
 	dr->dat = 0;
 	dr->addr = addr;
@@ -2484,7 +2635,7 @@ void record_dma_read(uae_u16 reg, uae_u32 addr, int hpos, int vpos, int type, in
 	debug_mark_refreshed(dr->addr);
 }
 
-static bool get_record_dma_info(struct dma_rec *dr, int hpos, int vpos, TCHAR *l1, TCHAR *l2, TCHAR *l3, TCHAR *l4, TCHAR *l5, TCHAR *l6, uae_u32 *split, int *iplp)
+static bool get_record_dma_info(struct dma_rec *drs, struct dma_rec *dr, TCHAR *l1, TCHAR *l2, TCHAR *l3, TCHAR *l4, TCHAR *l5, TCHAR *l6, uae_u32 *split, int *iplp)
 {
 	int longsize = dr->size;
 	bool got = false;
@@ -2510,6 +2661,28 @@ static bool get_record_dma_info(struct dma_rec *dr, int hpos, int vpos, TCHAR *l
 		l5[0] = 0;
 	if (l6)
 		l6[0] = 0;
+
+	int hpos = dr->hpos;
+	int dhpos = dr->dhpos;
+	if (hpos < 0) {
+		struct dma_rec *dr2 = dr;
+		int cnt = 0;
+		while (!dr2->end) {
+			if (dr2 == drs) {
+				hpos = addrdiff(dr, drs);
+				break;
+			}
+			if (dr2->hpos >= 0) {
+				hpos = dr2->hpos + cnt;
+				break;
+			}
+			cnt++;
+			dr2--;
+		}
+	}
+	if (hpos < 0) {
+		hpos = 0;
+	}
 
 	if (split) {
 		if ((dr->evt & DMA_EVENT_CPUINS) && dr->evtdataset) {
@@ -2595,7 +2768,7 @@ static bool get_record_dma_info(struct dma_rec *dr, int hpos, int vpos, TCHAR *l
 		}
 	}
 	if (ipl >= 0) {
-		_stprintf(l1, _T("[%02X     %d]"), hpos, ipl);
+		_stprintf(l1, _T("[%02X %03X %d]"), hpos, dhpos, ipl);
 	} else if (ipl == -2) {
 		_stprintf(l1, _T("[%02X     -]"), hpos);
 	} else {
@@ -2799,7 +2972,7 @@ static bool get_record_dma_info(struct dma_rec *dr, int hpos, int vpos, TCHAR *l
 
 
 
-static void decode_dma_record(int hpos, int vpos, int toggle, bool logfile)
+static void decode_dma_record(int hpos, int vpos, int count, int toggle, bool logfile)
 {
 	struct dma_rec *dr, *dr_start;
 	int h, i, maxh = 0;
@@ -2831,12 +3004,12 @@ static void decode_dma_record(int hpos, int vpos, int toggle, bool logfile)
 	int ipl = -2;
 	while (h < maxh) {
 		int cols = (logfile ? 16 : 8);
-		TCHAR l1[200];
-		TCHAR l2[200];
-		TCHAR l3[200];
-		TCHAR l4[200];
-		TCHAR l5[200];
-		TCHAR l6[200];
+		TCHAR l1[400];
+		TCHAR l2[400];
+		TCHAR l3[400];
+		TCHAR l4[400];
+		TCHAR l5[400];
+		TCHAR l6[400];
 		l1[0] = 0;
 		l2[0] = 0;
 		l3[0] = 0;
@@ -2847,7 +3020,7 @@ static void decode_dma_record(int hpos, int vpos, int toggle, bool logfile)
 			TCHAR l1l[16], l2l[16], l3l[16], l4l[16], l5l[16], l6l[16];
 			uae_u32 split = 0xffffffff;
 
-			get_record_dma_info(dr, h, vpos, l1l, l2l, l3l, l4l, l5l, l6l, &split, &ipl);
+			get_record_dma_info(dr_start, dr, l1l, l2l, l3l, l4l, l5l, l6l, &split, &ipl);
 
 			TCHAR *p = l1 + _tcslen(l1);
 			_stprintf(p, _T("%11s  "), l1l);
@@ -2912,6 +3085,12 @@ static void decode_dma_record(int hpos, int vpos, int toggle, bool logfile)
 			console_out_f(_T("%s\n"), l6);
 			console_out_f(_T("\n"));
 		}
+		if (count > 0) {
+			count--;
+			if (!count) {
+				break;
+			}
+		}
 	}
 	if (logfile)
 		flush_log();
@@ -2922,8 +3101,8 @@ void log_dma_record (void)
 	if (!input_record && !input_play)
 		return;
 	if (!debug_dma)
-		debug_dma = 1;
-	decode_dma_record (0, 0, 0, true);
+		return;
+	decode_dma_record (0, 0, 0, 0, true);
 }
 
 static void init_record_copper(void)
@@ -3202,7 +3381,8 @@ static void deepcheatsearch(TCHAR **c)
 		xfree (memtmp);
 		memsize = 0;
 		addr = 0xffffffff;
-		while ((addr = nextaddr(addr, 0, &end, false)) != 0xffffffff)  {
+		nextaddr_init(addr);
+		while ((addr = nextaddr(addr, 0, &end, false, NULL)) != 0xffffffff)  {
 			memsize += end - addr;
 			addr = end - 1;
 		}
@@ -3213,7 +3393,8 @@ static void deepcheatsearch(TCHAR **c)
 		memset(memtmp + memsize, 0xff, memsize2);
 		p1 = memtmp;
 		addr = 0xffffffff;
-		while ((addr = nextaddr(addr, 0, &end, true)) != 0xffffffff) {
+		nextaddr_init(addr);
+		while ((addr = nextaddr(addr, 0, &end, true, NULL)) != 0xffffffff) {
 			for (i = addr; i < end; i++)
 				*p1++ = get_byte_debug(i);
 			addr = end - 1;
@@ -3233,7 +3414,8 @@ static void deepcheatsearch(TCHAR **c)
 	addrcnt = 0;
 	cnt = 0;
 	addr = 0xffffffff;
-	while ((addr = nextaddr(addr, 0, NULL, true)) != 0xffffffff) {
+	nextaddr_init(addr);
+	while ((addr = nextaddr(addr, 0, NULL, true, NULL)) != 0xffffffff) {
 		uae_s32 b, b2;
 		int doremove = 0;
 		int addroff;
@@ -3278,7 +3460,7 @@ static void deepcheatsearch(TCHAR **c)
 		} else {
 			p1[addrcnt] = b >> 8;
 			p1[addrcnt + 1] = b >> 0;
-			addr = nextaddr(addr, 0, NULL, true);
+			addr = nextaddr(addr, 0, NULL, true, NULL);
 			if (addr == 0xffffffff)
 				break;
 			addrcnt++;
@@ -3295,13 +3477,13 @@ static void deepcheatsearch(TCHAR **c)
 		cnt = 0;
 		addrcnt = 0;
 		addr = 0xffffffff;
-		while ((addr = nextaddr(addr, 0, NULL, true)) != 0xffffffff) {
+		while ((addr = nextaddr(addr, 0, NULL, true, NULL)) != 0xffffffff) {
 			int addroff = addrcnt >> (size == 1 ? 3 : 2);
 			int addrmask = (size == 1 ? 1 : 3) << (addrcnt & (size == 1 ? 7 : 3));
 			if (p2[addroff] & addrmask)
 				addcheater(addr, size);
 			if (size == 2) {
-				addr = nextaddr(addr, 0, NULL, true);
+				addr = nextaddr(addr, 0, NULL, true, NULL);
 				if (addr == 0xffffffff) {
 					break;
 				}
@@ -3331,7 +3513,8 @@ static void cheatsearch (TCHAR **c)
 
 	memsize = 0;
 	addr = 0xffffffff;
-	while ((addr = nextaddr (addr, 0, &end, false)) != 0xffffffff)  {
+	nextaddr_init(addr);
+	while ((addr = nextaddr(addr, 0, &end, false, NULL)) != 0xffffffff)  {
 		memsize += end - addr;
 		addr = end - 1;
 	}
@@ -3367,8 +3550,9 @@ static void cheatsearch (TCHAR **c)
 
 	clearcheater ();
 	addr = 0xffffffff;
+	nextaddr_init(addr);
 	prevmemcnt = memcnt = 0;
-	while ((addr = nextaddr (addr, 0, &end, true)) != 0xffffffff) {
+	while ((addr = nextaddr(addr, 0, &end, true, NULL)) != 0xffffffff) {
 		if (addr + size < end) {
 			for (i = 0; i < size; i++) {
 				int shift = (size - i - 1) * 8;
@@ -3454,7 +3638,8 @@ static void illg_init (void)
 		return;
 	}
 	addr = 0xffffffff;
-	while ((addr = nextaddr (addr, 0, &end, false)) != 0xffffffff)  {
+	nextaddr_init(addr);
+	while ((addr = nextaddr(addr, 0, &end, false, NULL)) != 0xffffffff)  {
 		if (end < 0x01000000) {
 			memset (illgdebug + addr, c, end - addr);
 		} else {
@@ -4936,8 +5121,8 @@ static void writeintomem (TCHAR **c)
 		} else {
 			for (;;) {
 				bool err;
-				ignore_ws (c);
-				if (!more_params (c))
+				ignore_ws(c);
+				if (!more_params(c))
 					break;
 				val = readhex(c, &len, &err);
 				if (err) {
@@ -4968,6 +5153,9 @@ static void writeintomem (TCHAR **c)
 				addr += len;
 				if (addr >= eaddr)
 					break;
+			}
+			if (fillmode && peekchar(c) == 0) {
+				*c = cb;
 			}
 		}
 		if (retry) {
@@ -5729,19 +5917,35 @@ static struct regstruct trace_prev_regs;
 #endif
 static uaecptr nextpc;
 
-int instruction_breakpoint(TCHAR **c)
+static void check_breakpoint_extra(TCHAR **c, struct breakpoint_node *bpn)
 {
-	struct breakpoint_node *bpn;
-	int bpcnt = 0;
-	int i;
-
+	bpn->cnt = 0;
+	bpn->chain = -1;
 	if (more_params(c)) {
 		TCHAR nc = _totupper((*c)[0]);
 		if (nc == 'N') {
 			next_char(c);
-			bpcnt = readint(c, NULL);
+			bpn->cnt = readint(c, NULL);
 		}
 	}
+	if (more_params(c)) {
+		TCHAR nc = _totupper((*c)[0]);
+		if (nc == 'H') {
+			next_char(c);
+			bpn->chain = readint(c, NULL);
+			if (bpn->chain < 0 || bpn->chain >= BREAKPOINT_TOTAL) {
+				bpn->chain = -1;
+			}
+		}
+	}
+}
+
+int instruction_breakpoint(TCHAR **c)
+{
+	struct breakpoint_node *bpn;
+	int i;
+	TCHAR next = 0;
+
 	if (more_params (c)) {
 		TCHAR nc = _totupper ((*c)[0]);
 		if (nc == 'O') {
@@ -5751,13 +5955,12 @@ int instruction_breakpoint(TCHAR **c)
 				int bpidx = readint(c, NULL);
 				if (more_params(c) && bpidx >= 0 && bpidx < BREAKPOINT_TOTAL) {
 					bpn = &bpnodes[bpidx];
-					bpn->cnt = bpcnt;
 					int regid = getregidx(c);
 					if (regid >= 0) {
 						bpn->type = regid;
 						bpn->mask = 0xffffffff;
 						if (more_params(c)) {
-							int operid = getoperidx(c);
+							int operid = getoperidx(c, &bpn->opersigned);
 							if (more_params(c) && operid >= 0) {
 								bpn->oper = operid;
 								bpn->value1 = readhex(c, NULL);
@@ -5768,6 +5971,7 @@ int instruction_breakpoint(TCHAR **c)
 										bpn->value2 = readhex(c, NULL);
 									}
 								}
+								check_breakpoint_extra(c, bpn);
 								console_out(_T("Breakpoint added.\n"));
 							}
 						}
@@ -5807,8 +6011,9 @@ int instruction_breakpoint(TCHAR **c)
 			trace_mode = TRACE_MATCH_INS;
 			return 1;
 		} else if (nc == 'D' && (*c)[1] == 0) {
-			for (i = 0; i < BREAKPOINT_TOTAL; i++)
+			for (i = 0; i < BREAKPOINT_TOTAL; i++) {
 				bpnodes[i].enabled = 0;
+			}
 			console_out(_T("All breakpoints removed.\n"));
 			return 0;
 		} else if (nc == 'R' && (*c)[1] == 0) {
@@ -5826,7 +6031,14 @@ int instruction_breakpoint(TCHAR **c)
 				bpn = &bpnodes[i];
 				if (!bpn->enabled)
 					continue;
-				console_out_f (_T("%d: %s %s %08x [%08x %08x]\n"), i, debugregs[bpn->type], debugoper[bpn->oper], bpn->value1, bpn->mask, bpn->value2);
+				console_out_f (_T("%d: %s %s %08x [%08x %08x]"), i, debugregs[bpn->type], debugoper[bpn->oper], bpn->value1, bpn->mask, bpn->value2);
+				if (bpn->cnt > 0) {
+					console_out_f(_T(" N=%d"), bpn->cnt);
+				}
+				if (bpn->chain > 0) {
+					console_out_f(_T(" H=%d"), bpn->chain);
+				}
+				console_out_f(_T("\n"));
 				got = 1;
 			}
 			if (!got)
@@ -5857,8 +6069,8 @@ int instruction_breakpoint(TCHAR **c)
 				bpn->value1 = trace_param[0];
 				bpn->type = BREAKPOINT_REG_PC;
 				bpn->oper = BREAKPOINT_CMP_EQUAL;
-				bpn->cnt = bpcnt;
 				bpn->enabled = 1;
+				check_breakpoint_extra(c, bpn);
 				console_out (_T("Breakpoint added.\n"));
 				trace_mode = 0;
 				break;
@@ -6031,16 +6243,19 @@ static void searchmem (TCHAR **cc)
 		return;
 	ignore_ws (cc);
 	addr = 0xffffffff;
-	endaddr = lastaddr ();
+	endaddr = lastaddr(addr);
 	if (more_params (cc)) {
 		addr = readhex(cc, NULL);
 		addr--;
+		endaddr = lastaddr(addr);
 		if (more_params(cc)) {
 			endaddr = readhex(cc, NULL);
 		}
 	}
 	console_out_f (_T("Searching from %08X to %08X..\n"), addr + 1, endaddr);
-	while ((addr = nextaddr (addr, endaddr, NULL, true)) != 0xffffffff) {
+	nextaddr_init(addr);
+	bool out = false;
+	while ((addr = nextaddr(addr, endaddr, NULL, true, &out)) != 0xffffffff) {
 		if (addr == endaddr)
 			break;
 		for (i = 0; i < sslen; i++) {
@@ -6056,6 +6271,7 @@ static void searchmem (TCHAR **cc)
 		if (i == sslen) {
 			got++;
 			console_out_f (_T(" %08X"), addr);
+			out = true;
 			if (got > 100) {
 				console_out (_T("\nMore than 100 results, aborting.."));
 				break;
@@ -6158,7 +6374,7 @@ static void debug_sprite (TCHAR **inptr)
 	int ecs, sh10;
 	int y, i;
 	TCHAR tmp[80];
-	int max = 2;
+	int max = 14;
 
 	addr2 = 0;
 	ignore_ws(inptr);
@@ -6214,6 +6430,11 @@ static void debug_sprite (TCHAR **inptr)
 			sh10 = 1;
 		if (ypose < ypos)
 			ypose += 256;
+
+		if (ecs_agnus) {
+			ypos = ypos_ecs;
+			ypose = ypose_ecs;
+		}
 
 		for (y = ypos; y < ypose; y++) {
 			int x;
@@ -6283,8 +6504,10 @@ static void debug_sprite (TCHAR **inptr)
 		if (get_word_debug (addr) == 0 && get_word_debug (addr + size * 4) == 0)
 			break;
 		max--;
-		if (max <= 0)
+		if (max <= 0) {
+			console_out_f(_T("Max sprite count reached.\n"));
 			break;
+		}
 	}
 
 }
@@ -6390,7 +6613,7 @@ static void find_ea (TCHAR **inptr)
 	bool err;
 
 	addr = 0xffffffff;
-	end = lastaddr ();
+	end = lastaddr(addr);
 	ea = readhex(inptr, &err);
 	if (err) {
 		return;
@@ -6401,6 +6624,7 @@ static void find_ea (TCHAR **inptr)
 			return;
 		}
 		addr--;
+		end = lastaddr(addr);
 		if (more_params(inptr)) {
 			end = readhex(inptr, &err);
 			if (err) {
@@ -6410,13 +6634,16 @@ static void find_ea (TCHAR **inptr)
 	}
 	console_out_f (_T("Searching from %08X to %08X\n"), addr + 1, end);
 	end2 = 0;
-	while((addr = nextaddr (addr, end, &end2, true)) != 0xffffffff) {
+	nextaddr_init(addr);
+	bool out = false;
+	while((addr = nextaddr(addr, end, &end2, true, &out)) != 0xffffffff) {
 		if ((addr & 1) == 0 && addr + 6 <= end2) {
 			sea = 0xffffffff;
 			dea = 0xffffffff;
 			m68k_disasm_ea (addr, NULL, 1, &sea, &dea, 0xffffffff);
 			if (ea == sea || ea == dea) {
 				m68k_disasm (addr, NULL, 0xffffffff, 1);
+				out = true;
 				hits++;
 				if (hits > 100) {
 					console_out_f (_T("Too many hits. End addr = %08X\n"), addr);
@@ -6504,21 +6731,24 @@ static void dma_disasm(int frames, int vp, int hp, int frames_end, int vp_end, i
 	if (!dma_record[0] || frames < 0 || vp < 0 || hp < 0)
 		return;
 	for (;;) {
-		struct dma_rec *dr = NULL;
-		if (dma_record_frame[0] == frames)
+		struct dma_rec *dr = NULL, *drs = NULL;
+		if (dma_record_frame[0] == frames) {
+			drs = &dma_record[0][vp * NR_DMA_REC_HPOS];
 			dr = &dma_record[0][vp * NR_DMA_REC_HPOS + hp];
-		else if (dma_record_frame[1] == frames)
+		} else if (dma_record_frame[1] == frames) {
+			drs = &dma_record[1][vp * NR_DMA_REC_HPOS];
 			dr = &dma_record[1][vp * NR_DMA_REC_HPOS + hp];
+		}
 		if (!dr)
 			return;
 		TCHAR l1[16], l2[16], l3[16], l4[16];
-		if (get_record_dma_info(dr, hp, vp, l1, l2, l3, l4, NULL, NULL, NULL, NULL)) {
+		if (get_record_dma_info(drs, dr, l1, l2, l3, l4, NULL, NULL, NULL, NULL)) {
 			TCHAR tmp[256];
-			_stprintf(tmp, _T(" - %02d %02X %s"), dr->ipl, hp, l2);
-			while (_tcslen(tmp) < 18) {
+			_stprintf(tmp, _T(" - %02d %02X %s"), dr->ipl, dr->hpos, l2);
+			while (_tcslen(tmp) < 20) {
 				_tcscat(tmp, _T(" "));
 			}
-			console_out_f(_T("%s %s %s\n"), tmp, l3, l4);
+			console_out_f(_T("%s %11s %11s\n"), tmp, l3, l4);
 		}
 		hp++;
 		if (dr->end || hp >= NR_DMA_REC_HPOS) {
@@ -6539,6 +6769,29 @@ static void dma_disasm(int frames, int vp, int hp, int frames_end, int vp_end, i
 
 static uaecptr nxdis, nxmem, asmaddr;
 static bool ppcmode, asmmode;
+
+static bool parsecmd(TCHAR *cmd, bool *out)
+{
+	if (!_tcsicmp(cmd, _T("reset"))) {
+		deactivate_debugger();
+		debug_continue();
+		uae_reset(0, 0);
+		return true;
+	}
+	if (!_tcsicmp(cmd, _T("reseth"))) {
+		deactivate_debugger();
+		debug_continue();
+		uae_reset(1, 0);
+		return true;
+	}
+	if (!_tcsicmp(cmd, _T("resetk"))) {
+		deactivate_debugger();
+		debug_continue();
+		uae_reset(0, 1);
+		return true;
+	}
+	return false;
+}
 
 /*static*/ bool debug_line (TCHAR *input)
 {
@@ -6571,6 +6824,10 @@ static bool ppcmode, asmmode;
 		}
 	}
 
+	ignore_ws(&inptr);
+	if (parsecmd(inptr, &err)) {
+		return err;
+	}
 	cmd = next_char (&inptr);
 
 	switch (cmd)
@@ -7004,7 +7261,7 @@ static bool ppcmode, asmmode;
 		case 'v':
 		case 'V':
 			{
-				int v1 = vpos, v2 = 0;
+				static int v1 = 0, v2 = 0, v3 = 0;
 				if (*inptr == 'h') {
 					inptr++;
 					if (more_params(&inptr) && *inptr == '?') {
@@ -7090,19 +7347,21 @@ static bool ppcmode, asmmode;
 						if (nextcmd == 'l') {
 							next_char(&inptr);
 						}
-						if (more_params (&inptr))
-							v1 = readint (&inptr, NULL);
-						if (more_params (&inptr))
-							v2 = readint (&inptr, NULL);
+						if (more_params(&inptr))
+							v1 = readint(&inptr, NULL);
+						if (more_params(&inptr))
+							v2 = readint(&inptr, NULL);
+						if (more_params(&inptr))
+							v3 = readint(&inptr, NULL);
 						if (debug_dma && v1 >= 0 && v2 >= 0) {
-							decode_dma_record (v2, v1, cmd == 'v', nextcmd == 'l');
+							decode_dma_record(v2, v1, v3, cmd == 'v', nextcmd == 'l');
 						} else {
 							if (debug_dma) {
 								record_dma_reset(0);
 								reset_drawing();
 							}
 							debug_dma = v1 < 0 ? -v1 : 1;
-							console_out_f (_T("DMA debugger enabled, mode=%d.\n"), debug_dma);
+							console_out_f(_T("DMA debugger enabled, mode=%d.\n"), debug_dma);
 						}
 					}
 				}
@@ -7186,10 +7445,10 @@ static bool ppcmode, asmmode;
 	return false;
 }
 
+static TCHAR input[MAX_LINEWIDTH];
+
 static void debug_1 (void)
 {
-	TCHAR input[MAX_LINEWIDTH];
-
 	custom_dumpstate(0);
 	m68k_dumpstate(&nextpc, debug_pc);
 	debug_pc = 0xffffffff;
@@ -7226,7 +7485,7 @@ static void addhistory(void)
 	history[lasthist].regs.pc = pc;
 	history[lasthist].vpos = vpos;
 	history[lasthist].hpos = current_hpos();
-	history[lasthist].fp = timeframes;
+	history[lasthist].fp = vsync_counter;
 
 	if (++lasthist == MAX_HIST) {
 		lasthist = 0;
@@ -7236,11 +7495,6 @@ static void addhistory(void)
 			firsthist = 0;
 		}
 	}
-}
-
-static void debug_continue(void)
-{
-	set_special (SPCFLAG_BRK);
 }
 
 void debug_exception(int nr)
@@ -7256,9 +7510,98 @@ void debug_exception(int nr)
 	}
 }
 
+static bool check_breakpoint(struct breakpoint_node *bpn, uaecptr pc)
+{
+	int bpnum = -1;
+
+	if (!bpn->enabled) {
+		return false;
+	}
+	if (bpn->type == BREAKPOINT_REG_PC) {
+		if (bpn->value1 == pc) {
+			return true;
+		}
+	} else if (bpn->type >= 0 && bpn->type < BREAKPOINT_REG_END) {
+		uae_u32 value1 = bpn->value1 & bpn->mask;
+		uae_u32 value2 = bpn->value2 & bpn->mask;
+		uae_u32 cval = returnregx(bpn->type) & bpn->mask;
+		int opersize = bpn->mask == 0xff ? 1 : (bpn->mask == 0xffff) ? 2 : 4;
+		bool opersigned = bpn->opersigned;
+		uae_s32 value1s = (uae_s32)value1;
+		uae_s32 value2s = (uae_s32)value2;
+		uae_s32 cvals = (uae_s32)cval;
+		if (opersize == 2) {
+			cvals = (uae_s32)(uae_s16)cvals;
+			value1s = (uae_s32)(uae_s16)value1s;
+			value2s = (uae_s32)(uae_s16)value2s;
+		} else if (opersize == 1) {
+			cvals = (uae_s32)(uae_s8)cvals;
+			value1s = (uae_s32)(uae_s8)value1s;
+			value2s = (uae_s32)(uae_s8)value2s;
+		}
+		switch (bpn->oper)
+		{
+			case BREAKPOINT_CMP_EQUAL:
+				if (cval == value1)
+					return true;
+				break;
+			case BREAKPOINT_CMP_NEQUAL:
+				if (cval != value1)
+					return true;
+				break;
+			case BREAKPOINT_CMP_SMALLER:
+				if (opersigned) {
+					if (cvals <= value1s)
+						return true;
+				} else {
+					if (cval <= value1)
+						return true;
+				}
+				break;
+			case BREAKPOINT_CMP_LARGER:
+				if (opersigned) {
+					if (cvals >= value1s)
+						return true;
+				} else {
+					if (cval >= value1)
+						return true;
+				}
+				break;
+			case BREAKPOINT_CMP_RANGE:
+				if (opersigned) {
+					if (cvals >= value1s && cvals <= value2s)
+						return true;
+				} else {
+					if (cval >= value1 && cval <= value2)
+						return true;
+				}
+				break;
+			case BREAKPOINT_CMP_NRANGE:
+				if (opersigned) {
+					if (cvals <= value1s || cvals >= value2s)
+						return true;
+				} else {
+					if (cval <= value1 || cval >= value2)
+					return true;
+				}
+				break;
+		}
+	}
+	return false;
+}
+
+static bool check_breakpoint_count(struct breakpoint_node *bpn, uaecptr pc)
+{
+	if (bpn->cnt <= 0) {
+		return true;
+	}
+	console_out_f(_T("Breakpoint %d hit: PC=%08x, count=%d.\n"), bpn - bpnodes, pc, bpn->cnt);
+	bpn->cnt--;
+	return false;
+}
+
 void debug (void)
 {
-	int i;
 	int wasactive;
 
 	if (savestate_state)
@@ -7291,50 +7634,46 @@ void debug (void)
 		if (trace_mode) {
 			uae_u32 pc;
 			uae_u16 opcode;
+			int bpnum = -1;
 			int bp = 0;
 
 			pc = munge24 (m68k_getpc ());
 			opcode = currprefs.cpu_model < 68020 && (currprefs.cpu_compatible || currprefs.cpu_cycle_exact) ? regs.ir : get_word_debug (pc);
 
-			for (i = 0; i < BREAKPOINT_TOTAL; i++) {
+			for (int i = 0; i < BREAKPOINT_TOTAL; i++) {
 				struct breakpoint_node *bpn = &bpnodes[i];
-				if (!bpn->enabled)
-					continue;
-				if (bpn->type == BREAKPOINT_REG_PC) {
-					if (bpn->value1 == pc) {
-						bp = i + 1;
-						break;
+				if (check_breakpoint(bpn, pc)) {
+					int j;
+					// if this breakpoint is chained, ignore it
+					for (j = 0; j < BREAKPOINT_TOTAL; j++) {
+						struct breakpoint_node *bpn2 = &bpnodes[j];
+						if (bpn2->enabled && bpn2->chain == i) {
+							break;
+						}
 					}
-				} else if (bpn->type >= 0 && bpn->type < BREAKPOINT_REG_END) {
-					uae_u32 value1 = bpn->value1 & bpn->mask;
-					uae_u32 value2 = bpn->value2 & bpn->mask;
-					uae_u32 cval = returnregx(bpn->type) & bpn->mask;
-					switch (bpn->oper)
-					{
-						case BREAKPOINT_CMP_EQUAL:
-						if (cval == value1)
-							bp = i + 1;
-						break;
-						case BREAKPOINT_CMP_NEQUAL:
-						if (cval != value1)
-							bp = i + 1;
-						break;
-						case BREAKPOINT_CMP_SMALLER:
-						if (cval <= value1)
-							bp = i + 1;
-						break;
-						case BREAKPOINT_CMP_LARGER:
-						if (cval >= value1)
-							bp = i + 1;
-						break;
-						case BREAKPOINT_CMP_RANGE:
-						if (cval >= value1 && cval <= value2)
-							bp = i + 1;
-						break;
-						case BREAKPOINT_CMP_NRANGE:
-						if (cval <= value1 || cval >= value2)
-							bp = i + 1;
-						break;
+					if (j >= BREAKPOINT_TOTAL) {
+						if (!check_breakpoint_count(bpn, pc)) {
+							break;
+						}
+						int max = BREAKPOINT_TOTAL;
+						bpnum = i;
+						// check breakpoint chain
+						while (bpnum >= 0 && bpnodes[bpnum].chain >= 0 && bpnodes[bpnum].chain != bpnum && max > 0) {
+							bpnum = bpnodes[bpnum].chain;
+							struct breakpoint_node *bpn = &bpnodes[bpnum];
+							if (!check_breakpoint(bpn, pc)) {
+								bpnum = -1;
+								break;
+							}
+							if (!check_breakpoint_count(bpn, pc)) {
+								bpnum = -1;
+								break;
+							}
+							max--;
+						}
+						if (bpnum >= 0) {
+							break;
+						}
 					}
 				}
 			}
@@ -7371,14 +7710,13 @@ void debug (void)
 								seglist = BPTR2APTR(get_long_debug (activetask + 128));
 								seglist = BPTR2APTR(get_long_debug (seglist + 12));
 							}
-							if (activetask == processptr || (processname && (!stricmp (name, processname) || (command && command[0] && !strnicmp (command + 1, processname, ((uae_u8*)command)[0]) && processname[command[0]] == 0)))) {
+							if (activetask == processptr || (processname && (!stricmp (name, processname) || (command && command[0] && !strnicmp (command + 1, processname, command[0]) && processname[command[0]] == 0)))) {
 								while (seglist) {
 									uae_u32 size = get_long_debug (seglist - 4) - 4;
 									if (pc >= (seglist + 4) && pc < (seglist + size)) {
-										bp = i + 1;
+										bp = -1;
 										break;
 									}
-									seglist = BPTR2APTR(get_long_debug (seglist));
 								}
 							}
 						}
@@ -7424,19 +7762,12 @@ void debug (void)
 					}
 				}
 			}
-			if (!bp) {
+			if (!bp && bpnum < 0) {
 				debug_continue();
 				return;
 			}
-			if (bp > 0) {
-				if (bpnodes[bp - 1].cnt > 0) {
-					bpnodes[bp - 1].cnt--;
-				}
-				if (bpnodes[bp - 1].cnt > 0) {
-					debug_continue();
-					return;
-				}
-				console_out_f(_T("Breakpoint %d triggered.\n"), bp - 1);
+			if (bpnum >= 0) {
+				console_out_f(_T("Breakpoint %d triggered.\n"), bpnum);
 			}
 			debug_cycles(1);
 		}
@@ -7466,7 +7797,7 @@ void debug (void)
 	debugmem_disable();
 
 	if (trace_cycles && last_frame >= 0) {
-		if (last_frame + 2 >= timeframes || trace_cycles > 1) {
+		if (last_frame + 2 >= vsync_counter || trace_cycles > 1) {
 			evt_t c = last_cycles2 - last_cycles1;
 			uae_u32 cc;
 			if (c >= 0x7fffffff) {
@@ -7494,7 +7825,7 @@ void debug (void)
 			savestate_capture (1);
 	}
 	if (!trace_mode) {
-		for (i = 0; i < BREAKPOINT_TOTAL; i++) {
+		for (int i = 0; i < BREAKPOINT_TOTAL; i++) {
 			if (bpnodes[i].enabled)
 				trace_mode = TRACE_CHECKONLY;
 		}

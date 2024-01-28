@@ -16,8 +16,10 @@
 #include "sndboard.h"
 #include "statusline.h"
 #include "uae/ppc.h"
+#ifdef CD32
 #include "cd32_fmv.h"
 #include "akiko.h"
+#endif
 #include "disk.h"
 #include "cia.h"
 #include "inputdevice.h"
@@ -29,7 +31,9 @@
 #include "blitter.h"
 #include "xwin.h"
 #include "custom.h"
+#ifdef SERIAL_PORT
 #include "serial.h"
+#endif
 #include "bsdsocket.h"
 #include "uaeserial.h"
 #include "uaeresource.h"
@@ -39,20 +43,28 @@
 #include "gui.h"
 #include "savestate.h"
 #include "uaeexe.h"
+#ifdef WITH_UAENATIVE
 #include "uaenative.h"
+#endif
 #include "tabletlibrary.h"
 #include "luascript.h"
+#ifdef DRIVESOUND
 #include "driveclick.h"
+#endif
 #include "x86.h"
 #include "ethernet.h"
 #include "drawing.h"
 #include "videograb.h"
 #include "rommgr.h"
 #include "newcpu.h"
+#ifdef WITH_MIDIEMU
+#include "midiemu.h"
+#endif
 #ifdef RETROPLATFORM
 #include "rp.h"
 #endif
 #include "barto_gdbserver.h"
+#include "dsp3210/dsp_glue.h"
 
 #define MAX_DEVICE_ITEMS 64
 
@@ -86,6 +98,8 @@ static int device_rethink_cnt;
 static DEVICE_VOID device_rethinks[MAX_DEVICE_ITEMS];
 static int device_leave_cnt;
 static DEVICE_VOID device_leaves[MAX_DEVICE_ITEMS];
+static int device_leave_early_cnt;
+static DEVICE_VOID device_leaves_early[MAX_DEVICE_ITEMS];
 static int device_resets_cnt;
 static DEVICE_INT device_resets[MAX_DEVICE_ITEMS];
 static bool device_reset_done[MAX_DEVICE_ITEMS];
@@ -99,6 +113,7 @@ static void reset_device_items(void)
 	device_rethink_cnt = 0;
 	device_resets_cnt = 0;
 	device_leave_cnt = 0;
+	device_leave_early_cnt = 0;
 	memset(device_reset_done, 0, sizeof(device_reset_done));
 }
 
@@ -122,9 +137,14 @@ void device_add_check_config(DEVICE_VOID p)
 {
 	add_device_item(device_configs, &device_configs_cnt, p);
 }
-void device_add_exit(DEVICE_VOID p)
+void device_add_exit(DEVICE_VOID p, DEVICE_VOID p2)
 {
-	add_device_item(device_leaves, &device_leave_cnt, p);
+	if (p != NULL) {
+		add_device_item(device_leaves, &device_leave_cnt, p);
+	}
+	if (p2 != NULL) {
+		add_device_item(device_leaves_early, &device_leave_early_cnt, p2);
+	}
 }
 void device_add_reset(DEVICE_INT p)
 {
@@ -173,6 +193,9 @@ void devices_reset(int hardreset)
 	init_eventtab();
 	init_shm();
 	memory_reset();
+#ifdef AUTOCONFIG
+	rtarea_reset();
+#endif
 	DISK_reset();
 	CIA_reset();
 	a1000_reset();
@@ -216,9 +239,6 @@ void devices_reset(int hardreset)
 	dongle_reset();
 	sampler_init();
 	device_func_reset();
-#ifdef AUTOCONFIG
-	rtarea_reset();
-#endif
 #ifdef RETROPLATFORM
 	rp_reset();
 #endif
@@ -253,7 +273,9 @@ void devices_hsync(void)
 	CIA_hsync_prehandler();
 
 	decide_blitter(-1);
+#ifdef SERIAL_PORT
 	serial_hsynchandler();
+#endif
 
 	execute_device_items(device_hsyncs, device_hsync_cnt);
 }
@@ -280,11 +302,16 @@ void devices_update_sound(float clk, float syncadjust)
 	update_sndboard_sound (clk / syncadjust);
 	update_cda_sound(clk / syncadjust);
 	x86_update_sound(clk / syncadjust);
+#ifdef WITH_MIDIEMU
+	midi_update_sound(clk / syncadjust);
+#endif
 }
 
 void devices_update_sync(float svpos, float syncadjust)
 {
+#ifdef CD32
 	cd32_fmv_set_sync(svpos, syncadjust);
+#endif
 }
 
 void virtualdevice_free(void)
@@ -293,6 +320,9 @@ void virtualdevice_free(void)
 	// must be first
 	uae_ppc_free();
 #endif
+
+	execute_device_items(device_leaves_early, device_leave_early_cnt);
+
 #ifdef FILESYS
 	filesys_cleanup();
 #endif
@@ -320,7 +350,9 @@ void virtualdevice_free(void)
 	memory_cleanup();
 	free_shm();
 	cfgfile_addcfgparam(0);
+#ifdef DRIVESOUND
 	driveclick_free();
+#endif
 	ethernet_enumerate_free();
 	rtarea_free();
 
@@ -387,9 +419,11 @@ void virtualdevice_init (void)
 
 void devices_restore_start(void)
 {
+	restore_audio_start();
 	restore_cia_start();
 	restore_blkdev_start();
 	restore_blitter_start();
+	restore_custom_start();
 	changed_prefs.bogomem.size = 0;
 	changed_prefs.chipmem.size = 0;
 	for (int i = 0; i < MAX_RAM_BOARDS; i++) {
@@ -411,6 +445,9 @@ void devices_pause(void)
 #ifdef WITH_PPC
 	uae_ppc_pause(1);
 #endif
+#ifdef WITH_DSP
+	dsp_pause(1);
+#endif
 	blkdev_entergui();
 #ifdef RETROPLATFORM
 	rp_pause(1);
@@ -427,6 +464,9 @@ void devices_unpause(void)
 #endif
 #ifdef WITH_PPC
 	uae_ppc_pause(0);
+#endif
+#ifdef WITH_DSP
+	dsp_pause(0);
 #endif
 	pausevideograb(0);
 	ethernet_pause(0);

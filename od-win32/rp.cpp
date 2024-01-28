@@ -75,6 +75,7 @@ static int hwndset_delay;
 static int sendmouseevents;
 static int mouseevent_x, mouseevent_y, mouseevent_buttons;
 static uae_u64 delayed_refresh;
+static bool interpolation_v102;
 
 static int cando (void)
 {
@@ -392,7 +393,7 @@ static const TCHAR **getcustomeventorder(int *devicetype)
 	return NULL;
 }
 
-static bool port_get_custom (int inputmap_port, TCHAR *out)
+static bool port_get_custom (int inputmap_port, int sub, TCHAR *out)
 {
 	int kb;
 	bool first = true;
@@ -409,7 +410,7 @@ static bool port_get_custom (int inputmap_port, TCHAR *out)
 
 	int devicetype = -1;
 	for (int i = 0; inputdevmode[i * 2]; i++) {
-		if (inputdevmode[i * 2 + 1] == currprefs.jports[inputmap_port].mode) {
+		if (inputdevmode[i * 2 + 1] == currprefs.jports[inputmap_port].jd[sub].mode) {
 			devicetype = inputdevmode[i * 2 + 0];
 			break;
 		}
@@ -472,7 +473,7 @@ int port_insert_custom (int inputmap_port, int devicetype, DWORD flags, const TC
 	kb = inputdevice_get_device_total (IDTYPE_JOYSTICK) + inputdevice_get_device_total (IDTYPE_MOUSE);
 
 	inputdevice_copyconfig (&currprefs, &changed_prefs);
-	inputdevice_compa_prepare_custom (&changed_prefs, inputmap_port, devicetype, true);
+	inputdevice_compa_prepare_custom (&changed_prefs, inputmap_port, 0, devicetype, true);
 	inputdevice_updateconfig (NULL, &changed_prefs);
 	max = inputdevice_get_compatibility_input (&changed_prefs, inputmap_port, &mode, events, &axistable);
 	write_log (_T("custom='%s' max=%d port=%d dt=%d kb=%d kbnum=%d\n"), custom, max, inputmap_port, devicetype, kb, inputdevice_get_device_total (IDTYPE_KEYBOARD));
@@ -560,8 +561,8 @@ static int port_insert (int inputmap_port, int devicetype, DWORD flags, const TC
 	if (devicetype == RP_INPUTDEVICE_JOYSTICK || devicetype == RP_INPUTDEVICE_GAMEPAD || devicetype == RP_INPUTDEVICE_JOYPAD) {
 		if (inputmap_port >= 0 && inputmap_port < 4) {
 			dacttype[inputmap_port] = devicetype;
-			inputdevice_compa_clear(&changed_prefs, inputmap_port);
-			inputdevice_joyport_config(&changed_prefs, _T("none"), NULL, inputmap_port, 0, 0, 0, true);
+			inputdevice_compa_clear(&changed_prefs, inputmap_port, -1);
+			inputdevice_joyport_config(&changed_prefs, _T("none"), NULL, inputmap_port, 0, 0, 0, 0, true);
 			return 1;
 		}
 		return 0;
@@ -570,10 +571,10 @@ static int port_insert (int inputmap_port, int devicetype, DWORD flags, const TC
 	if (inputmap_port < 0 || inputmap_port >= maxjports)
 		return FALSE;
 	
-	inputdevice_compa_clear (&changed_prefs, inputmap_port);
+	inputdevice_compa_clear (&changed_prefs, inputmap_port, -1);
 	
 	if (name[0] == '\0') {
-		inputdevice_joyport_config (&changed_prefs, _T("none"), NULL, inputmap_port, 0, 0, 0, true);
+		inputdevice_joyport_config (&changed_prefs, _T("none"), NULL, inputmap_port, 0, 0, 0, 0, true);
 		return TRUE;
 	}
 	devicetype2 = -1;
@@ -595,11 +596,11 @@ static int port_insert (int inputmap_port, int devicetype, DWORD flags, const TC
 		_stprintf (tmp2, _T("KeyboardLayout%d"), i);
 		if (!_tcscmp (tmp2, name)) {
 			_stprintf (tmp2, _T("kbd%d"), i + 1);
-			ret = inputdevice_joyport_config (&changed_prefs, tmp2, NULL, inputmap_port, devicetype2, 0, 0, true);
+			ret = inputdevice_joyport_config (&changed_prefs, tmp2, NULL, inputmap_port, devicetype2, 0, 0, 0, true);
 			return ret;
 		}
 	}
-	ret = inputdevice_joyport_config (&changed_prefs, name, name, inputmap_port, devicetype2, 0, 1, true);
+	ret = inputdevice_joyport_config (&changed_prefs, name, name, inputmap_port, devicetype2, 0, 1, 0, true);
 	return ret;
 }
 
@@ -854,8 +855,12 @@ static void get_screenmode (struct RPScreenMode *sm, struct uae_prefs *p, bool g
 		m &= ~RP_SCREENMODE_DISPLAYMASK;
 		m |= p->gfx_apmode[rtg ? APMODE_RTG : APMODE_NATIVE].gfx_display << 8;
 	}
-	if (full > 1)
+	if (full > 1) {
 		m |= RP_SCREENMODE_FULLSCREEN_SHARED;
+	}
+	if (p->gf[rtg].gfx_filter_bilinear) {
+		m |= RP_SCREENMODE_INTERPOLATION;
+	}
 
 	sm->dwScreenMode = m | (storeflags & (RP_SCREENMODE_SCALING_STRETCH | RP_SCREENMODE_SCALING_SUBPIXEL));
 	sm->lTargetHeight = 0;
@@ -872,7 +877,7 @@ static void get_screenmode (struct RPScreenMode *sm, struct uae_prefs *p, bool g
 	sm->dwClipFlags = cf;
 
 	if (log_rp & 2) {
-		write_log (_T("%sGET_RPSM: hres=%d (%d) vres=%d (%d) full=%d xcpos=%d ycpos=%d w=%d h=%d vm=%d hm=%d half=%d\n"),
+		write_log (_T("%sGET_RPSM: hres=%d (%d) vres=%d (%d) full=%d xcpos=%d ycpos=%d w=%d h=%d vm=%.2f hm=%.2f half=%d\n"),
 			rtg ? _T("RTG ") : _T(""),
 			totalhdbl, hres, totalvdbl, vres, full,
 			p->gfx_xcenter_pos,  p->gfx_ycenter_pos,
@@ -882,6 +887,12 @@ static void get_screenmode (struct RPScreenMode *sm, struct uae_prefs *p, bool g
 			sm->dwScreenMode, sm->lClipLeft, sm->lClipTop, sm->lClipWidth, sm->lClipHeight,
 			totalhdbl, hres, totalvdbl, vres, p->gfx_apmode[APMODE_NATIVE].gfx_display, full);
 	}
+}
+
+static bool interpolation_old(DWORD sm)
+{
+	return ((sm & (RP_SCREENMODE_PIXEL_ORIGINAL_RATIO | RP_SCREENMODE_SCALING_SUBPIXEL | RP_SCREENMODE_SCANLINES)) == 0 &&
+		RP_SCREENMODE_DISPLAY(sm) == 0) ? 0 : 1;
 }
 
 static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
@@ -990,7 +1001,7 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 				vres = max_vert_dbl;
 			}
 
-			if (smm_m > RP_SCREENMODE_SCALE_4X) {
+			if (smm_m > RP_SCREENMODE_SCALE_4X && smm < RP_SCREENMODE_SCALE_TARGET) {
 				xtramult = (smm_m + 1.0f) / 4.0f;
 				hmult *= xtramult;
 				vmult *= xtramult;
@@ -1051,7 +1062,7 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 
 	int m = 1;
 	if (fs < 2) {
-		if (smm_m >= RP_SCREENMODE_SCALE_2X) {
+		if (smm_m >= RP_SCREENMODE_SCALE_2X && smm < RP_SCREENMODE_SCALE_TARGET) {
 			m = smm_m - RP_SCREENMODE_SCALE_2X + 2;
 		}
 	}
@@ -1061,16 +1072,33 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 
 		int m = 1;
 		if (fs == 2) {
-			p->gf[1].gfx_filter_autoscale = 1;
+			p->gf[GF_RTG].gfx_filter_autoscale = RTG_MODE_SCALE;
 		} else {
-			p->gf[1].gfx_filter_autoscale = 0;
-			if (smm_m >= RP_SCREENMODE_SCALE_2X) {
+			p->gf[GF_RTG].gfx_filter_autoscale = 0;
+			if (smm_m >= RP_SCREENMODE_SCALE_2X && smm < RP_SCREENMODE_SCALE_TARGET) {
 				m = smm_m - RP_SCREENMODE_SCALE_2X + 2;
 			}
 		}
 
+		p->win32_rtgallowscaling = false;
+		p->win32_rtgscaleaspectratio = keepaspect ? -1 : 0;
+		if (interpolation_v102) {
+			p->gf[GF_RTG].gfx_filter_bilinear = (sm->dwScreenMode & RP_SCREENMODE_INTERPOLATION) != 0;
+		} else {
+			p->gf[GF_RTG].gfx_filter_bilinear = interpolation_old(sm->dwScreenMode);
+		}
+
+		if (integerscale) {
+			p->gf[GF_RTG].gfx_filter_autoscale = RTG_MODE_INTEGER_SCALE;
+		}
 		gm->gfx_size_win.width = vidinfo->width * m;
 		gm->gfx_size_win.height = vidinfo->height * m;
+		if (forcesize && !integerscale) {
+			gm->gfx_size_win.width = sm->lTargetWidth;
+			gm->gfx_size_win.height = sm->lTargetHeight;
+			p->gf[GF_RTG].gfx_filter_autoscale = RTG_MODE_SCALE;
+			p->win32_rtgallowscaling = true;
+		}
 
 		hmult = (float)m;
 		vmult = (float)m;
@@ -1155,6 +1183,11 @@ static void set_screenmode (struct RPScreenMode *sm, struct uae_prefs *p)
 			p->gf[0].gfx_filter_left_border = -1;
 			p->gf[0].gfx_filter_top_border = -1;
 		}
+		if (interpolation_v102) {
+			p->gf[0].gfx_filter_bilinear = (sm->dwScreenMode & RP_SCREENMODE_INTERPOLATION) != 0;
+		} else {
+			p->gf[0].gfx_filter_bilinear = interpolation_old(sm->dwScreenMode);
+		}
 	}
 
 	if (log_rp & 2) {
@@ -1234,7 +1267,7 @@ static int movescreenoverlay(WPARAM wParam, LPARAM lParam)
 	eo.idx = (int)wParam;
 	eo.xpos = LOWORD(lParam);
 	eo.ypos = HIWORD(lParam);
-	int ret = D3D_extoverlay(&eo);
+	int ret = D3D_extoverlay(&eo, 0);
 	if (pause_emulation && D3D_refresh) {
 		D3D_refresh(0);
 		delayed_refresh = 0;
@@ -1251,7 +1284,7 @@ static int deletescreenoverlay(WPARAM wParam)
 	eo.idx = (int)wParam;
 	eo.width = -1;
 	eo.height = -1;
-	return D3D_extoverlay(&eo);
+	return D3D_extoverlay(&eo, 0);
 }
 
 static int screenoverlay(LPCVOID pData)
@@ -1269,7 +1302,7 @@ static int screenoverlay(LPCVOID pData)
 	eo.width = rpo->lWidth;
 	eo.height = rpo->lHeight;
 	eo.data = rpo->btData;
-	return D3D_extoverlay(&eo);
+	return D3D_extoverlay(&eo, 0);
 }
 
 static void dos_execute_callback(uae_u32 id, uae_u32 status, uae_u32 flags, const char *outbuf, void *userdata)
@@ -1759,9 +1792,7 @@ static void sendfeatures (void)
 	feat = RP_FEATURE_POWERLED | RP_FEATURE_SCREEN1X | RP_FEATURE_FULLSCREEN;
 	feat |= RP_FEATURE_PAUSE | RP_FEATURE_TURBO_CPU | RP_FEATURE_TURBO_FLOPPY | RP_FEATURE_VOLUME | RP_FEATURE_SCREENCAPTURE;
 	feat |= RP_FEATURE_DEVICEREADWRITE;
-	if (currprefs.gfx_api) {
-		feat |= RP_FEATURE_SCREENOVERLAY;
-	}
+	feat |= RP_FEATURE_SCREENOVERLAY;
 	if (WIN32GFX_IsPicassoScreen(mon)) {
 		feat |= RP_FEATURE_SCREEN2X | RP_FEATURE_SCREEN3X | RP_FEATURE_SCREEN4X;
 	} else {
@@ -1802,12 +1833,19 @@ void rp_fixup_options (struct uae_prefs *p)
 {
 	struct monconfig *gm = &p->gfx_monitor[0];
 	struct RPScreenMode sm;
+	LRESULT lr;
 
 	if (!initialized)
 		return;
 
 	write_log (_T("rp_fixup_options(escapekey=%d,escapeholdtime=%d,screenmode=%d,inputmode=%d)\n"),
 		rp_rpescapekey, rp_rpescapeholdtime, rp_screenmode, rp_inputmode);
+
+	if (RPSendMessage(RP_IPC_TO_HOST_HOSTAPIVERSION, 0, 0, NULL, 0, &guestinfo, &lr)) {
+		WORD major = LOWORD(lr);
+		WORD minor = HIWORD(lr);
+		interpolation_v102 = major > 10 || (major == 10 && minor >= 2);
+	}
 
 	sendmouseevents = 0;
 	mouseevent_x = mouseevent_y = 0;
@@ -1855,8 +1893,10 @@ void rp_fixup_options (struct uae_prefs *p)
 
 	int parportmask = 0;
 	for (int i = 0; i < 2; i++) {
-		if (p->jports[i + 2].idc.configname[0] || p->jports[i + 2].idc.name[0] || p->jports[i + 2].idc.shortid[0])
-			parportmask |= 1 << i;
+		for (int j = 0; j < MAX_JPORT_DEVS; j++) {
+			if (p->jports[i + 2].jd[j].idc.configname[0] || p->jports[i + 2].jd[j].idc.name[0] || p->jports[i + 2].jd[j].idc.shortid[0])
+				parportmask |= 1 << i;
+		}
 	}
 	if (parportmask) {
 		RPSendMessagex (RP_IPC_TO_HOST_DEVICES, RP_DEVICECATEGORY_MULTITAPPORT, parportmask, NULL, 0, &guestinfo, NULL);
@@ -1935,9 +1975,10 @@ static void rp_device_change (int dev, int num, int mode, bool readonly, const T
 
 void rp_input_change (int num)
 {
-	int j = jsem_isjoy (num, &currprefs);
-	int m = jsem_ismouse (num, &currprefs);
-	int k = jsem_iskbdjoy (num, &currprefs);
+	int sub = 0;
+	int j = jsem_isjoy(num, sub, &currprefs);
+	int m = jsem_ismouse(num, sub, &currprefs);
+	int k = jsem_iskbdjoy(num, &currprefs);
 	TCHAR name[MAX_DPATH];
 	int mode;
 
@@ -1945,8 +1986,8 @@ void rp_input_change (int num)
 		return;
 
 	name[0] = 0;
-	if (JSEM_ISCUSTOM(num, &currprefs)) {
-		port_get_custom (num, name);
+	if (JSEM_ISCUSTOM(num, sub, &currprefs)) {
+		port_get_custom (num, sub, name);
 	} else if (k >= 0) {
 		_stprintf (name, _T("KeyboardLayout%d"), k);
 	} else if (j >= 0) {
@@ -1956,7 +1997,7 @@ void rp_input_change (int num)
 	}
 	mode = RP_INPUTDEVICE_EMPTY;
 	for (int i = 0; inputdevmode[i * 2]; i++) {
-		if (inputdevmode[i * 2 + 1] == currprefs.jports[num].mode) {
+		if (inputdevmode[i * 2 + 1] == currprefs.jports[num].jd[sub].mode) {
 			mode = inputdevmode[i * 2 + 0];
 			break;
 		}

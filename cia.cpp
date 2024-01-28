@@ -19,7 +19,9 @@
 #include "custom.h"
 #include "newcpu.h"
 #include "cia.h"
+#ifdef SERIAL_PORT
 #include "serial.h"
+#endif
 #include "disk.h"
 #include "xwin.h"
 #include "keybuf.h"
@@ -290,9 +292,11 @@ static void RethinkICR(int num)
 #endif
 		if (!(c->icr1 & 0x80)) {
 			c->icr1 |= 0x80 | 0x40;
+#ifdef DEBUGGER
 			if (debug_dma) {
 				record_dma_event(num ? DMA_EVENT_CIAB_IRQ : DMA_EVENT_CIAA_IRQ, current_hpos(), vpos);
 			}
+#endif
 			ICR(num);
 		}
 	}
@@ -440,7 +444,7 @@ static uae_u8 cia_inmode_cnt(int num)
 	return icr;
 }
 
-static int process_pipe(struct CIATimer *t, int cc, uae_u8 crmask, int *ovfl)
+static int process_pipe(struct CIATimer *t, int cc, uae_u8 crmask, int *ovfl, int loadednow)
 {
 	int ccout = cc;
 
@@ -451,8 +455,8 @@ static int process_pipe(struct CIATimer *t, int cc, uae_u8 crmask, int *ovfl)
 			t->inputpipe |= CIA_PIPE_INPUT;
 		}
 		// interrupt 1 cycle early if timer is already zero
-		if (t->timer == 0 && (t->inputpipe & CIA_PIPE_OUTPUT)) {
-			*ovfl = 1;
+		if (t->timer == 0 && t->latch == 0 && (t->inputpipe & CIA_PIPE_OUTPUT)) {
+			*ovfl = loadednow ? 1 : 2;
 		}
 		return out;
 	}
@@ -490,7 +494,7 @@ static void CIA_update_check(void)
 	for (int num = 0; num < 2; num++) {
 		struct CIA *c = &cia[num];
 		int ovfl[2], sp;
-		bool loaded[2], loaded2[2];
+		bool loaded[2], loaded2[2], loaded3[3];
 
 		c->icr1 |= c->icr2;
 		c->icr2 = 0;
@@ -505,41 +509,45 @@ static void CIA_update_check(void)
 			
 			loaded[tn] = false;
 			loaded2[tn] = false;
+			loaded3[tn] = false;
 
 			// CIA special cases
 			if (t->loaddelay) {
 				if (ciaclocks > 1) {
 					abort();
 				}
-				if (t->loaddelay & 1) {
+
+				if (t->loaddelay & 0x00000001) {
 					t->timer = t->latch;
 					t->inputpipe &= ~CIA_PIPE_CLR1;
 				}
 
-				if ((t->loaddelay & 0x0100) && t->timer != 0) {
-					loaded2[tn] = true;
+				// timer=0 special cases. TODO: better way to do this..
+				// delayed timer stop and interrupt (timer=0 condition)
+				if ((t->loaddelay & 0x00010000)) {
+					t->cr &= ~CR_START;
+					ovfl[tn] = 2;
 				}
-				if ((t->loaddelay & 0x010000)) {
-					if ((t->timer != 1 || t->latch != 1) && (t->inputpipe & CIA_PIPE_OUTPUT)) {
-						loaded2[tn] = true;
-					}
+				// Do not set START=0 until timer has started (timer==0 special case)
+				if ((t->loaddelay & 0x00000100) && t->timer == 0) {
+					loaded2[tn] = true;
 				}
 				if ((t->loaddelay & 0x01000000)) {
 					loaded[tn] = true;
-					if (t->timer == 0) {
-						ovfl[tn] = true;
-					}
+				}
+				if ((t->loaddelay & 0x10000000)) {
+					loaded3[tn] = true;
 				}
 
 				t->loaddelay >>= 1;
-				t->loaddelay &= 0x7f7f7f7f;
+				t->loaddelay &= 0x77777777;
 			}
 		}
 
 		// Timer A
 		int cc = 0;
 		if ((c->t[0].cr & (CR_INMODE | CR_START)) == CR_START || c->t[0].inputpipe) {
-			cc = process_pipe(&c->t[0], ciaclocks, CR_INMODE | CR_START, &ovfl[0]);
+			cc = process_pipe(&c->t[0], ciaclocks, CR_INMODE | CR_START, &ovfl[0], loaded3[0]);
 		}
 		if (cc > 0) {
 			c->t[0].timer -= cc;
@@ -556,7 +564,7 @@ static void CIA_update_check(void)
 						}
 					}
 				}
-				ovfl[0] = 1;
+				ovfl[0] = 2;
 			}
 		}
 		assert(c->t[0].timer < 0x10000);
@@ -564,21 +572,21 @@ static void CIA_update_check(void)
 		// Timer B
 		cc = 0;
 		if ((c->t[1].cr & (CR_INMODE | CR_INMODE1 | CR_START)) == CR_START || c->t[1].inputpipe) {
-			cc = process_pipe(&c->t[1], ciaclocks, CR_INMODE | CR_INMODE1 | CR_START, &ovfl[1]);
+			cc = process_pipe(&c->t[1], ciaclocks, CR_INMODE | CR_INMODE1 | CR_START, &ovfl[1], loaded3[1]);
 		}
 		if (cc > 0) {
 			if ((c->t[1].timer == 0 && (c->t[1].cr & (CR_INMODE | CR_INMODE1)))) {
-				ovfl[1] = 1;
+				ovfl[1] = 2;
 			} else {
 				c->t[1].timer -= cc;
 				if ((c->t[1].timer == 0 && !(c->t[1].cr & (CR_INMODE | CR_INMODE1)))) {
-					ovfl[1] = 1;
+					ovfl[1] = 2;
 				}
 			}
 		}
 		assert(c->t[1].timer < 0x10000);
 
-		// B INMODE=10 or 11
+		// B INMODE=10 or 11 (B counting A underflows)
 		if (ovfl[0] && ((c->t[1].cr & (CR_INMODE | CR_INMODE1 | CR_START)) == (CR_INMODE1 | CR_START) || (c->t[1].cr & (CR_INMODE | CR_INMODE1 | CR_START)) == (CR_INMODE | CR_INMODE1 | CR_START))) {
 			c->t[1].inputpipe |= CIA_PIPE_INPUT;
 		}
@@ -587,18 +595,22 @@ static void CIA_update_check(void)
 			struct CIATimer *t = &c->t[tn];
 
 			if (ovfl[tn] || t->preovfl) {
-				c->icr2 |= tn ? ICR_B : ICR_A;
-				t->timer = t->latch;
+				if (ovfl[tn]) {
+					if (ovfl[tn] > 1) {
+						c->icr2 |= tn ? ICR_B : ICR_A;
+						icr |= 1 << num;
+					}
+					t->timer = t->latch;
+				}
 				if (!loaded[tn]) {
 					if (t->cr & CR_RUNMODE) {
-						// if oneshot timer expires exactly when
-						// CR is written with START and ONESHOT set:
-						// timer does not stop.
-						if (!loaded2[tn]) {
+						if (loaded2[tn]) {
+							t->loaddelay |= 0x00010000;
+						} else {
 							t->cr &= ~CR_START;
-							if (!acc_mode()) {
-								t->inputpipe = 0;
-							}
+						}
+						if (!acc_mode()) {
+							t->inputpipe = 0;
 						}
 						if (acc_mode()) {
 							t->inputpipe &= ~CIA_PIPE_CLR2;
@@ -609,7 +621,6 @@ static void CIA_update_check(void)
 						}
 					}
 				}
-				icr |= 1 << num;
 				t->preovfl = false;
 			}
 		}
@@ -661,6 +672,7 @@ static void CIA_calctimers(void)
 	for (int num = 0; num < 2; num++) {
 		struct CIA *c = &cia[num];
 		int idx = num * 2;
+		bool counting[2] = { false, false };
 
 		if ((c->t[0].cr & (CR_INMODE | CR_START)) == CR_START) {
 			int pipe = bitstodelay(c->t[0].inputpipe);
@@ -668,6 +680,7 @@ static void CIA_calctimers(void)
 			if (!timevals[idx + 0]) {
 				timevals[idx + 0] = DIV10;
 			}
+			counting[0] = true;
 		}
 
 		if ((c->t[1].cr & (CR_INMODE | CR_INMODE1 | CR_START)) == CR_START) {
@@ -676,6 +689,7 @@ static void CIA_calctimers(void)
 			if (!timevals[idx + 1]) {
 				timevals[idx + 1] = DIV10;
 			}
+			counting[1] = true;
 		}
 
 		for (int tn = 0; tn < 2; tn++) {
@@ -684,7 +698,9 @@ static void CIA_calctimers(void)
 			int tnidx = idx + tn;
 			if (t->cr & CR_START) {
 				if (t->inputpipe != CIA_PIPE_ALL_MASK) {
-					timerspecial = true;
+					if (counting[tn] || t->inputpipe != 0) {
+						timerspecial = true;
+					}
 				}
 			} else {
 				if (t->inputpipe != 0) {
@@ -749,7 +765,7 @@ static int get_cia_sync_cycles(int *syncdelay)
 	return add;
 }
 
-static void CIA_synced_interrupt(uae_u32 v)
+void event_CIA_synced_interrupt(uae_u32 v)
 {
 	CIA_update();
 	CIA_calctimers();
@@ -771,7 +787,7 @@ static void CIA_sync_interrupt(int num, uae_u8 icr)
 		int syncdelay = 0;
 		int delay = get_cia_sync_cycles(&syncdelay);
 		delay += syncdelay;
-		event2_newevent_xx(-1, DIV10 + delay, num, CIA_synced_interrupt);
+		event2_newevent_xx(-1, DIV10 + delay, num, event_CIA_synced_interrupt);
 	} else {
 		c->icr1 |= icr;
 		CIA_check_ICR();
@@ -810,12 +826,12 @@ static bool cia_checkalarm(bool inc, bool irq, int num)
 {
 	struct CIA *c = &cia[num];
 
+#if 0
 	// hack: do not trigger alarm interrupt if KS code and both
 	// tod and alarm == 0. This incorrectly triggers on non-cycle exact
 	// modes. Real hardware value written to ciabtod by KS is always
 	// at least 1 or larger due to bus cycle delays when reading
 	// old value.
-#if 0
 	if (num) {
 		if (!currprefs.cpu_compatible && (munge24(m68k_getpc()) & 0xFFF80000) != 0xF80000) {
 			if (c->tod == 0 && c->alarm == 0)
@@ -931,7 +947,7 @@ static void do_tod_hack(bool dotod)
 		cia[0].tod++;
 		cia[0].tod &= 0x00ffffff;
 		tod_hack_tod_last = cia[0].tod;
-		cia_checkalarm(false, false, 0);
+		cia_checkalarm(false, true, 0);
 	}
 }
 
@@ -978,8 +994,7 @@ static void resetwarning_check(void)
 			write_log(_T("KB: reset warning forced reset. Phase=%d\n"), resetwarning_phase);
 			resetwarning_phase = -1;
 			kblostsynccnt = 0;
-			send_internalevent(INTERNALEVENT_KBRESET);
-			uae_reset(0, 1);
+			inputdevice_do_kb_reset();
 		}
 	}
 	if (resetwarning_phase == 1) {
@@ -1001,8 +1016,7 @@ static void resetwarning_check(void)
 			write_log(_T("KB: reset warning end by software. reset.\n"));
 			resetwarning_phase = -1;
 			kblostsynccnt = 0;
-			send_internalevent(INTERNALEVENT_KBRESET);
-			uae_reset(0, 1);
+			inputdevice_do_kb_reset();
 		}
 	}
 }
@@ -1054,7 +1068,7 @@ static void CIA_tod_inc(bool irq, int num)
 	cia_checkalarm(true, irq, num);
 }
 
-static void CIA_tod_inc_event(uae_u32 num)
+void event_CIA_tod_inc_event(uae_u32 num)
 {
 	struct CIA *c = &cia[num];
 	if (c->tod_event_state != 2) {
@@ -1081,7 +1095,7 @@ static void CIA_tod_check(int num)
 	struct CIA *c = &cia[num];
 
 	CIA_tod_event_check(num);
-	if (!c->todon || c->tod_event_state > 1 || c->tod_offset < 0)
+	if (!c->todon || c->tod_event_state != 1 || c->tod_offset < 0)
 		return;
 	int hpos = current_hpos();
 	hpos -= c->tod_offset;
@@ -1092,7 +1106,7 @@ static void CIA_tod_check(int num)
 	}
 	// Not yet, add event to guarantee exact TOD inc position
 	c->tod_event_state = 2; // event active
-	event2_newevent_xx(-1, -hpos * CYCLE_UNIT, num, CIA_tod_inc_event);
+	event2_newevent_xx(-1, -hpos * CYCLE_UNIT, num, event_CIA_tod_inc_event);
 }
 
 static void CIA_tod_handler(int hoffset, int num, bool delayedevent)
@@ -1113,7 +1127,7 @@ static void CIA_tod_handler(int hoffset, int num, bool delayedevent)
 	if (checkalarm((c->tod + 1) & 0xffffff, c->alarm, true)) {
 		// causes interrupt on this line, add event
 		c->tod_event_state = 2; // event active
-		event2_newevent_xx(-1, c->tod_offset * CYCLE_UNIT, num, CIA_tod_inc_event);
+		event2_newevent_xx(-1, c->tod_offset * CYCLE_UNIT, num, event_CIA_tod_inc_event);
 	}
 }
 
@@ -1470,6 +1484,15 @@ static uae_u8 ReadCIAReg(int num, int reg)
 	return 0xff;
 }
 
+static bool CIA_timer_inmode(int num, uae_u8 cr)
+{
+	if (num) {
+		return (cr & (CR_INMODE | CR_INMODE1)) != 0;
+	} else {
+		return (cr & CR_INMODE) != 0;
+	}
+}
+
 static void CIA_thi_write(int num, int tnum, uae_u8 val)
 {
 	struct CIA *c = &cia[num];
@@ -1489,12 +1512,16 @@ static void CIA_thi_write(int num, int tnum, uae_u8 val)
 
 		if (t->cr & CR_RUNMODE) {
 			t->cr |= CR_START;
-			t->inputpipe = CIA_PIPE_ALL_MASK;
+			if (!CIA_timer_inmode(tnum, t->cr)) {
+				t->inputpipe = CIA_PIPE_ALL_MASK;
+			}
 		}
 
 		if (t->cr & CR_START) {
-			if (t->timer <= 1) {
-				t->preovfl = true;
+			if (!CIA_timer_inmode(tnum, t->cr)) {
+				if (t->timer <= 1) {
+					t->preovfl = true;
+				}
 			}
 		}
 
@@ -1502,15 +1529,18 @@ static void CIA_thi_write(int num, int tnum, uae_u8 val)
 		// if accurate mode: handle delays cycle-accurately
 
 		if (!(t->cr & CR_START)) {
-			t->loaddelay |= 1 << 1;
-			t->loaddelay |= 1 << 2;
+			t->loaddelay |= 0x00000001 << 1;
+			t->loaddelay |= 0x00000001 << 2;
 		}
 
 		if (t->cr & CR_RUNMODE) {
 			t->cr |= CR_START;
+			t->loaddelay |= 0x00000001 << 2;
+			// timer=0 special case
 			t->loaddelay |= 0x01000000 << 1;
-			t->loaddelay |= 1 << 2;
+			t->loaddelay |= 0x10000000 << 1;
 		}
+
 	}
 }
 
@@ -1531,9 +1561,11 @@ static void CIA_cr_write(int num, int tnum, uae_u8 val)
 			t->timer = t->latch;
 		}
 		if (val & CR_START) {
-			t->inputpipe = CIA_PIPE_ALL_MASK;
-			if (t->timer <= 1) {
-				t->preovfl = true;
+			if (!CIA_timer_inmode(tnum, val)) {
+				t->inputpipe = CIA_PIPE_ALL_MASK;
+				if (t->timer <= 1) {
+					t->preovfl = true;
+				}
 			}
 		} else {
 			t->inputpipe = 0; 
@@ -1544,15 +1576,14 @@ static void CIA_cr_write(int num, int tnum, uae_u8 val)
 
 		if (val & CR_LOAD) {
 			val &= ~CR_LOAD;
-			t->loaddelay |= 0x0001 << 2;
-			t->loaddelay |= 0x0100 << 0;
+			t->loaddelay |= 0x00000001 << 2;
+			t->loaddelay |= 0x00000100 << 0;
+			t->loaddelay |= 0x00000100 << 1;
 			if (!(t->cr & CR_START)) {
-				t->loaddelay |= 0x0001 << 1;
+				t->loaddelay |= 0x00000001 << 1;
 			}
-		} else {
-			if ((val & CR_START)) {
-				t->loaddelay |= 0x010000 << 0;
-			}
+			// timer=0 special case
+			t->loaddelay |= 0x10000000 << 1;
 		}
 
 		if (!(val & CR_START)) {
@@ -1924,9 +1955,11 @@ static void WriteCIAA(uae_u16 addr, uae_u8 val, uae_u32 *flags)
 			arcadia_parport(1, c->prb, c->drb);
 		}
 #endif
+#ifdef PARALLEL_PORT
 		if (!isprinter() && parallel_port_scsi) {
 			parallel_port_scsi_write(0, c->prb, c->drb);
 		}
+#endif
 		break;
 	case 2:
 #if DONGLE_DEBUG > 0
@@ -2248,12 +2281,16 @@ static void cia_wait_pre(int cianummask)
 	cia_now_evt = get_cycles();
 	int syncdelay = 0;
 	int delay = get_cia_sync_cycles(&syncdelay);
+#ifdef DEBUGGER
 	if (debug_dma) {
 		cia_cycles(syncdelay, 100, 0, 0);
 		cia_cycles(delay, 0, 0, 0);
 	} else {
 		cia_cycles(syncdelay + delay, 0, 0, 0);
 	}
+#else
+	cia_cycles(syncdelay + delay, 0, 0, 0);
+#endif
 #endif
 }
 
@@ -2393,9 +2430,11 @@ static uae_u32 REGPARAM2 cia_bget(uaecptr addr)
 	if (!isgaylenocia (addr))
 		return dummy_get(addr, 1, false, 0);
 
+#ifdef DEBUGGER
 	if (memwatch_access_validator) {
 		validate_cia(addr, 0, 0);
 	}
+#endif
 
 	switch (cia_chipselect(addr))
 	{
@@ -2455,9 +2494,11 @@ static uae_u32 REGPARAM2 cia_wget(uaecptr addr)
 	if (!isgaylenocia (addr))
 		return dummy_get_safe(addr, 2, false, 0);
 
+#ifdef DEBUGGER
 	if (memwatch_access_validator) {
 		write_log(_T("CIA word read %08x PC=%08x\n"), addr, M68K_GETPC);
 	}
+#endif
 
 	switch (cia_chipselect(addr))
 	{
@@ -2528,12 +2569,14 @@ static uae_u32 REGPARAM2 cia_lgeti(uaecptr addr)
 
 static bool cia_debug(uaecptr addr, uae_u32 value, int size)
 {
+#ifdef DEBUGGER
 	if (addr == DEBUG_SPRINTF_ADDRESS || addr == DEBUG_SPRINTF_ADDRESS + 4 || addr == DEBUG_SPRINTF_ADDRESS + 8 ||
 		(addr == DEBUG_SPRINTF_ADDRESS + 2 && currprefs.cpu_model < 68020) ||
 		(addr == DEBUG_SPRINTF_ADDRESS + 6 && currprefs.cpu_model < 68020) ||
 		(addr == DEBUG_SPRINTF_ADDRESS + 10 && currprefs.cpu_model < 68020)) {
 		return debug_sprintf(addr, value, size);
 	}
+#endif
 	return false;
 }
 
@@ -2552,9 +2595,11 @@ static void REGPARAM2 cia_bput(uaecptr addr, uae_u32 value)
 	if (!isgaylenocia(addr))
 		return;
 
+#ifdef DEBUGGER
 	if (memwatch_access_validator) {
 		validate_cia(addr, 1, value);
 	}
+#endif
 
 	int cs = cia_chipselect(addr);
 
@@ -2593,9 +2638,11 @@ static void REGPARAM2 cia_wput(uaecptr addr, uae_u32 v)
 	if (!isgaylenocia(addr))
 		return;
 
+#ifdef DEBUGGER
 	if (memwatch_access_validator) {
 		write_log(_T("CIA word write %08x = %04x PC=%08x\n"), addr, v & 0xffff, M68K_GETPC);
 	}
+#endif
 
 	if (addr & 1)
 		v = (v << 8) | (v >> 8);
@@ -2644,7 +2691,7 @@ addrbank clock_bank = {
 	clock_lput, clock_wput, clock_bput,
 	default_xlate, default_check, NULL, NULL, _T("Battery backed up clock (none)"),
 	dummy_lgeti, dummy_wgeti,
-	ABFLAG_IO, S_READ, S_WRITE, NULL, 0x3f, 0xd80000
+	ABFLAG_IO, S_READ, S_WRITE, NULL, 0x3f, 0xdc0000
 };
 
 static uae_u8 getclockreg(int addr, struct tm *ct)

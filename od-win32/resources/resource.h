@@ -415,6 +415,26 @@
 #define IDS_GENLOCK_OPTIONS             420
 #define IDS_READONLYCONFIRMATION        421
 #define IDS_SCREEN_NATIVELACE           422
+#define IDS_PORT_AUTOFIRE_TOGGLENOAF    423
+#define IDS_DEFAULT_WINUAECUSTOM        424
+#define IDS_SYNCMODE_COMBINED           425
+#define IDS_SYNCMODE_CSYNC              426
+#define IDS_SYNCMODE_HVSYNC             427
+#define IDS_MEMINFO                     428
+#define IDS_INPUTINVERT                 429
+#define IDS_BOARDTYPE                   430
+#define IDS_BOARDNAME                   431
+#define IDS_BOARDSTART                  432
+#define IDS_BOARDEND                    433
+#define IDS_BOARDSIZE                   434
+#define IDS_BOARDID                     435
+#define IDS_ASSOCIATEEXTENSION          436
+#define IDS_GAMEPORTS_CUSTOM            437
+#define IDS_FILTER_LABELS               438
+#define IDS_CURRENT_HOST                439
+#define IDS_NONE2                       440
+#define IDS_SOUND_CLONED71              441
+#define IDS_SOUND_71                    442
 #define IDS_QS_MODELS                   1000
 #define IDS_QS_MODEL_A500               1001
 #define IDS_QS_MODEL_A500P              1002
@@ -469,6 +489,10 @@
 #define IDC_PORT1_AF                    1034
 #define IDC_MOUSE_UNTRAPMODE            1035
 #define IDC_PORT_TABLET_MODE            1036
+#define IDC_PORT0_JOYSSUB               1037
+#define IDC_PORT1_JOYSSUB               1038
+#define IDC_PORT2_JOYSSUB               1039
+#define IDC_PORT3_JOYSSUB               1040
 #define IDC_FOCUSMINIMIZE               1041
 #define IDC_FASTTEXT                    1043
 #define IDC_FASTRAM                     1044
@@ -777,7 +801,6 @@
 #define IDC_SETTINGSTEXT3               1520
 #define IDC_DISPLAY_VARSYNC             1520
 #define IDC_ECS_AGNUS                   1521
-#define IDC_DISPLAY_VARSYNC2            1521
 #define IDC_DISPLAY_RESIZE              1521
 #define IDC_ECS_DENISE                  1522
 #define IDC_ECS                         1523
@@ -802,11 +825,14 @@
 #define IDC_ACTIVE_NOSOUND              1535
 #define IDC_STATECLEAR                  1536
 #define IDC_MINIMIZED_NOJOY             1537
+#define IDC_ACTIVE_NOJOY                1538
+#define IDC_ACTIVE_NOKEYBOARD           1539
 #define IDC_SER_SHARED                  1553
 #define IDC_GUI_RESIZE                  1553
 #define IDC_SER_CTSRTS                  1554
 #define IDC_GUI_FULLSCREEN              1554
 #define IDC_SER_DIRECT                  1555
+#define IDC_GUI_DARKMODE                1555
 #define IDC_PSPRINTER                   1556
 #define IDC_PSPRINTERDETECT             1557
 #define IDC_UAESERIAL                   1558
@@ -1047,6 +1073,7 @@
 #define IDC_EJECT0Q                     1685
 #define IDC_PATHS_NVRAML                1685
 #define IDC_DF1WPQ                      1686
+#define IDC_PATHS_CUSTOMDATA            1686
 #define IDC_EJECT1Q                     1687
 #define IDC_DF1TEXTQ                    1688
 #define IDC_INFO0Q                      1689
@@ -1079,7 +1106,6 @@
 #define IDC_CS_RTC                      1710
 #define IDC_FILTERKEEPAUTOSCALEASPECT   1710
 #define IDC_CS_CIAA_TOD1                1711
-#define IDC_SOUND_VOLCNT                1711
 #define IDC_FILTERENABLE                1711
 #define IDC_CS_CIAA_TOD2                1712
 #define IDC_CS_EXT                      1712
@@ -1122,6 +1148,7 @@
 #define IDC_DBG_OUTPUT1                 1739
 #define IDC_CS_PCMCIA                   1739
 #define IDC_DBG_HELP                    1740
+#define IDC_CS_AGNUSMODEL               1740
 #define IDC_DBG_INPUT                   1741
 #define IDC_CS_KSMIRROR_A8              1741
 #define IDC_DBG_DREG                    1742
@@ -1129,12 +1156,12 @@
 #define IDC_DBG_AREG                    1743
 #define IDC_CS_RESETWARNING             1743
 #define IDC_DBG_CCR                     1744
-#define IDC_CS_NOEHB                    1744
+#define IDC_CS_AGNUSSIZE                1744
 #define IDC_DBG_AMEM                    1745
-#define IDC_CS_DIPAGNUS                 1745
 #define IDC_DBG_SP_VBR                  1746
 #define IDC_CS_CDTVCR                   1746
 #define IDC_DBG_MMISC                   1747
+#define IDC_CS_DENISEMODEL              1747
 #define IDC_DBG_PC                      1748
 #define IDC_DBG_PREFETCH                1749
 #define IDC_DBG_FPREG                   1750
@@ -1165,7 +1192,6 @@
 #define IDC_DBG_CUSTOM                  1766
 #define IDC_DBG_MISCCPU                 1767
 #define IDC_CS_DMAC2                    1769
-#define IDC_CS_CD32FMV                  1771
 #define IDC_DF0ENABLE                   1773
 #define IDC_DF1ENABLE                   1774
 #define IDC_FS_SELECT_DIR               1774
@@ -1322,7 +1348,11 @@
 #define IDC_ROM_ADDRESS2                1863
 #define IDC_CUSTOMROMFILE               1864
 #define IDC_SCSIROMFILEPCMCIA           1865
+#define IDC_KEYBOARD_SWAPHACK           1865
 #define IDC_SCSIROM24BITDMA             1866
+#define IDC_CUSTOMDATAPATH              1866
+#define IDC_SER_RTSCTSDTRDTECD          1867
+#define IDC_SER_RI                      1868
 #define ID__FLOPPYDRIVES                40004
 #define ID_FLOPPYDRIVES_DF0             40005
 #define ID_ST_CONFIGURATION             40010
@@ -1374,7 +1404,7 @@
 #define _APS_3D_CONTROLS                     1
 #define _APS_NEXT_RESOURCE_VALUE        407
 #define _APS_NEXT_COMMAND_VALUE         40050
-#define _APS_NEXT_CONTROL_VALUE         1865
+#define _APS_NEXT_CONTROL_VALUE         1869
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

@@ -25,7 +25,7 @@
 #define WINUAEBETA _T("")
 #endif
 
-#define WINUAEDATE MAKEBD(2023, 1, 23)
+#define WINUAEDATE MAKEBD(2023, 12, 19)
 
 //#define WINUAEEXTRA _T("AmiKit Preview")
 //#define WINUAEEXTRA _T("Amiga Forever Edition")
@@ -75,6 +75,7 @@ extern void updatemouseclip(struct AmigaMonitor*);
 extern void updatewinrect(struct AmigaMonitor*, bool);
 int getdpiformonitor(HMONITOR mon);
 int getdpiforwindow(HWND hwnd);
+void InitializeDarkMode(int v);
 
 extern bool resumepaused (int priority);
 extern bool setpaused (int priority);
@@ -101,11 +102,11 @@ extern HINSTANCE hInst;
 extern HMODULE userdll;
 extern HMODULE kerneldll;
 extern int af_path_2005;
-extern TCHAR start_path_new1[MAX_DPATH], start_path_new2[MAX_DPATH];
+extern TCHAR start_path_new1[MAX_DPATH], start_path_new2[MAX_DPATH], start_path_custom[MAX_DPATH];
 extern TCHAR bootlogpath[MAX_DPATH];
 extern TCHAR logpath[MAX_DPATH];
 extern bool winuaelog_temporary_enable;
-enum pathtype { PATH_TYPE_DEFAULT, PATH_TYPE_WINUAE, PATH_TYPE_NEWWINUAE, PATH_TYPE_NEWAF, PATH_TYPE_AMIGAFOREVERDATA, PATH_TYPE_END };
+enum pathtype { PATH_TYPE_DEFAULT, PATH_TYPE_WINUAE, PATH_TYPE_NEWWINUAE, PATH_TYPE_NEWAF, PATH_TYPE_AMIGAFOREVERDATA, PATH_TYPE_CUSTOM, PATH_TYPE_END };
 void setpathmode (pathtype pt);
 
 extern int sleep_millis (int ms);
@@ -149,7 +150,7 @@ void exit_gui (int);
 void fetch_path (const TCHAR *name, TCHAR *out, int size);
 void set_path (const TCHAR *name, TCHAR *path);
 void set_path (const TCHAR *name, TCHAR *path, pathtype);
-void read_rom_list (void);
+void read_rom_list(bool);
 void associate_file_extensions (void);
 
 #define WIN32_PLUGINDIR _T("plugins\\")
@@ -175,8 +176,8 @@ extern unsigned int fpucontrol;
 extern void fpux_save (int *v);
 extern void fpux_restore (int *v);
 
-extern void logging_open (int,int);
-extern void logging_cleanup (void);
+extern bool logging_open(int,int);
+extern void logging_cleanup(void);
 
 extern LONG WINAPI WIN32_ExceptionFilter (struct _EXCEPTION_POINTERS *pExceptionPointers, DWORD ec);
 

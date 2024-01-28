@@ -223,10 +223,10 @@ static int screenshot_prepare(int monid, int imagemode, struct vidbuffer *vb, bo
 				int maxh = currprefs.screenshot_max_height << currprefs.gfx_vresolution;
 				int minw = currprefs.screenshot_min_width << currprefs.gfx_resolution;
 				int minh = currprefs.screenshot_min_height << currprefs.gfx_vresolution;
-				if (minw > AMIGA_WIDTH_MAX << currprefs.gfx_resolution)
-					minw = AMIGA_WIDTH_MAX << currprefs.gfx_resolution;
-				if (minh > AMIGA_HEIGHT_MAX << currprefs.gfx_resolution)
-					minh = AMIGA_HEIGHT_MAX << currprefs.gfx_resolution;
+				if (minw > (maxhpos_display + 1) << currprefs.gfx_resolution)
+					minw = (maxhpos_display + 1) << currprefs.gfx_resolution;
+				if (minh > (maxvsize_display + 1) << currprefs.gfx_resolution)
+					minh = (maxvsize_display + 1) << currprefs.gfx_resolution;
 				if (maxw < minw)
 					maxw = minw;
 				if (maxh < minh)
@@ -429,9 +429,9 @@ donormal:
 			height = state->Height;
 		}
 		if (D3D_isenabled(0) == 2) {
-			int w, h, pitch, bits = 32;
+			int w, h, pitch, bits = 32, d;
 			void *data;
-			bool got = D3D11_capture(monid, &data, &w, &h, &pitch, renderTarget);
+			bool got = D3D11_capture(monid, &data, &w, &h, &d, &pitch, renderTarget);
 
 			int dpitch = (((width * depth + 31) & ~31) / 8);
 			lpvBits = xmalloc(uae_u8, dpitch * height);
@@ -449,7 +449,7 @@ donormal:
 			bi->bmiHeader.biClrUsed = 0;
 			bi->bmiHeader.biClrImportant = 0;
 
-			if (got && lpvBits) {
+			if (got && lpvBits && d <= 32) {
 				for (int y = 0; y < h && y < height; y++) {
 					uae_u8 *d = (uae_u8*)lpvBits + (height - y - 1) * dpitch;
 					uae_u32 *s = (uae_u32*)((uae_u8*)data + y * pitch);
@@ -468,7 +468,7 @@ donormal:
 				}
 			}
 			if (got)
-				D3D11_capture(monid, NULL, NULL, NULL, NULL, renderTarget);
+				D3D11_capture(monid, NULL, NULL, NULL, NULL, NULL, renderTarget);
 			d3dcaptured = true;
 
 		} else if (D3D_isenabled(0) == 1) {

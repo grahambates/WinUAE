@@ -277,6 +277,7 @@ struct cputracememory
 	uae_u32 addr;
 	uae_u32 data;
 	int mode;
+	uae_u32 flags;
 };
 
 struct cputracestruct
@@ -664,7 +665,7 @@ extern uae_u32 REGPARAM3 x_get_disp_ea_040(uae_u32 base, int idx) REGPARAM;
 extern uae_u32 REGPARAM3 x_get_bitfield (uae_u32 src, uae_u32 bdata[2], uae_s32 offset, int width) REGPARAM;
 extern void REGPARAM3 x_put_bitfield (uae_u32 dst, uae_u32 bdata[2], uae_u32 val, uae_s32 offset, int width) REGPARAM;
 
-extern void m68k_setstopped(void);
+extern void m68k_setstopped(int stoptype);
 extern void m68k_resumestopped(void);
 extern void m68k_cancel_idle(void);
 extern void do_cycles_stop(int);
@@ -725,7 +726,7 @@ extern void protect_roms (bool);
 extern void unprotect_maprom (void);
 extern bool is_hardreset(void);
 extern bool is_keyboardreset(void);
-extern void Exception_build_stack_frame_common(uae_u32 oldpc, uae_u32 currpc, uae_u32 ssw, int nr);
+extern void Exception_build_stack_frame_common(uae_u32 oldpc, uae_u32 currpc, uae_u32 ssw, int nr, int vector_nr);
 extern void Exception_build_stack_frame(uae_u32 oldpc, uae_u32 currpc, uae_u32 ssw, int nr, int format);
 extern void Exception_build_68000_address_error_stack_frame(uae_u16 mode, uae_u16 opcode, uaecptr fault_addr, uaecptr pc);
 extern uae_u32 exception_pc(int nr);
@@ -752,9 +753,6 @@ extern void fpuop_bcc(uae_u32, uaecptr, uae_u32);
 extern void fpuop_save(uae_u32);
 extern void fpuop_restore(uae_u32);
 extern uae_u32 fpp_get_fpsr (void);
-extern void fpu_reset (void);
-extern void fpux_save (int*);
-extern void fpux_restore (int*);
 extern bool fpu_get_constant(fpdata *fp, int cr);
 extern int fpp_cond(int condition);
 

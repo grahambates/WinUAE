@@ -28,7 +28,9 @@
 #define BEAMCON0_VSYTRUE	0x0002
 #define BEAMCON0_HSYTRUE	0x0001
 
-extern bool aga_mode, ecs_agnus, ecs_denise, direct_rgb;
+extern bool aga_mode, ecs_agnus, ecs_denise;
+extern bool agnusa1000, denisea1000_noehb, denisea1000;
+extern bool direct_rgb;
 
 /* These are the masks that are ORed together in the chipset_mask option.
 * If CSMASK_AGA is set, the ECS bits are guaranteed to be set as well.  */
@@ -52,6 +54,7 @@ extern int custom_init(void);
 extern void custom_prepare(void);
 extern void custom_reset(bool hardreset, bool keyboardreset);
 extern int intlev(void);
+extern void intlev_ack(int);
 extern void dumpcustom(void);
 
 extern void do_copper(void);
@@ -73,6 +76,7 @@ extern uae_u16 dmacon;
 extern uae_u16 intena, intreq, intreqr;
 
 extern int vpos, lof_store, lof_display;
+extern int scandoubled_line;
 
 extern int n_frames;
 
@@ -139,12 +143,15 @@ extern uae_u16 INTREQR(void);
 #define VSYNC_ENDLINE_PAL 5
 #define VSYNC_ENDLINE_NTSC 6
 #define EQU_ENDLINE_PAL 8
-#define EQU_ENDLINE_NTSC 10
+#define EQU_ENDLINE_NTSC 9
 
-extern int maxhpos, maxhpos_short;
-extern int maxvpos, maxvpos_nom, maxvpos_display, maxvpos_display_vsync;
+#define OCS_DENISE_HBLANK_DISABLE_HPOS 0x2e
+
+extern int maxhpos, maxhposm0, maxhpos_short;
+extern int maxvpos, maxvpos_nom, maxvpos_display, maxvpos_display_vsync, maxhpos_display;
+extern int maxvsize_display;
 extern int hsyncstartpos_hw, hsyncendpos_hw;
-extern int minfirstline, vblank_endline, numscrlines;
+extern int minfirstline, minfirstline_linear, vblank_endline, numscrlines;
 extern float vblank_hz, fake_vblank_hz;
 extern float hblank_hz;
 extern int vblank_skip, doublescan;
@@ -268,8 +275,10 @@ bool get_ras_cas(uaecptr, int*, int*);
 
 #define RGA_PIPELINE_ADJUST 4
 #define MAX_CHIPSETSLOTS 256
-extern uae_u8 cycle_line_slot[MAX_CHIPSETSLOTS + RGA_PIPELINE_ADJUST];
-extern uae_u16 cycle_line_pipe[MAX_CHIPSETSLOTS + RGA_PIPELINE_ADJUST];
+#define MAX_CHIPSETSLOTS_EXTRA 12
+extern uae_u8 cycle_line_slot[MAX_CHIPSETSLOTS + RGA_PIPELINE_ADJUST + MAX_CHIPSETSLOTS_EXTRA];
+extern uae_u16 cycle_line_pipe[MAX_CHIPSETSLOTS + RGA_PIPELINE_ADJUST + MAX_CHIPSETSLOTS_EXTRA];
+extern uae_u16 blitter_pipe[MAX_CHIPSETSLOTS + RGA_PIPELINE_ADJUST + MAX_CHIPSETSLOTS_EXTRA];
 
 #define CYCLE_PIPE_CPUSTEAL 0x8000
 #define CYCLE_PIPE_NONE 0x4000
@@ -287,7 +296,7 @@ extern int rga_pipeline_blitter;
 
 STATIC_INLINE int get_rga_pipeline(int hpos, int off)
 {
-	return (hpos + off) % maxhpos;
+	return (hpos + off) % maxhposm0;
 }
 
 struct custom_store

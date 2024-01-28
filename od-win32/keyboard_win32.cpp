@@ -155,11 +155,17 @@ static struct uae_input_device_kbr_default keytrans_amiga[] = {
 	{ DIK_SEMICOLON, INPUTEVENT_KEY_SEMICOLON },
 	{ DIK_APOSTROPHE, INPUTEVENT_KEY_SINGLEQUOTE },
 	{ DIK_GRAVE, INPUTEVENT_KEY_BACKQUOTE },
-	{ DIK_BACKSLASH, INPUTEVENT_KEY_BACKSLASH },
+	{ DIK_BACKSLASH, INPUTEVENT_KEY_NUMBERSIGN },
 	{ DIK_COMMA, INPUTEVENT_KEY_COMMA },
 	{ DIK_PERIOD, INPUTEVENT_KEY_PERIOD },
 	{ DIK_SLASH, INPUTEVENT_KEY_DIV },
+
 	{ DIK_OEM_102, INPUTEVENT_KEY_30 },
+	{ DIK_F11, INPUTEVENT_KEY_BACKSLASH },
+	{ DIK_F13, INPUTEVENT_KEY_BACKSLASH },
+	{ DIK_F14, INPUTEVENT_KEY_NP_LPAREN },
+	{ DIK_F15, INPUTEVENT_KEY_NP_RPAREN },
+
 	{ DIK_SYSRQ, INPUTEVENT_SPC_SCREENSHOT_CLIPBOARD, 0, INPUTEVENT_SPC_SCREENSHOT, ID_FLAG_QUALIFIER_SPECIAL },
 
 	{ DIK_END, INPUTEVENT_SPC_QUALIFIER_SPECIAL },
@@ -329,23 +335,6 @@ static int *kbmaps[] = {
 	kb_arcadia, kb_cdtv
 };
 
-static bool specialpressed (void)
-{
-	return (input_getqualifiers () & ID_FLAG_QUALIFIER_SPECIAL) != 0;
-}
-static bool shiftpressed (void)
-{
-	return (input_getqualifiers () & ID_FLAG_QUALIFIER_SHIFT) != 0;
-}
-static bool altpressed (void)
-{
-	return (input_getqualifiers () & ID_FLAG_QUALIFIER_ALT) != 0;
-}
-static bool ctrlpressed (void)
-{
-	return (input_getqualifiers () & ID_FLAG_QUALIFIER_CONTROL) != 0;
-}
-
 static int capslockstate;
 static int host_capslockstate, host_numlockstate, host_scrolllockstate;
 
@@ -402,7 +391,7 @@ bool my_kbd_handler (int keyboard, int scancode, int newstate, bool alwaysreleas
 	}
 #endif
 #if 0
-	if (scancode == DIK_F8 && specialpressed()) {
+	if (scancode == DIK_F8 && key_specialpressed()) {
 		if (newstate) {
 			extern int blop2;
 			blop2++;
@@ -411,7 +400,7 @@ bool my_kbd_handler (int keyboard, int scancode, int newstate, bool alwaysreleas
 	}
 #endif
 #if 0
-	if (scancode == DIK_F9 && specialpressed()) {
+	if (scancode == DIK_F9 && key_specialpressed()) {
 		if (newstate) {
 			extern int blop;
 			blop++;
@@ -420,14 +409,14 @@ bool my_kbd_handler (int keyboard, int scancode, int newstate, bool alwaysreleas
 	}
 #endif
 
-	if (amode && scancode == DIK_F11 && currprefs.win32_ctrl_F11_is_quit && ctrlpressed()) {
+	if (amode && scancode == DIK_F11 && currprefs.win32_ctrl_F11_is_quit && key_ctrlpressed()) {
 		if (!quit_ok())
 			return true;
 		uae_quit();
 		return true;
 	}
 
-	if (scancode == DIK_F9 && specialpressed ()) {
+	if (scancode == DIK_F9 && key_specialpressed ()) {
 		extern bool toggle_3d_debug(void);
 		if (newstate) {
 			if (toggle_3d_debug()) {
@@ -437,7 +426,7 @@ bool my_kbd_handler (int keyboard, int scancode, int newstate, bool alwaysreleas
 	}
 
 	scancode_new = scancode;
-	if (!specialpressed () && inputdevice_iskeymapped (keyboard, scancode))
+	if (!key_specialpressed () && inputdevice_iskeymapped (keyboard, scancode))
 		scancode = 0;
 	
 	if (newstate) {
@@ -448,13 +437,13 @@ bool my_kbd_handler (int keyboard, int scancode, int newstate, bool alwaysreleas
 		} else if (currprefs.win32_guikey > 0) {
 			if (scancode_new == defaultguikey && currprefs.win32_guikey != scancode_new) {
 				scancode = 0;
-				if (specialpressed () && ctrlpressed() && shiftpressed() && altpressed ())
+				if (key_specialpressed () && key_ctrlpressed() && key_shiftpressed() && key_altpressed ())
 					inputdevice_add_inputcode (AKS_ENTERGUI, 1, NULL);
 			} else if (scancode_new == currprefs.win32_guikey ) {
 				inputdevice_add_inputcode (AKS_ENTERGUI, 1, NULL);
 				scancode = 0;
 			}
-		} else if (currprefs.win32_guikey != 0 && !specialpressed () && !ctrlpressed() && !shiftpressed() && !altpressed () && scancode_new == defaultguikey) {
+		} else if (currprefs.win32_guikey != 0 && !key_specialpressed () && !key_ctrlpressed() && !key_shiftpressed() && !key_altpressed () && scancode_new == defaultguikey) {
 			inputdevice_add_inputcode (AKS_ENTERGUI, 1, NULL);
 			scancode = 0;
 		}
@@ -511,11 +500,11 @@ bool my_kbd_handler (int keyboard, int scancode, int newstate, bool alwaysreleas
 		case DIK_8:
 		case DIK_9:
 		case DIK_0:
-			if (specialpressed ()) {
+			if (key_specialpressed ()) {
 				int num = scancode - DIK_1;
-				if (shiftpressed ())
+				if (key_shiftpressed ())
 					num += 10;
-				if (ctrlpressed ()) {
+				if (key_ctrlpressed ()) {
 					swapperdrive = num;
 					if (swapperdrive > 3)
 						swapperdrive = 0;
@@ -542,7 +531,7 @@ bool my_kbd_handler (int keyboard, int scancode, int newstate, bool alwaysreleas
 		case DIK_NUMPAD8:
 		case DIK_NUMPAD9:
 		case DIK_NUMPADPERIOD:
-			if (specialpressed ()) {
+			if (key_specialpressed ()) {
 				int i = 0, v = -1;
 				while (np[i] >= 0) {
 					v = np[i + 1];
@@ -551,64 +540,10 @@ bool my_kbd_handler (int keyboard, int scancode, int newstate, bool alwaysreleas
 					i += 2;
 				}
 				if (v >= 0)
-					code = AKS_STATESAVEQUICK + v * 2 + ((shiftpressed () || ctrlpressed ()) ? 0 : 1);
+					code = AKS_STATESAVEQUICK + v * 2 + ((key_shiftpressed () || key_ctrlpressed ()) ? 0 : 1);
 				special = true;
 			}
 			break;
-#if 0
-		case DIK_PAUSE:
-			if (specialpressed ()) {
-				if (shiftpressed ())
-					code = AKS_IRQ7;
-				else
-					code = AKS_WARP;
-			} else {
-				code = AKS_PAUSE;
-			}
-			special = true;
-			break;
-#if 0
-		case DIK_SCROLL:
-			code = AKS_INHIBITSCREEN;
-			break;
-#endif
-		case DIK_NUMPADMINUS:
-			if (specialpressed ()) {
-				if (shiftpressed ())
-					code = AKS_DECREASEREFRESHRATE;
-				else if (ctrlpressed ())
-					code = AKS_MVOLDOWN;
-				else
-					code = AKS_VOLDOWN;
-			}
-			special = true;
-			break;
-		case DIK_NUMPADPLUS:
-			if (specialpressed ()) {
-				if (shiftpressed ())
-					code = AKS_INCREASEREFRESHRATE;
-				else if (ctrlpressed ())
-					code = AKS_MVOLUP;
-				else
-					code = AKS_VOLUP;
-			}
-			special = true;
-			break;
-		case DIK_NUMPADSTAR:
-			if (specialpressed ()) {
-				if (ctrlpressed ())
-					code = AKS_MVOLMUTE;
-				else
-					code = AKS_VOLMUTE;
-			}
-			special = true;
-			break;
-		case DIK_NUMPADSLASH:
-			if (specialpressed ())
-				code = AKS_STATEREWIND;
-			special = true;
-			break;
-#endif
 		}
 	}
 
@@ -619,7 +554,7 @@ bool my_kbd_handler (int keyboard, int scancode, int newstate, bool alwaysreleas
 
 
 	scancode = scancode_new;
-	if (!specialpressed () && newstate) {
+	if (!key_specialpressed () && newstate) {
 		if (scancode == DIK_CAPITAL) {
 			host_capslockstate = host_capslockstate ? 0 : 1;
 			capslockstate = host_capslockstate;

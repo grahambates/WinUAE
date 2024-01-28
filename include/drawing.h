@@ -89,7 +89,7 @@ STATIC_INLINE int PIXEL_XPOS(int xx)
 	return x;
 }
 
-#define min_diwlastword (0)
+#define min_diwlastword (PIXEL_XPOS(hsyncstartpos_start_cycles << CCK_SHRES_SHIFT))
 #define max_diwlastword (PIXEL_XPOS(denisehtotal))
 
 STATIC_INLINE int coord_window_to_hw_x(int x)
@@ -142,6 +142,8 @@ STATIC_INLINE bool ce_is_borderntrans(uae_u16 data)
 	return (data & (1 << CE_BORDERNTRANS)) != 0;
 }
 
+#define VB_VB 0x20 // vblank
+#define VB_VS 0x10 // vsync
 #define VB_XBORDER 0x08 // forced border color or bblank
 #define VB_XBLANK 0x04 // forced bblank
 #define VB_PRGVB 0x02 // programmed vblank
@@ -239,8 +241,7 @@ STATIC_INLINE void color_reg_cpy (struct color_entry *dst, struct color_entry *s
 
 #define COLOR_CHANGE_BRDBLANK 0x80000000
 #define COLOR_CHANGE_SHRES_DELAY 0x40000000
-#define COLOR_CHANGE_HSYNC_HACK 0x20000000
-#define COLOR_CHANGE_BLANK 0x10000000
+#define COLOR_CHANGE_BLANK 0x20000000
 #define COLOR_CHANGE_ACTBORDER (COLOR_CHANGE_BLANK | COLOR_CHANGE_BRDBLANK)
 #define COLOR_CHANGE_MASK 0xf0000000
 struct color_change {
@@ -259,7 +260,7 @@ struct color_change {
 #define MAXVPOS_WRAPLINES 10
 
 /* No divisors for MAX_PIXELS_PER_LINE; we support AGA and SHRES sprites */
-#define MAX_SPR_PIXELS ((((MAXVPOS + MAXVPOS_WRAPLINES) * 2 + 1) * MAX_PIXELS_PER_LINE) / 16)
+#define MAX_SPR_PIXELS ((((MAXVPOS + MAXVPOS_WRAPLINES) * 2 + 1) * MAX_PIXELS_PER_LINE) / 4)
 
 struct sprite_entry
 {
@@ -356,7 +357,8 @@ enum nln_how {
 	nln_lower_black_always
 };
 
-extern void hsync_record_line_state (int lineno, enum nln_how, int changed);
+extern void hsync_record_line_state(int lineno, enum nln_how, int changed);
+extern void hsync_record_line_state_last(int lineno, enum nln_how, int changed);
 extern void vsync_handle_redraw (int long_field, int lof_changed, uae_u16, uae_u16, bool drawlines, bool initial);
 extern bool vsync_handle_check (void);
 extern void draw_lines(int end, int section);

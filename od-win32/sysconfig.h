@@ -54,7 +54,6 @@
 #define CD32 /* CD32 emulation */
 #define CDTV /* CDTV emulation */
 #define D3D /* D3D display filter support */
-//#define OPENGL /* OpenGL display filter support */
 #define PARALLEL_PORT /* parallel port emulation */
 #define PARALLEL_DIRECT /* direct parallel port emulation */
 #define SERIAL_PORT /* serial port emulation */
@@ -115,7 +114,10 @@
 #define WITH_PCI
 #define WITH_X86
 #define WITH_THREADED_CPU
+#define WITH_SOFTFLOAT
 #define FLOPPYBRIDGE
+#define WITH_MIDIEMU
+#define WITH_DSP
 
 
 #else

@@ -117,7 +117,12 @@ static void getmanualpos(int monid, int *cxp, int *cyp, int *cwp, int *chp)
 		if (programmedmode && native) {
 			cw = avidinfo->outbuffer->outwidth << (RES_MAX - currprefs.gfx_resolution);
 		} else {
-			cw = native ? AMIGA_WIDTH_MAX << RES_MAX : avidinfo->outbuffer->outwidth;
+			if (currprefs.gfx_overscanmode <= OVERSCANMODE_OVERSCAN) {
+				// keep old version compatibility
+				cw = native ? AMIGA_WIDTH_MAX << RES_MAX : avidinfo->outbuffer->outwidth;
+			} else {
+				cw = native ? maxhpos_display << RES_MAX : avidinfo->outbuffer->outwidth;
+			}
 		}
 	} else {
 		cw = v;
@@ -128,8 +133,11 @@ static void getmanualpos(int monid, int *cxp, int *cyp, int *cwp, int *chp)
 	if (v <= 0) {
 		if (programmedmode && native) {
 			ch = avidinfo->outbuffer->outheight << (VRES_MAX - currprefs.gfx_vresolution);
-		} else {
+		} else if (currprefs.gfx_overscanmode <= OVERSCANMODE_OVERSCAN) {
+			// keep old version compatiblity
 			ch = native ? AMIGA_HEIGHT_MAX << VRES_MAX : avidinfo->outbuffer->outheight;
+		} else {
+			ch = native ? (maxvpos_display + maxvpos_display_vsync - minfirstline) << VRES_MAX : avidinfo->outbuffer->outheight;
 		}
 	} else {
 		ch = v;
@@ -218,24 +226,6 @@ static bool get_aspect(int monid, float *dstratiop, float *srcratiop, float *xmu
 	return aspect;
 }
 
-static int res_match(int w)
-{
-	if (currprefs.gfx_vresolution == VRES_NONDOUBLE) {
-		if (currprefs.gfx_resolution == RES_HIRES) {
-			w *= 2;
-		} else if (currprefs.gfx_resolution == RES_SUPERHIRES) {
-			w *= 4;
-		}
-	} else {
-		if (currprefs.gfx_resolution == RES_LORES) {
-			w /= 2;
-		} else if (currprefs.gfx_resolution == RES_SUPERHIRES) {
-			w *= 2;
-		}
-	}
-	return w;
-}
-
 void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int dst_height, int aw, int ah, int scale, int *mode, int temp_width, int temp_height)
 {
 	struct AmigaMonitor *mon = &AMonitors[monid];
@@ -322,7 +312,7 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 		filter_aspect = 0;
 		keep_aspect = 0;
 		palntscadjust = 1;
-		if (dst_width >= 640 && dst_width <= 800 && dst_height >= 480 && dst_height <= 600) {
+		if (dst_width >= 640 && dst_width <= 800 && dst_height >= 480 && dst_height <= 600 && !programmedmode) {
 			autoselect = 1;
 			scalemode = AUTOSCALE_NONE;
 			int m = 1;
@@ -370,6 +360,13 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 		if (scalemode == AUTOSCALE_STATIC_MAX || scalemode == AUTOSCALE_STATIC_NOMINAL ||
 			scalemode == AUTOSCALE_INTEGER || scalemode == AUTOSCALE_INTEGER_AUTOSCALE) {
 
+			if (scalemode == AUTOSCALE_STATIC_NOMINAL || scalemode == AUTOSCALE_STATIC_NOMINAL || scalemode == AUTOSCALE_STATIC_MAX) {
+				// do not default/TV scale programmed modes
+				if (beamcon0 & BEAMCON0_VARBEAMEN) {
+					goto cont;
+				}
+			}
+
 			if (specialmode) {
 				cx = 0;
 				cy = 0;
@@ -381,7 +378,7 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 				cw = avidinfo->drawbuffer.inwidth;
 				ch = avidinfo->drawbuffer.inheight;
 				cv = 1;
-				if (!(beamcon0 & BEAMCON0_VARBEAMEN) && (scalemode == AUTOSCALE_STATIC_NOMINAL)) { // || scalemode == AUTOSCALE_INTEGER)) {
+				if (scalemode == AUTOSCALE_STATIC_NOMINAL) { // || scalemode == AUTOSCALE_INTEGER)) {
 					cx = 28 << currprefs.gfx_resolution;
 					cy = 10 << currprefs.gfx_vresolution;
 					cw -= 40 << currprefs.gfx_resolution;
@@ -395,8 +392,8 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 			}
 
 			if (scalemode == AUTOSCALE_INTEGER || scalemode == AUTOSCALE_INTEGER_AUTOSCALE) {
-				int maxw = gmc->gfx_size.width;
-				int maxh = gmc->gfx_size.height;
+				int maxw = isfullscreen() < 0 ? deskw : gmc->gfx_size.width;
+				int maxh = isfullscreen() < 0 ? deskh : gmc->gfx_size.height;
 				float mult = 1.0f;
 				bool ok = true;
 
@@ -435,6 +432,8 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 
 				int cw2 = cw + (int)(cw * filter_horiz_zoom);
 				int ch2 = ch + (int)(ch * filter_vert_zoom);
+				int adjw = cw2 * 5 / 100;
+				int adjh = ch2 * 5 / 100;
 
 				extraw = 0;
 				extrah = 0;
@@ -445,19 +444,30 @@ void getfilterrect2(int monid, RECT *sr, RECT *dr, RECT *zr, int dst_width, int 
 				filter_horiz_zoom_mult = 1.0;
 				filter_vert_zoom_mult = 1.0;
 
-				maxw = res_match(maxw);
-
 				float multadd = 1.0f / (1 << currprefs.gf[idx].gfx_filter_integerscalelimit);
 				if (cw2 > maxw || ch2 > maxh) {
-					while (cw2 / mult > maxw || ch2 / mult > maxh)
+					while (cw2 / mult - adjw > maxw || ch2 / mult - adjh > maxh) {
 						mult += multadd;
-					maxw = (int)(maxw * mult);
-					maxh = (int)(maxh * mult);
+					}
+					float multx = mult, multy = mult;
+					maxw = (int)(maxw * multx);
+					maxh = (int)(maxh * multy);
 				} else {
-					while (cw2 * (mult + multadd) <= maxw && ch2 * (mult + multadd) <= maxh)
+					while (cw2 * (mult + multadd) - adjw <= maxw && ch2 * (mult + multadd) - adjh <= maxh) {
 						mult += multadd;
-					maxw = (int)((maxw + mult - multadd) / mult);
-					maxh = (int)((maxh + mult - multadd) / mult);
+					}
+
+					float multx = mult, multy = mult;
+					// if width is smaller than height, double width (programmed modes)
+					if (cw2 * (mult + multadd) - adjw <= maxw && cw2 < ch2) {
+						multx += multadd;
+					}
+					// if width is >2.5x height, double height (non-doublescanned superhires)
+					if (ch2 * (mult + multadd) - adjh <= maxh && cw2 > ch2 * 2.5) {
+						multy += multadd;
+					}
+					maxw = (int)((maxw + multx - multadd) / multx);
+					maxh = (int)((maxh + multy - multadd) / multy);
 				}
 
 				*mode = 1;
@@ -1000,7 +1010,7 @@ void S2X_render(int monid, int y_start, int y_end)
 	int aw, ah, aws, ahs;
 	uae_u8 *dptr, *enddptr, *sptr, *endsptr;
 	int ok = 0;
-	int pitch, surf_height;
+	int pitch, surf_height, surf_width;
 	uae_u8 *surfstart;
 
 	aw = amiga_width;
@@ -1021,7 +1031,7 @@ void S2X_render(int monid, int y_start, int y_end)
 
 	if (D3D_restore)
 		D3D_restore(monid, true);
-	surfstart = D3D_locktexture(monid, &pitch, &surf_height, y_start < -1 ? -1 : (y_start < 0 ? 1 : 0));
+	surfstart = D3D_locktexture(monid, &pitch, &surf_width, &surf_height, y_start < -1 ? -1 : (y_start < 0 ? 1 : 0));
 	if (surfstart == NULL) {
 		return;
 	}
